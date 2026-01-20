@@ -1,0 +1,125 @@
+So am going to use this structure::/
+├── package.json                 # Project dependencies and scripts
+├── package-lock.json           # Locked dependencies
+├── tsconfig.json               # TypeScript configuration
+├── vite.config.ts              # Vite build configuration
+├── index.html                  # HTML entry point
+├── public/                     # Static assets (images, icons, fonts)
+│   ├── favicon.ico
+│   └── vite.svg                # (or other static files)
+├── src/                        # ALL source code goes here
+│   ├── main.tsx                # ReactDOM entry point
+│   ├── App.tsx                 # Main application component
+│   ├── index.css               # Base styles
+│   ├── styles/
+│   │   └── globals.css         # Global styles and Tailwind configuration
+│   ├── components/             # All React components
+│   │   ├── ui/                 # Shadcn UI components library
+│   │   ├── shared/             # Shared components (StatusBar)
+│   │   ├── LandingPage.tsx     # Landing/marketing page
+│   │   ├── AuthPage.tsx        # Authentication
+│   │   ├── DriverDashboard.tsx # Driver main dashboard
+│   │   ├── DriverProfile.tsx   # Driver profile management
+│   │   ├── DriverEarnings.tsx  # Driver earnings & payments
+│   │   ├── DriverRouteOptimization.tsx # Route optimization
+│   │   ├── DriverOnboarding.tsx # New driver registration
+│   │   ├── CustomerBooking.tsx # Single order booking
+│   │   ├── CustomerProfile.tsx # Customer profile management
+│   │   ├── CustomerOnboarding.tsx # New customer registration
+│   │   ├── BulkBooking.tsx     # Bulk order Excel upload
+│   │   ├── OrderTracking.tsx   # Real-time order tracking
+│   │   ├── MatchingEngine.tsx  # Driver-customer matching
+│   │   ├── NotificationCenter.tsx # Notifications management
+│   │   ├── DeliveryCompletion.tsx # Delivery confirmation
+│   │   ├── LanguageContext.tsx # i18n context provider
+│   │   └── LanguageSelector.tsx # Language switcher
+│   ├── config/
+│   │   └── environment.ts      # Environment configuration
+│   ├── lib/
+│   │   ├── api.ts             # API client
+│   │   ├── api-client.ts      # Base API client setup
+│   │   └── seed-data.ts       # Mock data seeding
+│   ├── services/              # API service layers
+│   │   ├── customer.service.ts
+│   │   ├── driver.service.ts
+│   │   ├── matching.service.ts
+│   │   ├── notification.service.ts
+│   │   ├── order.service.ts
+│   │   ├── payment.service.ts
+│   │   ├── tracking.service.ts
+│   │   ├── user.service.ts
+│   │   └── index.ts
+│   ├── shared/
+│   │   ├── constants/
+│   │   │   └── app.ts         # Application constants
+│   │   ├── hooks/
+│   │   │   ├── useAuth.ts
+│   │   │   ├── useNotifications.ts
+│   │   │   └── index.ts
+│   │   └── utils/
+│   │       ├── format.ts      # Formatting utilities
+│   │       ├── validation.ts  # Validation utilities
+│   │       └── index.ts
+│   ├── types/
+│   │   └── index.ts           # TypeScript type definitions
+│   └── pages/                 # Alternative page-based structure
+│       ├── common/
+│       ├── customer/
+│       └── driver/
+├── .gitignore                 # Git ignore file
+└── README.md                  # Project documentation,
+
+
+
+
+
+
+# Create all Shadcn UI component files
+$uiFiles = @(
+    "accordion.tsx",
+    "alert-dialog.tsx", 
+    "alert.tsx",
+    "aspect-ratio.tsx",
+    "avatar.tsx",
+    "badge.tsx",
+    "breadcrumb.tsx",
+    "button.tsx",
+    "calendar.tsx",
+    "card.tsx",
+    "carousel.tsx",
+    "chart.tsx",
+    "checkbox.tsx",
+    "collapsible.tsx",
+    "command.tsx",
+    "context-menu.tsx",
+    "dialog.tsx",
+    "drawer.tsx",
+    "dropdown-menu.tsx",
+    "form.tsx",
+    "hover-card.tsx",
+    "input-otp.tsx",
+    "input.tsx",
+    "label.tsx",
+    "menubar.tsx",
+    "navigation-menu.tsx",
+    "pagination.tsx",
+    "popover.tsx",
+    "progress.tsx",
+    "radio-group.tsx",
+    "resizable.tsx",
+    "scroll-area.tsx",
+    "select.tsx",
+    "separator.tsx",
+    "sheet.tsx",
+    "sidebar.tsx"
+)
+
+foreach ($file in $uiFiles) {
+    $path = "src\components\ui\$file"
+    New-Item -Path $path -ItemType File -Force
+    Write-Host "Created: $path"
+}
+
+Write-Host "All UI component files created successfully!"
+
+deceda

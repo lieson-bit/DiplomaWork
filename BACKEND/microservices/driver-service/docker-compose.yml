@@ -1,0 +1,69 @@
+services:
+  driver-service:
+    build: .
+    container_name: driver-service
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+      - DATABASE_URL=mysql://driver_user:driver_pass@driver-db:3306/driver_service_db
+      - JWT_SECRET=d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044
+      - SERVICE_SECRET=shared_service_secret_key_1234567890
+      - USER_SERVICE_URL=http://user-service:3001
+      - APP_URL=http://localhost:3002
+      - CORS_ORIGIN=http://localhost:3000
+      - UPLOAD_PATH=./src/uploads
+      - MAX_FILE_SIZE=5242880
+      - ALLOWED_FILE_TYPES=image/jpeg,image/png,image/jpg,application/pdf
+    
+    # ADD THIS DNS CONFIGURATION:
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    extra_hosts:
+      - "user-service:172.26.0.2"  # Hardcode user-service IP from network inspect
+      - "host.docker.internal:host-gateway"
+    
+    volumes:
+      - ./src/uploads:/app/src/uploads
+      - ./logs:/app/logs
+    depends_on:
+      driver-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - driver-network 
+      - app-shared-network
+
+  driver-db:
+    image: mysql:8.0
+    container_name: driver-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=password123
+      - MYSQL_DATABASE=driver_service_db
+      - MYSQL_USER=driver_user
+      - MYSQL_PASSWORD=driver_pass
+    ports:
+      - "3308:3306"
+    volumes:
+      - driver-mysql-data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - driver-network
+
+volumes:
+  driver-mysql-data:
+
+networks:
+  driver-network:
+    driver: bridge
+  app-shared-network:
+    external: true

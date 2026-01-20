@@ -1,0 +1,208 @@
+services:
+  # ============ USER SERVICE ============
+  user-mysql:
+    image: mysql:8.0
+    container_name: user-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: user_service_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - user-mysql-data:/var/lib/mysql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "app_user", "-papp_password"]
+      timeout: 20s
+      retries: 10
+      start_period: 30s
+    command: --default-authentication-plugin=mysql_native_password
+
+  user-service:
+    build: 
+      context: ./microservices/user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      JWT_SECRET: "d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044"
+      JWT_EXPIRES_IN: 7d
+      MYSQL_HOST: user-mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+      MYSQL_DATABASE: user_service_db
+    ports:
+      - "3001:3001"
+    depends_on:
+      user-mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+    command: npm run dev
+
+  # ============ DRIVER SERVICE ============
+  driver-db:
+    image: mysql:8.0
+    container_name: driver-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password123
+      MYSQL_DATABASE: driver_service_db
+      MYSQL_USER: driver_user
+      MYSQL_PASSWORD: driver_pass
+    ports:
+      - "3308:3306"
+    volumes:
+      - driver-mysql-data:/var/lib/mysql
+      - driver-init:/docker-entrypoint-initdb.d
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "driver_user", "-pdriver_pass"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: --default-authentication-plugin=mysql_native_password
+
+  driver-service:
+    build:
+      context: ./microservices/driver-service
+      dockerfile: Dockerfile
+    container_name: driver-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DATABASE_URL: mysql://driver_user:driver_pass@driver-db:3306/driver_service_db
+      JWT_SECRET: d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044
+      SERVICE_SECRET: shared_service_secret_key_1234567890
+      USER_SERVICE_URL: http://user-service:3001  # This WILL work in single network
+      APP_URL: http://localhost:3002
+      CORS_ORIGIN: http://localhost:3000
+      UPLOAD_PATH: ./src/uploads
+      MAX_FILE_SIZE: 5242880
+      ALLOWED_FILE_TYPES: image/jpeg,image/png,image/jpg,application/pdf
+    ports:
+      - "3002:3002"
+    depends_on:
+      driver-db:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    volumes:
+      - driver-uploads:/app/src/uploads
+      - driver-logs:/app/logs
+    networks:
+      - app-network
+    # Add curl for debugging
+    command: >
+      sh -c "
+      echo 'Installing curl for debugging...' &&
+      apk add --no-cache curl &&
+      echo 'Testing connectivity to user-service...' &&
+      until curl -f http://user-service:3001/health; do
+        echo 'Waiting for user-service...';
+        sleep 5;
+      done &&
+      echo 'Starting driver service...' &&
+      npm start
+      "
+
+
+# ============ CUSTOMER SERVICE ============
+  customer-db:
+    image: mysql:8.0
+    container_name: customer-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password123
+      MYSQL_DATABASE: customer_service_db
+      MYSQL_USER: customer_user
+      MYSQL_PASSWORD: customer_pass
+    ports:
+      - "3309:3306"
+    volumes:
+      - customer-mysql-data:/var/lib/mysql
+      - customer-init:/docker-entrypoint-initdb.d
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "customer_user", "-pcustomer_pass"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: --default-authentication-plugin=mysql_native_password
+
+  customer-service:
+    build:
+      context: ./microservices/customer-service
+      dockerfile: Dockerfile
+    container_name: customer-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+      # CHANGE THESE: Use Docker service names instead of localhost
+      MYSQL_HOST: customer-db
+      MYSQL_PORT: 3306
+      MYSQL_USER: customer_user
+      MYSQL_PASSWORD: customer_pass
+      MYSQL_DATABASE: customer_service_db
+      JWT_SECRET: d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044
+      SERVICE_SECRET: shared_service_secret_key_1234567890
+      USER_SERVICE_URL: http://user-service:3001
+      APP_URL: http://localhost:3003
+      CORS_ORIGIN: http://localhost:3000
+      UPLOAD_PATH: ./src/uploads
+      MAX_FILE_SIZE: 5242880
+      ALLOWED_FILE_TYPES: image/jpeg,image/png,image/jpg
+    ports:
+      - "3003:3003"
+    depends_on:
+      customer-db:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    volumes:
+      - customer-uploads:/app/src/uploads
+      - customer-logs:/app/logs
+    networks:
+      - app-network
+    command: >
+      sh -c "
+      echo 'Installing curl for debugging...' &&
+      apk add --no-cache curl &&
+      echo 'Testing connectivity to user-service...' &&
+      until curl -f http://user-service:3001/health; do
+        echo 'Waiting for user-service...';
+        sleep 5;
+      done &&
+      echo 'Starting customer service...' &&
+      npm start
+      "
+
+volumes:
+  user-mysql-data:
+  driver-mysql-data:
+  customer-mysql-data:
+  redis-data:
+  driver-logs:
+  driver-uploads:
+  driver-init:
+  customer-logs:
+  customer-uploads:
+  customer-init:
+
+networks:
+  app-network:
+    driver: bridge
+    name: app-network

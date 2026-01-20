@@ -1,0 +1,43 @@
+{
+  "name": "driver-service",
+  "version": "1.0.0",
+  "description": "Driver management microservice",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "nodemon --exec ts-node --transpile-only src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "clean": "rd /s /q dist 2>nul || true && rd /s /q node_modules 2>nul || true && del package-lock.json 2>nul || true"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "joi": "^17.9.2",
+    "jsonwebtoken": "^8.5.1",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.0-rc.3",
+    "mysql2": "^3.15.3",
+    "sharp": "^0.33.0",
+    "uuid": "8.3.2",
+    "winston": "^3.10.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/morgan": "^1.9.10",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^24.10.1",
+    "@types/sharp": "^0.31.1",
+    "@types/uuid": "8.3.4",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "type": "commonjs"
+}

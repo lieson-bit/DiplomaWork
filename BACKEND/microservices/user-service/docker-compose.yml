@@ -1,0 +1,57 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: user-service-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: user_service_db
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    # Remove the mysql-init volume since you're initializing in code
+    networks:
+      - user-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  user-service:
+    build: .
+    container_name: user-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      JWT_SECRET: "d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044"
+      JWT_EXPIRES_IN: 7d
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: app_user
+      MYSQL_PASSWORD: app_password
+      MYSQL_DATABASE: user_service_db
+      USER_SERVICE_URL: http://localhost:3001 
+    ports:
+      - "3001:3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/dist  # Exclude dist folder
+    networks:
+      - user-network
+      - app-shared-network
+    command: npm run dev
+
+networks:
+  user-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
