@@ -66,6 +66,8 @@ export class UserController {
           firstName: user.firstName,
           lastName: user.lastName,
           phone: user.phone,
+          address: user.address,
+          dateOfBirth: user.dateOfBirth, 
           userType: user.userType,
           emailVerified: user.emailVerified,
           phoneVerified: user.phoneVerified,

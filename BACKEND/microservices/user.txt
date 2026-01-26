@@ -1,0 +1,2053 @@
+Project Path: src
+
+Source Tree:
+
+```txt
+.env
+src
+├── app.ts
+├── config
+│   └── database.ts
+├── controllers
+│   ├── auth.controller.ts
+│   └── user.controller.ts
+├── index.ts
+├── lib
+│   └── mysql.ts
+├── middleware
+│   ├── auth.middleware.ts
+│   └── validation.middleware.ts
+├── models
+│   ├── EmailVerificationToken.ts
+│   ├── PasswordResetToken.ts
+│   ├── User.ts
+│   └── UserSession.ts
+├── routes
+│   ├── auth.routes.ts
+│   └── user.routes.ts
+├── services
+│   ├── auth.service.ts
+│   └── user.service.ts
+├── types
+│   └── index.ts
+└── utils
+    ├── jwt.ts
+    ├── password.ts
+    └── validation.ts
+
+```
+
+`app.ts`:
+
+```ts
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import authRoutes from './routes/auth.routes';
+import userRoutes from './routes/user.routes';
+import { connectDatabase } from './config/database';
+import { AuthService } from './services/auth.service';
+import { query } from './lib/mysql'; // Import query here
+
+const app = express();
+
+// Initialize application
+const initializeApp = async () => {
+  try {
+    console.log('🚀 Initializing User Service...');
+    
+    try {
+      // Connect to database
+      await connectDatabase();
+      console.log('✅ Database connected');
+      
+      // Initialize test users
+      const authService = new AuthService();
+      await authService.initializeTestUsers();
+      console.log('✅ Test users initialized');
+    } catch (dbError: any) {
+      console.error('⚠️ Database initialization failed, but service will start anyway:', dbError.message);
+      console.log('⚠️ Some features may be disabled');
+    }
+    
+    console.log('✅ User Service initialized successfully');
+  } catch (error: any) {
+    console.error('❌ Failed to initialize application:', error.message);
+    // Don't exit, let the server start anyway
+  }
+};
+
+// Start initialization
+initializeApp().catch(console.error);
+
+// Middleware
+app.use(helmet());
+app.use(cors({
+  origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003'],
+  credentials: true,
+}));
+app.use(morgan('dev'));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+
+// Debug endpoints (remove in production)
+app.get('/api/debug/users', async (req, res) => {
+  try {
+    const users = await query('SELECT * FROM users ORDER BY created_at DESC');
+    
+    res.json({
+      count: users.length,
+      users: users.map((u: any) => ({
+        id: u.id,
+        email: u.email,
+        firstName: u.first_name,
+        lastName: u.last_name,
+        userType: u.user_type,
+        isActive: u.is_active,
+        profileCompleted: u.profile_completed,
+        createdAt: u.created_at,
+        // Raw values for debugging
+        raw: {
+          is_active: u.is_active,
+          is_active_type: typeof u.is_active,
+          profile_completed: u.profile_completed
+        }
+      }))
+    });
+  } catch (error: any) {
+    console.error('Debug endpoint error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/debug/raw-users', async (req, res) => {
+  try {
+    const users = await query('SELECT * FROM users');
+    
+    res.json({
+      count: users.length,
+      users: users.map((u: any) => ({
+        ...u,
+        is_active_raw: u.is_active,
+        is_active_type: typeof u.is_active,
+        profile_completed_raw: u.profile_completed
+      }))
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Health check with database connection test
+app.get('/health', async (req, res) => {
+  try {
+    // Test database connection
+    await query('SELECT 1');
+    
+    // Get stats
+    const users = await query('SELECT COUNT(*) as count FROM users');
+    const activeUsers = await query('SELECT COUNT(*) as count FROM users WHERE is_active = 1');
+    const sessions = await query('SELECT COUNT(*) as count FROM user_sessions');
+    
+    res.json({
+      status: 'OK',
+      service: 'user-service',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development',
+      database: {
+        status: 'connected',
+        type: 'MySQL',
+        stats: {
+          totalUsers: users[0].count,
+          activeUsers: activeUsers[0].count,
+          sessions: sessions[0].count
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error('Health check error:', error);
+    res.status(500).json({
+      status: 'ERROR',
+      service: 'user-service',
+      timestamp: new Date().toISOString(),
+      database: {
+        status: 'disconnected',
+        error: error.message
+      }
+    });
+  }
+});
+
+// Welcome route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'User Service API',
+    description: 'Authentication and user management microservice',
+    version: '1.0.0',
+    endpoints: {
+      auth: {
+        register: 'POST /api/auth/register',
+        login: 'POST /api/auth/login',
+        logout: 'POST /api/auth/logout',
+        refreshToken: 'POST /api/auth/refresh-token'
+      },
+      users: {
+        getAll: 'GET /api/users',
+        search: 'GET /api/users/search?query=...',
+        byType: 'GET /api/users/type/:type'
+      },
+      health: 'GET /health',
+      debug: {
+        users: 'GET /api/debug/users',
+        rawUsers: 'GET /api/debug/raw-users'
+      }
+    },
+    status: 'running',
+    documentation: 'See API docs for more details'
+  });
+});
+
+// Test endpoint for checking user data
+app.get('/api/test/user/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const user = await query(
+      `SELECT 
+        id,
+        email,
+        first_name,
+        last_name,
+        user_type,
+        is_active,
+        is_active = 1 as isActiveBool,
+        profile_completed,
+        created_at
+       FROM users WHERE email = ?`,
+      [email]
+    );
+    
+    if (!user[0]) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      user: user[0],
+      analysis: {
+        is_active: user[0].is_active,
+        isActiveBool: user[0].isActiveBool,
+        types: {
+          is_active_type: typeof user[0].is_active,
+          isActiveBool_type: typeof user[0].isActiveBool
+        }
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Error:', err);
+  
+  const status = err.status || 500;
+  const message = err.message || 'Internal server error';
+  
+  // Prevent sending headers twice
+  if (res.headersSent) {
+    return next(err);
+  }
+  
+  res.status(status).json({
+    error: message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.path,
+    method: req.method,
+    availableEndpoints: {
+      auth: '/api/auth/*',
+      users: '/api/users/*',
+      health: '/health',
+      debug: '/api/debug/*',
+      root: '/'
+    }
+  });
+});
+
+export default app;
+```
+
+`config\database.ts`:
+
+```ts
+import { v4 as uuidv4 } from 'uuid';
+import { connectDB, disconnectDB, query, initializeDatabase, pool } from '../lib/mysql';
+
+// Helper function to normalize user data from database
+function normalizeUser(user: any): any {
+  if (!user) return null;
+  
+  return {
+    id: user.id,
+    email: user.email,
+    password: user.password,
+    firstName: user.first_name,
+    lastName: user.last_name,
+    phone: user.phone,
+    userType: user.user_type,
+    emailVerified: Boolean(user.email_verified),
+    phoneVerified: Boolean(user.phone_verified),
+    isActive: Boolean(user.is_active),
+    profileCompleted: Boolean(user.profile_completed),
+    lastLogin: user.last_login,
+    createdAt: user.created_at,
+    updatedAt: user.updated_at
+  };
+}
+
+// Helper functions for user operations
+const userModel = {
+  findUnique: async ({ where }: any) => {
+    let condition = '';
+    const values: any[] = [];
+    
+    if (where.id) {
+      condition = 'id = ?';
+      values.push(where.id);
+    } else if (where.email) {
+      condition = 'email = ?';
+      values.push(where.email);
+    }
+    
+    if (!condition) return null;
+    
+    const rows = await query(
+      `SELECT * FROM users WHERE ${condition} LIMIT 1`,
+      values
+    );
+    const user = (rows as any[])[0] || null;
+    return normalizeUser(user);
+  },
+  
+  findMany: async (options?: any) => {
+    let sql = 'SELECT * FROM users';
+    const values: any[] = [];
+    
+    if (options?.where) {
+      const conditions = [];
+      if (options.where.userType) {
+        conditions.push('user_type = ?');
+        values.push(options.where.userType);
+      }
+      if (conditions.length > 0) {
+        sql += ` WHERE ${conditions.join(' AND ')}`;
+      }
+    }
+    
+    // Handle orderBy - convert camelCase to snake_case
+    if (options?.orderBy) {
+      const orderBy = options.orderBy;
+      const field = Object.keys(orderBy)[0];
+      const direction = orderBy[field];
+      
+      // Map camelCase to snake_case
+      const fieldMap: Record<string, string> = {
+        'createdAt': 'created_at',
+        'updatedAt': 'updated_at',
+        'firstName': 'first_name',
+        'lastName': 'last_name',
+        'userType': 'user_type',
+        'emailVerified': 'email_verified',
+        'phoneVerified': 'phone_verified',
+        'isActive': 'is_active',
+        'profileCompleted': 'profile_completed',
+        'lastLogin': 'last_login'
+      };
+      
+      const dbField = fieldMap[field] || field;
+      sql += ` ORDER BY ${dbField} ${direction}`;
+    } else {
+      sql += ' ORDER BY created_at DESC';
+    }
+    
+    const rows = await query(sql, values);
+    return (rows as any[]).map(normalizeUser);
+  },
+  
+  create: async ({ data }: any) => {
+    const id = uuidv4();
+    const now = new Date();
+    
+    await query(
+      `INSERT INTO users (
+        id, email, password, first_name, last_name, phone, user_type,
+        email_verified, phone_verified, is_active, profile_completed,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        data.email,
+        data.password,
+        data.firstName,
+        data.lastName,
+        data.phone || null,
+        data.userType,
+        data.emailVerified ? 1 : 0,
+        data.phoneVerified ? 1 : 0,
+        data.isActive !== undefined ? (data.isActive ? 1 : 0) : 1,
+        data.profileCompleted ? 1 : 0,
+        now,
+        now
+      ]
+    );
+    
+    return await userModel.findUnique({ where: { id } });
+  },
+  
+  update: async ({ where, data }: any) => {
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    if (data.email !== undefined) {
+      updates.push('email = ?');
+      values.push(data.email);
+    }
+    if (data.firstName !== undefined) {
+      updates.push('first_name = ?');
+      values.push(data.firstName);
+    }
+    if (data.lastName !== undefined) {
+      updates.push('last_name = ?');
+      values.push(data.lastName);
+    }
+    if (data.phone !== undefined) {
+      updates.push('phone = ?');
+      values.push(data.phone);
+    }
+    if (data.userType !== undefined) {
+      updates.push('user_type = ?');
+      values.push(data.userType);
+    }
+    if (data.isActive !== undefined) {
+      updates.push('is_active = ?');
+      values.push(data.isActive ? 1 : 0);
+    }
+    if (data.profileCompleted !== undefined) {
+      updates.push('profile_completed = ?');
+      values.push(data.profileCompleted ? 1 : 0);
+    }
+    if (data.lastLogin !== undefined) {
+      updates.push('last_login = ?');
+      values.push(data.lastLogin);
+    }
+    
+    // Always update updated_at
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    
+    values.push(where.id || where.email);
+    const condition = where.id ? 'id = ?' : 'email = ?';
+    
+    await query(
+      `UPDATE users SET ${updates.join(', ')} WHERE ${condition}`,
+      values
+    );
+    
+    return await userModel.findUnique({ where });
+  },
+  
+  count: async (options?: any) => {
+    let sql = 'SELECT COUNT(*) as count FROM users';
+    const values: any[] = [];
+    
+    if (options?.where) {
+      const conditions = [];
+      if (options.where.userType) {
+        conditions.push('user_type = ?');
+        values.push(options.where.userType);
+      }
+      if (conditions.length > 0) {
+        sql += ` WHERE ${conditions.join(' AND ')}`;
+      }
+    }
+    
+    const rows = await query(sql, values);
+    return (rows as any[])[0].count;
+  },
+};
+
+// Helper functions for userSession operations
+const userSessionModel = {
+  create: async ({ data }: any) => {
+    const id = uuidv4();
+    
+    await query(
+      `INSERT INTO user_sessions (
+        id, user_id, token, refresh_token, device_info, ip_address, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        data.userId,
+        data.token,
+        data.refreshToken,
+        data.deviceInfo || null,
+        data.ipAddress || null,
+        data.expiresAt
+      ]
+    );
+    
+    const rows = await query(
+      'SELECT * FROM user_sessions WHERE id = ?',
+      [id]
+    );
+    return (rows as any[])[0];
+  },
+  
+  findFirst: async ({ where }: any) => {
+    let condition = '';
+    const values: any[] = [];
+    
+    if (where.refreshToken) {
+      condition = 'refresh_token = ? AND expires_at > NOW()';
+      values.push(where.refreshToken);
+    } else if (where.token) {
+      condition = 'token = ?';
+      values.push(where.token);
+    }
+    
+    if (!condition) return null;
+    
+    const rows = await query(
+      `SELECT us.*, u.user_type 
+       FROM user_sessions us
+       JOIN users u ON us.user_id = u.id
+       WHERE ${condition} LIMIT 1`,
+      values
+    );
+    return (rows as any[])[0] || null;
+  },
+  
+  update: async ({ where, data }: any) => {
+    await query(
+      'UPDATE user_sessions SET token = ? WHERE id = ?',
+      [data.token, where.id]
+    );
+    
+    const rows = await query(
+      'SELECT * FROM user_sessions WHERE id = ?',
+      [where.id]
+    );
+    return (rows as any[])[0];
+  },
+  
+  deleteMany: async ({ where }: any) => {
+    if (where.token) {
+      const result = await query(
+        'DELETE FROM user_sessions WHERE token = ?',
+        [where.token]
+      );
+      return { count: (result as any).affectedRows };
+    }
+    return { count: 0 };
+  },
+};
+
+// Create a mock Prisma-like interface for compatibility
+export const prisma = {
+  $connect: async () => {
+    await connectDB();
+    await initializeDatabase();
+  },
+  $disconnect: disconnectDB,
+  $queryRaw: async (sql: TemplateStringsArray, ...params: any[]) => {
+    return query(sql.join('?'), params);
+  },
+  user: userModel,
+  userSession: userSessionModel,
+  $transaction: async (operations: any[]) => {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const results = [];
+      
+      for (const operation of operations) {
+        results.push(await operation());
+      }
+      
+      await connection.commit();
+      return results;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+};
+
+export async function connectDatabase(): Promise<void> {
+  try {
+    await prisma.$connect();
+    console.log('✅ MySQL database connected and initialized');
+  } catch (error: any) {
+    console.error('❌ Failed to connect to MySQL database:', error.message);
+    throw error;
+  }
+}
+
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
+}
+```
+
+`controllers\auth.controller.ts`:
+
+```ts
+import { Request, Response } from 'express';
+import { AuthService } from '../services/auth.service';
+import { AuthRequest } from '../middleware/auth.middleware';
+
+const authService = new AuthService();
+
+export class AuthController {
+  constructor() {
+    // Initialize test users on startup
+    authService.initializeTestUsers().catch(console.error);
+  }
+
+  async register(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await authService.register(req.body);
+      res.status(201).json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  }
+
+  async login(req: Request, res: Response): Promise<void> {
+    try {
+      const result = await authService.login(req.body);
+      res.json(result);
+    } catch (error: any) {
+      res.status(401).json({ error: error.message });
+    }
+  }
+
+  async refreshToken(req: Request, res: Response): Promise<void> {
+    try {
+      const { refreshToken } = req.body;
+      
+      if (!refreshToken) {
+        res.status(400).json({ error: 'Refresh token is required' });
+        return;
+      }
+
+      const result = await authService.refreshToken(refreshToken);
+      res.json(result);
+    } catch (error: any) {
+      res.status(401).json({ error: error.message });
+    }
+  }
+
+  async logout(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const token = req.headers.authorization?.replace('Bearer ', '');
+      
+      if (token) {
+        await authService.logout(token);
+      }
+      
+      res.json({ message: 'Logged out successfully' });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async validate(req: Request, res: Response): Promise<void> {
+    try {
+      const { userId } = req.params;
+      const isValid = await authService.validateUser(userId);
+      res.json({ valid: isValid });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
+  async getProfile(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Not authenticated' });
+        return;
+      }
+
+      // In a real implementation, you would fetch user from database
+      res.json({
+        user: {
+          userId: req.user.userId,
+          userType: req.user.userType,
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+}
+```
+
+`controllers\user.controller.ts`:
+
+```ts
+import { Request, Response } from 'express';
+import { UserService } from '../services/user.service';
+import { AuthRequest } from '../middleware/auth.middleware';
+
+const userService = new UserService();
+
+export class UserController {
+  async getAllUsers(req: Request, res: Response): Promise<void> {
+    try {
+      console.log('📋 Fetching all users...');
+      const users = await userService.getAllUsers();
+      console.log(`✅ Found ${users.length} users`);
+      
+      // Format the response
+      const userData = users.map(user => ({
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        userType: user.userType,
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerified,
+        isActive: user.isActive,
+        profileCompleted: user.profileCompleted,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }));
+      
+      // Send response once
+      res.json(userData);
+    } catch (error: any) {
+      console.error('❌ Get all users error:', error);
+      
+      // Check if headers already sent
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || 'Failed to fetch users',
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      } else {
+        console.error('⚠️ Headers already sent, cannot send error response');
+      }
+    }
+  }
+
+  async getUserById(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      console.log(`📋 Fetching user by ID: ${id}`);
+      
+      const user = await userService.getUserById(id);
+      
+      if (!user) {
+        if (!res.headersSent) {
+          res.status(404).json({ error: 'User not found' });
+        }
+        return;
+      }
+      
+      if (!res.headersSent) {
+        res.json({
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phone: user.phone,
+          userType: user.userType,
+          emailVerified: user.emailVerified,
+          phoneVerified: user.phoneVerified,
+          isActive: user.isActive,
+          profileCompleted: user.profileCompleted,
+          lastLogin: user.lastLogin,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt
+        });
+      }
+    } catch (error: any) {
+      console.error('❌ Get user by ID error:', error);
+      
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || 'Failed to fetch user',
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    }
+  }
+
+  async updateProfile(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      if (!req.user) {
+        if (!res.headersSent) {
+          res.status(401).json({ error: 'Not authenticated' });
+        }
+        return;
+      }
+
+      const { firstName, lastName, phone } = req.body;
+      console.log(`📝 Updating profile for user: ${req.user.userId}`);
+      
+      const updatedUser = await userService.updateProfile(req.user.userId, {
+        firstName,
+        lastName,
+        phone,
+      });
+
+      if (!updatedUser) {
+        if (!res.headersSent) {
+          res.status(404).json({ error: 'User not found' });
+        }
+        return;
+      }
+
+      if (!res.headersSent) {
+        res.json({
+          message: 'Profile updated successfully',
+          user: {
+            id: updatedUser.id,
+            email: updatedUser.email,
+            firstName: updatedUser.firstName,
+            lastName: updatedUser.lastName,
+            phone: updatedUser.phone,
+            profileCompleted: updatedUser.profileCompleted,
+          },
+        });
+      }
+    } catch (error: any) {
+      console.error('❌ Update profile error:', error);
+      
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || 'Failed to update profile',
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    }
+  }
+
+  async searchUsers(req: Request, res: Response): Promise<void> {
+    try {
+      const { query } = req.query;
+      
+      if (!query || typeof query !== 'string') {
+        if (!res.headersSent) {
+          res.status(400).json({ error: 'Search query is required' });
+        }
+        return;
+      }
+
+      console.log(`🔍 Searching users with query: ${query}`);
+      const users = await userService.searchUsers(query);
+      
+      if (!res.headersSent) {
+        res.json(users.map(user => ({
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phone: user.phone,
+          userType: user.userType,
+          isActive: user.isActive,
+          profileCompleted: user.profileCompleted,
+        })));
+      }
+    } catch (error: any) {
+      console.error('❌ Search users error:', error);
+      
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || 'Failed to search users',
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    }
+  }
+
+  async getUsersByType(req: Request, res: Response): Promise<void> {
+    try {
+      const { type } = req.params;
+      
+      if (type !== 'driver' && type !== 'customer') {
+        if (!res.headersSent) {
+          res.status(400).json({ error: 'Invalid user type' });
+        }
+        return;
+      }
+
+      console.log(`📊 Getting users by type: ${type}`);
+      const users = await userService.getUsersByType(type);
+      
+      if (!res.headersSent) {
+        res.json(users.map(user => ({
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phone: user.phone,
+          userType: user.userType,
+          isActive: user.isActive,
+          profileCompleted: user.profileCompleted,
+          createdAt: user.createdAt,
+        })));
+      }
+    } catch (error: any) {
+      console.error('❌ Get users by type error:', error);
+      
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: error.message || 'Failed to fetch users by type',
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+      }
+    }
+  }
+}
+```
+
+`index.ts`:
+
+```ts
+import dotenv from 'dotenv';
+dotenv.config(); 
+import app from './app';
+
+// Load environment variables
+dotenv.config();
+
+const PORT = process.env.PORT || 3001;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 User Service started successfully!`);
+  console.log(`📍 Environment: ${NODE_ENV}`);
+  console.log(`📡 Port: ${PORT}`);
+  console.log(`🌐 URL: http://localhost:${PORT}`);
+  console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth`);
+  console.log(`👤 User endpoints: http://localhost:${PORT}/api/users`);
+  console.log(`🩺 Health check: http://localhost:${PORT}/health`);
+  console.log('');
+  console.log(`📝 Test credentials:`);
+  console.log(`   👨‍✈️ Driver: driver@test.com / Password123`);
+  console.log(`   👩‍💼 Customer: customer@test.com / Password123`);
+  console.log('');
+  console.log(`⚠️  Note: Using in-memory database (data will be lost on restart)`);
+});
+```
+
+`lib\mysql.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
+import path from 'path';
+
+// Create connection pool
+const pool = mysql.createPool({
+  host: process.env.MYSQL_HOST || 'localhost',
+  port: parseInt(process.env.MYSQL_PORT || '3307'),
+  user: process.env.MYSQL_USER || 'app_user',
+  password: process.env.MYSQL_PASSWORD || 'app_password',
+  database: process.env.MYSQL_DATABASE || 'user_service_db',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
+});
+
+export async function query(sql: string, params?: any[]): Promise<any> {
+  const connection = await pool.getConnection();
+  try {
+    console.log('📝 Executing query:', sql);
+    if (params) console.log('📝 Query params:', params);
+    const [rows] = await connection.execute(sql, params);
+    return rows;
+  } catch (error) {
+    console.error('Query error:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+export async function connectDB(): Promise<void> {
+  try {
+    await query('SELECT 1');
+    console.log('✅ Connected to MySQL database');
+  } catch (error: any) {
+    console.error('❌ Failed to connect to MySQL:', error.message);
+    throw error;
+  }
+}
+
+export async function disconnectDB(): Promise<void> {
+  await pool.end();
+  console.log('📦 Disconnected from MySQL database');
+}
+
+export async function initializeDatabase(): Promise<void> {
+  try {
+    console.log('🔄 Initializing database tables...');
+    
+    // Read SQL script file
+    const sqlPath = path.join(__dirname, '..', 'mysql-init', '01-init.sql');
+    let sqlScript: string;
+    
+    if (fs.existsSync(sqlPath)) {
+      // Use external SQL file if exists
+      sqlScript = fs.readFileSync(sqlPath, 'utf8');
+    } else {
+      // Use hardcoded SQL
+      sqlScript = `
+        CREATE TABLE IF NOT EXISTS users (
+          id VARCHAR(255) PRIMARY KEY,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password VARCHAR(255) NOT NULL,
+          first_name VARCHAR(100) NOT NULL,
+          last_name VARCHAR(100) NOT NULL,
+          phone VARCHAR(20),
+          user_type VARCHAR(20) NOT NULL,
+          email_verified BOOLEAN DEFAULT false,
+          phone_verified BOOLEAN DEFAULT false,
+          is_active BOOLEAN DEFAULT true,
+          profile_completed BOOLEAN DEFAULT false,
+          last_login DATETIME,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          INDEX idx_email (email),
+          INDEX idx_user_type (user_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          id VARCHAR(255) PRIMARY KEY,
+          user_id VARCHAR(255) NOT NULL,
+          token TEXT NOT NULL,
+          refresh_token TEXT NOT NULL,
+          device_info TEXT,
+          ip_address TEXT,
+          expires_at DATETIME NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE KEY uk_token (token(255)),
+          UNIQUE KEY uk_refresh_token (refresh_token(255)),
+          INDEX idx_user_id (user_id),
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+      `;
+    }
+    
+    // Split SQL script into individual statements
+    const statements = sqlScript
+      .split(';')
+      .map(statement => statement.trim())
+      .filter(statement => statement.length > 0);
+    
+    // Execute each statement
+    for (const statement of statements) {
+      if (statement.toLowerCase().startsWith('create database')) {
+        // Skip database creation if it's already handled by environment
+        console.log('Skipping database creation (handled by env vars)');
+        continue;
+      }
+      await query(statement + ';');
+    }
+    
+    console.log('✅ Database tables created/verified');
+  } catch (error: any) {
+    console.error('❌ Failed to initialize database:', error.message);
+    throw error;
+  }
+}
+
+export { pool };
+```
+
+`middleware\auth.middleware.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import { JWTUtils } from '../utils/jwt';
+
+export interface AuthRequest extends Request {
+  user?: {
+    userId: string;
+    userType: string;
+  };
+}
+
+export const authMiddleware = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'No token provided' });
+      return;
+    }
+
+    const token = authHeader.split(' ')[1];
+    
+    try {
+      const decoded = JWTUtils.verifyToken(token);
+      
+      if (decoded.type !== 'access') {
+        res.status(401).json({ error: 'Invalid token type' });
+        return;
+      }
+
+      req.user = {
+        userId: decoded.userId,
+        userType: decoded.userType,
+      };
+
+      next();
+    } catch (error) {
+      res.status(401).json({ error: 'Invalid or expired token' });
+    }
+  } catch (error) {
+    console.error('Auth middleware error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const optionalAuthMiddleware = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      
+      try {
+        const decoded = JWTUtils.verifyToken(token);
+        
+        if (decoded.type === 'access') {
+          req.user = {
+            userId: decoded.userId,
+            userType: decoded.userType,
+          };
+        }
+      } catch (error) {
+        // Token is invalid, but we don't fail since auth is optional
+        console.warn('Optional auth token invalid:', error);
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error('Optional auth middleware error:', error);
+    next();
+  }
+};
+```
+
+`middleware\validation.middleware.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import { ValidationUtils } from '../utils/validation';
+
+export const validateRegister = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const validation = ValidationUtils.validateRegister(req.body);
+  
+  if (!validation.isValid) {
+    res.status(400).json({ 
+      error: 'Validation failed',
+      details: validation.errors 
+    });
+    return;
+  }
+  
+  next();
+};
+
+export const validateLogin = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const validation = ValidationUtils.validateLogin(req.body);
+  
+  if (!validation.isValid) {
+    res.status(400).json({ 
+      error: 'Validation failed',
+      details: validation.errors 
+    });
+    return;
+  }
+  
+  next();
+};
+
+export const validateUserId = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  const { userId } = req.params;
+  
+  if (!userId || userId.trim().length === 0) {
+    res.status(400).json({ error: 'User ID is required' });
+    return;
+  }
+  
+  next();
+};
+```
+
+`models\EmailVerificationToken.ts`:
+
+```ts
+// Placeholder for EmailVerificationToken model
+export interface EmailVerificationTokenModel {
+  id: string;
+  userId: string;
+  token: string;
+  expiresAt: Date;
+  used: boolean;
+  createdAt: Date;
+}
+```
+
+`models\PasswordResetToken.ts`:
+
+```ts
+// Placeholder for PasswordResetToken model
+export interface PasswordResetTokenModel {
+  id: string;
+  userId: string;
+  token: string;
+  expiresAt: Date;
+  used: boolean;
+  createdAt: Date;
+}
+
+```
+
+`models\User.ts`:
+
+```ts
+// This is a TypeScript interface for the User model
+// In a real implementation with Prisma, this would be auto-generated
+
+export interface UserModel {
+  id: string;
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  userType: string;
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  isActive: boolean;
+  profileCompleted: boolean;
+  lastLogin?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+```
+
+`models\UserSession.ts`:
+
+```ts
+// Placeholder for UserSession model
+export interface UserSessionModel {
+  id: string;
+  userId: string;
+  token: string;
+  refreshToken: string;
+  deviceInfo?: string;
+  ipAddress?: string;
+  expiresAt: Date;
+  createdAt: Date;
+}
+```
+
+`routes\auth.routes.ts`:
+
+```ts
+import { Router } from 'express';
+import { AuthController } from '../controllers/auth.controller';
+import { validateRegister, validateLogin, validateUserId } from '../middleware/validation.middleware';
+import { authMiddleware } from '../middleware/auth.middleware';
+
+const router = Router();
+const authController = new AuthController();
+
+// Public routes
+router.post('/register', validateRegister, authController.register.bind(authController));
+router.post('/login', validateLogin, authController.login.bind(authController));
+router.post('/refresh-token', authController.refreshToken.bind(authController));
+router.get('/validate/:userId', validateUserId, authController.validate.bind(authController));
+
+// Protected routes
+router.post('/logout', authMiddleware, authController.logout.bind(authController));
+router.get('/profile', authMiddleware, authController.getProfile.bind(authController));
+
+export default router;
+```
+
+`routes\user.routes.ts`:
+
+```ts
+import { Router } from 'express';
+import { UserController } from '../controllers/user.controller';
+import { authMiddleware, optionalAuthMiddleware } from '../middleware/auth.middleware';
+
+const router = Router();
+const userController = new UserController();
+
+// Public routes
+router.get('/', userController.getAllUsers.bind(userController));
+router.get('/search', userController.searchUsers.bind(userController));
+router.get('/type/:type', userController.getUsersByType.bind(userController));
+router.get('/:id', userController.getUserById.bind(userController));
+
+// Protected routes
+router.put('/profile', authMiddleware, userController.updateProfile.bind(userController));
+
+export default router;
+```
+
+`services\auth.service.ts`:
+
+```ts
+import { RegisterDto, LoginDto, AuthResponse } from '../types';
+import { PasswordUtils } from '../utils/password';
+import { JWTUtils } from '../utils/jwt';
+import { prisma } from '../config/database';
+
+export class AuthService {
+  async register(data: RegisterDto): Promise<AuthResponse> {
+    try {
+      console.log('Registering user:', data.email);
+
+      // Check if user already exists
+      const existingUser = await prisma.user.findUnique({
+        where: { email: data.email }
+      });
+
+      if (existingUser) {
+        throw new Error('User already exists');
+      }
+
+      // Hash password
+      const hashedPassword = await PasswordUtils.hash(data.password);
+      console.log('Password hashed successfully');
+
+      // Create user
+      const user = await prisma.user.create({
+        data: {
+          email: data.email,
+          password: hashedPassword,
+          firstName: data.firstName,
+          lastName: data.lastName,
+          phone: data.phone,
+          userType: data.userType,
+          emailVerified: false,
+          phoneVerified: false,
+          isActive: true,
+          profileCompleted: false,
+        }
+      });
+
+      console.log('User created in database:', user.id);
+
+      // Generate tokens
+      const tokens = JWTUtils.generateTokens(user.id, user.userType);
+      console.log('Tokens generated');
+
+      // Create session
+      await prisma.userSession.create({
+        data: {
+          userId: user.id,
+          token: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          deviceInfo: 'web',
+          ipAddress: '127.0.0.1'
+        }
+      });
+
+      console.log('Session created');
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          userType: user.userType,
+          profileCompleted: user.profileCompleted,
+        },
+        tokens
+      };
+    } catch (error: any) {
+      console.error('Registration error:', error);
+      throw error;
+    }
+  }
+
+  async login(data: LoginDto): Promise<AuthResponse> {
+    try {
+      console.log('Login attempt for:', data.email);
+
+      // Find user
+      const user = await prisma.user.findUnique({
+        where: { email: data.email }
+      });
+
+      if (!user) {
+        throw new Error('Invalid credentials');
+      }
+
+      // Check if account is active (user.isActive is already boolean from normalizeUser)
+      if (!user.isActive) {
+        throw new Error('Account is disabled');
+      }
+
+      // Verify password
+      console.log('Comparing password for user:', user.email);
+      const isValidPassword = await PasswordUtils.compare(
+        data.password,
+        user.password
+      );
+
+      console.log('Password comparison result:', isValidPassword);
+
+      if (!isValidPassword) {
+        throw new Error('Invalid credentials');
+      }
+
+      console.log('Password verified for user:', user.id);
+
+      // Generate tokens
+      const tokens = JWTUtils.generateTokens(user.id, user.userType);
+
+      // Update last login
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastLogin: new Date() }
+      });
+
+      // Create new session
+      await prisma.userSession.create({
+        data: {
+          userId: user.id,
+          token: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          deviceInfo: 'web',
+          ipAddress: '127.0.0.1'
+        }
+      });
+
+      return {
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          userType: user.userType,
+          profileCompleted: user.profileCompleted,
+        },
+        tokens
+      };
+    } catch (error: any) {
+      console.error('Login error:', error);
+      throw error;
+    }
+  }
+
+  async refreshToken(refreshToken: string): Promise<{ accessToken: string }> {
+    try {
+      // Verify refresh token
+      const decoded = JWTUtils.verifyToken(refreshToken);
+      
+      // Check if session exists
+      const session = await prisma.userSession.findFirst({
+        where: {
+          refreshToken,
+          expiresAt: { gt: new Date() }
+        }
+      });
+
+      if (!session) {
+        throw new Error('Invalid refresh token');
+      }
+
+      // Get user for userType
+      const user = await prisma.user.findUnique({
+        where: { id: session.userId }
+      });
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Generate new access token
+      const accessToken = JWTUtils.generateAccessToken({
+        userId: session.userId,
+        userType: user.userType,
+      });
+
+      // Update session with new token
+      await prisma.userSession.update({
+        where: { id: session.id },
+        data: { token: accessToken }
+      });
+
+      return { accessToken };
+    } catch (error) {
+      console.error('Refresh token error:', error);
+      throw new Error('Invalid refresh token');
+    }
+  }
+
+  async logout(token: string): Promise<void> {
+    try {
+      await prisma.userSession.deleteMany({
+        where: { token }
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+      throw error;
+    }
+  }
+
+  async validateUser(userId: string): Promise<boolean> {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId, isActive: true }
+      });
+      return !!user;
+    } catch (error) {
+      console.error('Validate user error:', error);
+      return false;
+    }
+  }
+
+  // Initialize test users - FIXED VERSION
+  async initializeTestUsers(): Promise<void> {
+    try {
+      console.log('Initializing test users...');
+      
+      const testUsers = [
+        {
+          email: 'driver@test.com',
+          password: 'Password123',
+          firstName: 'John',
+          lastName: 'Driver',
+          userType: 'driver' as const,
+          phone: '+1234567890'
+        },
+        {
+          email: 'customer@test.com',
+          password: 'Password123',
+          firstName: 'Jane',
+          lastName: 'Customer',
+          userType: 'customer' as const,
+          phone: '+0987654321'
+        },
+      ];
+
+      for (const userData of testUsers) {
+        const existing = await prisma.user.findUnique({
+          where: { email: userData.email }
+        });
+        
+        if (!existing) {
+          console.log(`Creating test user: ${userData.email}`);
+          try {
+            // Direct create with hashed password instead of calling register
+            const hashedPassword = await PasswordUtils.hash(userData.password);
+            await prisma.user.create({
+              data: {
+                email: userData.email,
+                password: hashedPassword,
+                firstName: userData.firstName,
+                lastName: userData.lastName,
+                phone: userData.phone,
+                userType: userData.userType,
+                emailVerified: true,
+                phoneVerified: true,
+                isActive: true,
+                profileCompleted: true,
+              }
+            });
+            console.log(`✅ Created test user: ${userData.email}`);
+          } catch (error: any) {
+            console.error(`❌ Failed to create test user ${userData.email}:`, error.message);
+          }
+        } else {
+          console.log(`✅ Test user already exists: ${userData.email}`);
+        }
+      }
+      
+      console.log('✅ Test users initialization completed');
+    } catch (error) {
+      console.error('Error initializing test users:', error);
+    }
+  }
+}
+```
+
+`services\user.service.ts`:
+
+```ts
+import { User, DBUser } from '../types';
+import { prisma } from '../config/database';
+
+export class UserService {
+  async getUserById(userId: string): Promise<User | null> {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId }
+      });
+      
+      if (!user) return null;
+      
+      return {
+        id: user.id,
+        email: user.email,
+        password: user.password,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        userType: user.userType,
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerified,
+        isActive: user.isActive,
+        profileCompleted: user.profileCompleted,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      };
+    } catch (error) {
+      console.error('Get user by ID error:', error);
+      throw error;
+    }
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    try {
+      // Remove orderBy or fix it - the database.ts already handles ordering
+      const users = await prisma.user.findMany();
+      
+      return users.map((user: any) => ({
+        id: user.id,
+        email: user.email,
+        password: user.password,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        userType: user.userType,
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerified,
+        isActive: user.isActive,
+        profileCompleted: user.profileCompleted,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }));
+    } catch (error) {
+      console.error('Get all users error:', error);
+      throw error;
+    }
+  }
+
+  async searchUsers(query: string): Promise<User[]> {
+    try {
+      const users = await prisma.$queryRaw`
+        SELECT * FROM users 
+        WHERE email LIKE ${'%' + query + '%'} 
+           OR first_name LIKE ${'%' + query + '%'} 
+           OR last_name LIKE ${'%' + query + '%'} 
+           OR phone LIKE ${'%' + query + '%'}
+        ORDER BY created_at DESC
+      `;
+      
+      return (users as any[]).map((user: any) => ({
+        id: user.id,
+        email: user.email,
+        password: user.password,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
+        userType: user.user_type,
+        emailVerified: Boolean(user.email_verified),
+        phoneVerified: Boolean(user.phone_verified),
+        isActive: Boolean(user.is_active),
+        profileCompleted: Boolean(user.profile_completed),
+        lastLogin: user.last_login,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at
+      }));
+    } catch (error) {
+      console.error('Search users error:', error);
+      throw error;
+    }
+  }
+
+  async getUsersByType(userType: 'driver' | 'customer'): Promise<User[]> {
+    try {
+      const users = await prisma.user.findMany({
+        where: { userType }
+      });
+      
+      return users.map((user: any) => ({
+        id: user.id,
+        email: user.email,
+        password: user.password,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        phone: user.phone,
+        userType: user.userType,
+        emailVerified: user.emailVerified,
+        phoneVerified: user.phoneVerified,
+        isActive: user.isActive,
+        profileCompleted: user.profileCompleted,
+        lastLogin: user.lastLogin,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }));
+    } catch (error) {
+      console.error('Get users by type error:', error);
+      throw error;
+    }
+  }
+
+  async updateProfile(userId: string, profileData: {
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+  }): Promise<User | null> {
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id: userId },
+        data: {
+          ...profileData,
+          profileCompleted: true
+        }
+      });
+      
+      return {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        password: updatedUser.password,
+        firstName: updatedUser.firstName,
+        lastName: updatedUser.lastName,
+        phone: updatedUser.phone,
+        userType: updatedUser.userType,
+        emailVerified: updatedUser.emailVerified,
+        phoneVerified: updatedUser.phoneVerified,
+        isActive: updatedUser.isActive,
+        profileCompleted: updatedUser.profileCompleted,
+        lastLogin: updatedUser.lastLogin,
+        createdAt: updatedUser.createdAt,
+        updatedAt: updatedUser.updatedAt
+      };
+    } catch (error) {
+      console.error('Update profile error:', error);
+      throw error;
+    }
+  }
+}
+```
+
+`types\index.ts`:
+
+```ts
+export interface User {
+  id: string;
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  userType: 'driver' | 'customer';
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  isActive: boolean;
+  profileCompleted: boolean;
+  lastLogin?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RegisterDto {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  userType: 'driver' | 'customer';
+}
+
+export interface LoginDto {
+  email: string;
+  password: string;
+}
+
+export interface AuthResponse {
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    userType: 'driver' | 'customer';
+    profileCompleted: boolean;
+  };
+  tokens: {
+    accessToken: string;
+    refreshToken: string;
+  };
+}
+
+export interface TokenPayload {
+  userId: string;
+  userType: string;
+  type?: 'access' | 'refresh';
+  exp?: number; // Expiration timestamp
+  iat?: number; // Issued at timestamp
+}
+
+export interface ValidationResult {
+  error?: {
+    details: Array<{ message: string }>;
+  };
+  value: any;
+}
+
+// Database User interface matching your schema
+export interface DBUser {
+  id: string;
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  phone?: string;
+  user_type: 'driver' | 'customer';
+  email_verified: boolean;
+  phone_verified: boolean;
+  is_active: boolean;
+  profile_completed: boolean;
+  last_login?: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+```
+
+`utils\jwt.ts`:
+
+```ts
+import jwt from 'jsonwebtoken';
+import { TokenPayload } from '../types';
+
+export class JWTUtils {
+  private static getSecret(): string {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET environment variable is not set');
+    }
+    return secret;
+  }
+
+  static generateAccessToken(payload: { userId: string; userType: string }): string {
+    const secret = this.getSecret();
+    const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
+    
+    return jwt.sign(
+      { 
+        ...payload, 
+        type: 'access',
+        iat: Math.floor(Date.now() / 1000)
+      },
+      secret,
+      { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] }
+    );
+  }
+
+  static generateRefreshToken(payload: { userId: string; userType: string }): string {
+    const secret = this.getSecret();
+    const expiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
+    
+    return jwt.sign(
+      { 
+        ...payload, 
+        type: 'refresh',
+        iat: Math.floor(Date.now() / 1000)
+      },
+      secret,
+      { expiresIn: expiresIn as jwt.SignOptions['expiresIn'] }
+    );
+  }
+
+  static verifyToken(token: string): TokenPayload {
+    try {
+      const secret = this.getSecret();
+      return jwt.verify(token, secret) as TokenPayload;
+    } catch (error: any) {
+      if (error.name === 'TokenExpiredError') {
+        throw new Error('Token has expired');
+      } else if (error.name === 'JsonWebTokenError') {
+        throw new Error('Invalid token');
+      } else {
+        throw new Error('Token verification failed');
+      }
+    }
+  }
+
+  static decodeToken(token: string): TokenPayload | null {
+    try {
+      return jwt.decode(token) as TokenPayload;
+    } catch {
+      return null;
+    }
+  }
+
+  static generateTokens(userId: string, userType: string): {
+    accessToken: string;
+    refreshToken: string;
+  } {
+    const payload = { userId, userType };
+    
+    return {
+      accessToken: this.generateAccessToken(payload),
+      refreshToken: this.generateRefreshToken(payload),
+    };
+  }
+}
+```
+
+`utils\password.ts`:
+
+```ts
+import bcrypt from 'bcryptjs';
+
+export class PasswordUtils {
+  static async hash(password: string): Promise<string> {
+    const salt = await bcrypt.genSalt(12);
+    return bcrypt.hash(password, salt);
+  }
+
+  static async compare(password: string, hashedPassword: string): Promise<boolean> {
+    return bcrypt.compare(password, hashedPassword);
+  }
+
+  static validate(password: string): boolean {
+    // Minimum 8 characters, at least one uppercase, one lowercase, one number
+    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,}$/;
+    return passwordRegex.test(password);
+  }
+}
+```
+
+`utils\validation.ts`:
+
+```ts
+import { RegisterDto, LoginDto } from '../types';
+
+export class ValidationUtils {
+  static validateRegister(data: RegisterDto): { isValid: boolean; errors?: string[] } {
+    const errors: string[] = [];
+
+    // Email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(data.email)) {
+      errors.push('Invalid email format');
+    }
+
+    // Password validation
+    if (!PasswordUtils.validate(data.password)) {
+      errors.push('Password must be at least 8 characters with uppercase, lowercase, and number');
+    }
+
+    // Name validation
+    if (!data.firstName || data.firstName.trim().length < 2) {
+      errors.push('First name must be at least 2 characters');
+    }
+
+    if (!data.lastName || data.lastName.trim().length < 2) {
+      errors.push('Last name must be at least 2 characters');
+    }
+
+    // User type validation
+    if (!['driver', 'customer'].includes(data.userType)) {
+      errors.push('User type must be either "driver" or "customer"');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+
+  static validateLogin(data: LoginDto): { isValid: boolean; errors?: string[] } {
+    const errors: string[] = [];
+
+    if (!data.email) {
+      errors.push('Email is required');
+    }
+
+    if (!data.password) {
+      errors.push('Password is required');
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors: errors.length > 0 ? errors : undefined,
+    };
+  }
+}
+
+// Import PasswordUtils after declaration
+import { PasswordUtils } from './password';
+```
+
+.env
+
+PORT=3001
+NODE_ENV=development
+JWT_SECRET=d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044
+JWT_EXPIRES_IN=7d
+MYSQL_HOST=localhost
+MYSQL_PORT=3307
+MYSQL_USER=app_user
+MYSQL_PASSWORD=app_password
+MYSQL_DATABASE=user_service_db
