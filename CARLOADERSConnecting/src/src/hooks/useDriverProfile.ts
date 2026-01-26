@@ -111,8 +111,8 @@ export function useDriverProfile() {
             lastName: effectiveUserData.lastName || driverResponse.data.lastName || '',
             email: effectiveUserData.email || driverResponse.data.email || '',
             phone: effectiveUserData.phone || driverResponse.data.phone || '',
-            address: driverResponse.data.address || '',
-            dateOfBirth: driverResponse.data.dateOfBirth || '',
+            address: effectiveUserData.address || driverResponse.data.address || '',
+            dateOfBirth: effectiveUserData.dateOfBirth || driverResponse.data.dateOfBirth || '',
             joinDate: driverResponse.data.joinDate || new Date().toISOString().split('T')[0]
           }
         });

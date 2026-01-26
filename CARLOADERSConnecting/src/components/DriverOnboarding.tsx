@@ -243,7 +243,7 @@ const registrationRef = useRef(null);
 
       console.log('✅ UI state updated (testing mode)');
       return; // Stop here for testing
-      /*
+      
       const response = await driverApi.uploadDocument(formData);
 
       if (response.success) {
@@ -272,11 +272,11 @@ const registrationRef = useRef(null);
             file: file 
           } 
         }));
-      }*/
+      }
     } catch (error: any) {
       console.error('🚨 Error uploading document:', error);
       toast.error(`Error uploading document: ${error.message}`);
-      /*setDocumentStatus(prev => ({ 
+      setDocumentStatus(prev => ({ 
         ...prev, 
         [field]: { 
           uploaded: true,
@@ -286,7 +286,7 @@ const registrationRef = useRef(null);
           id: undefined,
           file: file 
         } 
-      }));*/
+      }));
     }
   };
 
@@ -364,10 +364,10 @@ const registrationRef = useRef(null);
       }
 
       const profileData = {
-        licenseNumber: 'TEMP_LICENSE',
-        licenseExpiry: '2025-12-31',
-        insuranceNumber: 'TEMP_INSURANCE',
-        insuranceExpiry: '2025-12-31',
+        licenseNumber: profile.licenseNumber,
+        licenseExpiry: profile.licenseExpiry,
+        insuranceNumber: profile.insuaranceNumber,
+        insuranceExpiry: profile.insuaranceExpiry,
         phone: profile.phone || userData.phone || '',
         address: `${profile.address}, ${profile.city}, ${profile.zipCode}`,
         userId: userData.id,
