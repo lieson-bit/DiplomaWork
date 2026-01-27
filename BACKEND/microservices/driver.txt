@@ -6,7 +6,9 @@ Source Tree:
 driver-service
 ├── Dockerfile
 ├── README.md
+├── car.jpg
 ├── docker-compose.yml
+├── images.png
 ├── package-lock.json
 ├── package.json
 ├── scripts
@@ -3662,9 +3664,28 @@ const stream = {
 app.use(morgan('combined', { stream }));
 
 // Static files for uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploads with CORS headers
+// Static files for uploads WITH CORS
+app.use(
+  '/uploads',
+  express.static(path.join(process.cwd(), 'uploads'), {
+    setHeaders: (res, filePath, stat) => {
+      // Only set CORS for image and PDF files
+      if (filePath.endsWith('.jpg') || 
+          filePath.endsWith('.jpeg') || 
+          filePath.endsWith('.png') || 
+          filePath.endsWith('.gif') || 
+          filePath.endsWith('.pdf')) {
+        res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || 'http://localhost:3000');
+        res.setHeader('Access-Control-Allow-Methods', 'GET');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      }
+    }
+  })
+);
+
 // Add this line to serve vehicle images
-app.use('/uploads/vehicles', express.static(path.join(__dirname, 'uploads', 'vehicles')));
+//app.use('/uploads/vehicles', express.static(path.join(__dirname, 'uploads', 'vehicles')));
 // Routes
 
 
@@ -6075,10 +6096,28 @@ export class DriverService {
     if (!driver) {
       throw new Error('Driver profile not found');
     }
-
+  
+    // 🔥 CRITICAL FIX: Delete existing profile picture FIRST
+    const existingPicture = await this.profilePictureRepository.findByDriverId(driver.id);
+    if (existingPicture) {
+      // Delete physical files
+      const filesToDelete = [
+        existingPicture.originalUrl.replace(`${process.env.APP_URL}/uploads/`, ''),
+        existingPicture.thumbnailUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+        existingPicture.smallUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+        existingPicture.mediumUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+      ].filter(Boolean) as string[];
+    
+      for (const filePath of filesToDelete) {
+        await uploadService.deleteFile(filePath);
+      }
+    
+      // Delete from DB
+      await this.profilePictureRepository.deleteByDriverId(driver.id);
+    }
+  
+    // Now process and save new picture
     const processed = await uploadService.processProfilePicture(file.path, userId);
-    await this.profilePictureRepository.deactivateByDriverId(driver.id);
-
     const profilePicture = await this.profilePictureRepository.create({
       driverId: driver.id,
       originalUrl: uploadService.getFileUrl(processed.processedFiles.original),
@@ -6091,7 +6130,7 @@ export class DriverService {
       height: processed.metadata.height,
       isActive: true
     });
-
+  
     logger.info(`Uploaded profile picture for driver: ${userId}`);
     return profilePicture;
   }
@@ -6484,7 +6523,8 @@ import sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
 
-const UPLOAD_PATH = process.env.UPLOAD_PATH || path.join(process.cwd(), 'src', 'uploads');
+const UPLOAD_PATH = process.env.UPLOAD_PATH || path.join(process.cwd(), 'uploads');
+//const UPLOAD_PATH = process.env.UPLOAD_PATH || path.join(process.cwd(), 'src', 'uploads');
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE || '5242880');
 const ALLOWED_FILE_TYPES = (process.env.ALLOWED_FILE_TYPES || 'image/jpeg,image/png,image/jpg,application/pdf').split(',');
 

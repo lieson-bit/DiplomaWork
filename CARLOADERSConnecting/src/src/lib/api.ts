@@ -317,6 +317,11 @@ export const driverApi = {
     return makeRequest('/api/drivers/profile', 'PUT', data, 'driver');
   },
 
+  // In driverApi object
+  updateStatus: async (data: { isOnline: boolean }) => {
+    return makeRequest('/api/drivers/status', 'PATCH', data, 'driver');
+  },
+
   // Vehicles
   getVehicles: async () => {
     return makeRequest('/api/drivers/vehicles', 'GET', undefined, 'driver');

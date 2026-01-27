@@ -705,72 +705,6 @@ export function DriverProfile() {
         </CardContent>
       </Card>
 
-      {/* Debug Info - Remove in production */}
-      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-        <div className="flex justify-between items-center">
-          <span className="text-blue-700 font-medium">Debug Info:</span>
-          <div className="flex gap-2">
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={async () => {
-                console.log('🔍 Testing all image URLs...');
-                
-                // Test profile picture
-                if (profilePictureUrl) {
-                  const result = await testImageExists(profilePictureUrl);
-                  console.log(`📸 Profile picture test:`, result);
-                  
-                  if (!result.exists) {
-                    console.log('🔄 Trying alternative profile picture URLs...');
-                    
-                    // Try all available profile picture URLs
-                    const profileUrls = [
-                      profileData?.profilePicture?.originalUrl,
-                      profileData?.profilePicture?.mediumUrl,
-                      profileData?.profilePicture?.smallUrl,
-                      profileData?.profilePicture?.thumbnailUrl
-                    ].filter(Boolean);
-                    
-                    for (const url of profileUrls) {
-                      if (url) {
-                        const test = await testImageExists(url);
-                        console.log(`  ${url}: ${test.exists ? '✅ Works' : '❌ Fails'}`);
-                      }
-                    }
-                  }
-                }
-                
-                // Test vehicle image
-                if (activeVehicleImageUrl) {
-                  const result = await testImageExists(activeVehicleImageUrl);
-                  console.log(`🚗 Vehicle image test:`, result);
-                }
-              }}
-              className="text-xs"
-            >
-              Test Image URLs
-            </Button>
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={loadProfileData}
-              className="text-xs"
-            >
-              <RefreshCw className="h-3 w-3 mr-1" />
-              Refresh
-            </Button>
-          </div>
-        </div>
-        <div className="mt-2 text-xs text-blue-600">
-          {profilePictureUrl && (
-            <p className="truncate">Profile Pic: {profilePictureUrl.substring(0, 60)}...</p>
-          )}
-          {activeVehicleImageUrl && (
-            <p className="truncate">Vehicle Pic: {activeVehicleImageUrl.substring(0, 60)}...</p>
-          )}
-        </div>
-      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-4">
@@ -975,7 +909,7 @@ export function DriverProfile() {
                                 handleImageError('vehicle', activeVehicleId || '');
 
                                 // Try to open the URL in console for debugging
-                                console.log('🔗 Try opening this URL directly:', activeVehicleImageUrl);
+                                
                               }}
                               onLoad={() => {
                                 console.log('✅ Vehicle image loaded successfully:', activeVehicleImageUrl);
@@ -1061,7 +995,7 @@ export function DriverProfile() {
                       
                       {activeVehicleImageUrl && (
                         <div className="mt-2 text-xs text-gray-500 text-center truncate">
-                          URL: {activeVehicleImageUrl.substring(0, 40)}...
+                          
                         </div>
                       )}
                     </div>
