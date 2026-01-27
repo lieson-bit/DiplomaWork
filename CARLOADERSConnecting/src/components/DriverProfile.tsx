@@ -9,240 +9,191 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "./ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Progress } from "./ui/progress";
-import { Avatar, AvatarFallback } from "./ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
-import { User, Car, FileText, Upload, CheckCircle, AlertTriangle, Clock, Star, MapPin, Phone, Mail, Calendar, Settings } from 'lucide-react';
+import { User, Car, FileText, Upload, CheckCircle, AlertTriangle, Clock, Star, MapPin, Phone, Mail, Calendar, Settings, Edit, Save } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { useDriverProfile } from '../src/hooks/useDriverProfile';
-import { getCurrentUser } from '../src/lib/auth-utils';
 import { driverApi } from '../src/lib/api';
-import { useRef } from 'react';
 
 interface Document {
   id: string;
-  type: 'license' | 'insurance' | 'registration' | 'inspection';
+  type: 'license' | 'insurance' | 'registration' | 'inspection' | 'background_check';
   name: string;
+  fileName: string;
+  fileUrl: string;
   status: 'pending' | 'approved' | 'rejected' | 'expired';
   uploadDate: string;
   expiryDate?: string;
   rejectionReason?: string;
 }
 
+interface Vehicle {
+  id: string;
+  type: string;
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+  maxWeight: number;
+  maxVolume: number;
+  imageUrl?: string;
+  isActive: boolean;
+  currentStatus: 'available' | 'in_use' | 'maintenance';
+}
+
+interface UserProfile {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+}
+
+interface DriverProfileData {
+  id: string;
+  userId: string;
+  licenseNumber: string;
+  licenseExpiry: string;
+  insuranceNumber: string;
+  insuranceExpiry: string;
+  rating: number;
+  totalDeliveries: number;
+  totalEarnings: number;
+  completionRate: number;
+  status: 'pending' | 'active' | 'suspended' | 'inactive';
+  verificationLevel: 'none' | 'basic' | 'verified' | 'premium';
+  isOnline: boolean;
+  profileCompleted: boolean;
+  user?: UserProfile;
+  vehicles?: Vehicle[];
+  documents?: Document[];
+  profilePicture?: {
+    thumbnailUrl?: string;
+    smallUrl?: string;
+    mediumUrl?: string;
+    originalUrl?: string;
+  };
+  onboardedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
 
 export function DriverProfile() {
   const [activeTab, setActiveTab] = useState('personal');
   const [isEditing, setIsEditing] = useState(false);
-  const [vehicles, setVehicles] = useState([]);
-  const [activeVehicleId, setActiveVehicleId] = useState(null);
-  const fileRef = useRef(null);
+  const [profileData, setProfileData] = useState<DriverProfileData | null>(null);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [activeVehicleId, setActiveVehicleId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [profilePicFile, setProfilePicFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
-    personalInfo: {
-      firstName: '',
-      lastName: '',
-      email: '',
-      phone: '',
-      address: '',
-      dateOfBirth: '',
-      joinDate: ''
-    },
-    vehicleInfo: {
-      type: '',
-      make: '',
-      model: '',
-      year: '',
-      color: '',
-      licensePlate: '',
-      maxWeight: 0,
-      maxVolume: 0
-    }
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    address: '',
+    dateOfBirth: '',
+    joinDate: '',
+    licenseNumber: '',
+    licenseExpiry: '',
+    insuranceNumber: '',
+    insuranceExpiry: '',
   });
 
-  const { 
-    driverData, 
-    loading, 
-    error, 
-    updateProfile,
-    addVehicle,
-    loadDriverProfile
-  } = useDriverProfile();
-
-  const [localDocuments, setLocalDocuments] = useState([]);
-  const [localStats, setLocalStats] = useState({
-    totalDeliveries: 0,
-    rating: 0,
-    totalEarnings: 0,
-    completionRate: 0
-  });
-  const [localVerification, setLocalVerification] = useState({
-    backgroundCheck: 'pending' as const,
-    profileCompletion: 30,
-    canDrive: false
-  });
-
-  /*/ Initialize form data when driverData loads
   useEffect(() => {
-    if (driverData) {
-      console.log('Driver data loaded:', driverData);
-      setFormData({
-        personalInfo: {
-          firstName: driverData.personalInfo?.firstName || driverData.firstName || '',
-          lastName: driverData.personalInfo?.lastName || driverData.lastName || '',
-          email: driverData.personalInfo?.email || driverData.email || '',
-          phone: driverData.personalInfo?.phone || driverData.phone || '',
-          address: driverData.personalInfo?.address || driverData.address || '',
-          dateOfBirth: driverData.personalInfo?.dateOfBirth || driverData.dateOfBirth || '',
-          joinDate: driverData.personalInfo?.joinDate || driverData.joinDate || new Date().toISOString().split('T')[0]
-        },
-        vehicleInfo: {
-          type: driverData.vehicleInfo?.type || driverData.vehicleType || '',
-          make: driverData.vehicleInfo?.make || driverData.make || '',
-          model: driverData.vehicleInfo?.model || driverData.model || '',
-          year: driverData.vehicleInfo?.year || driverData.year || '',
-          color: driverData.vehicleInfo?.color || driverData.color || '',
-          licensePlate: driverData.vehicleInfo?.licensePlate || driverData.licensePlate || '',
-          maxWeight: driverData.vehicleInfo?.maxWeight || driverData.maxWeight || 0,
-          maxVolume: driverData.vehicleInfo?.maxVolume || driverData.maxVolume || 0
-        }
-      });
-
-      // For documents, stats, and verification, use seed data if not available from API
-      setLocalDocuments(driverData.documents || getSeedDocuments());
-      setLocalStats(driverData.stats || getSeedStats());
-      setLocalVerification(driverData.verification || getSeedVerification(driverData));
-    }
-  }, [driverData]);*/
-
-  // Replace ALL your useEffect code with this:
-  useEffect(() => {
-    const loadDriverProfile = async () => {
-      try {
-        console.log('🚗 Loading driver profile and vehicles...');
-
-        // 1. Load driver profile
-        const profileResponse = await driverApi.getProfile();
-        if (profileResponse.success && profileResponse.data) {
-          const profileData = profileResponse.data;
-          console.log('👤 Profile loaded:', profileData);
-
-          // Get user data from localStorage
-          const userData = JSON.parse(localStorage.getItem('user') || '{}');
-
-          // Set personal info from profile or user data
-          setFormData({
-            personalInfo: {
-              firstName: profileData.firstName || userData.firstName || '',
-              lastName: profileData.lastName || userData.lastName || '',
-              email: profileData.email || userData.email || '',
-              phone: profileData.phone || userData.phone || '',
-              address: profileData.address || '',
-              dateOfBirth: profileData.dateOfBirth || '',
-              joinDate: profileData.joinDate || profileData.onboardedAt?.split('T')[0] || ''
-            },
-            // EMPTY vehicle info - we'll get it from vehicles API
-            vehicleInfo: {
-              type: '',
-              make: '',
-              model: '',
-              year: '',
-              color: '',
-              licensePlate: '',
-              maxWeight: 0,
-              maxVolume: 0
-            }
-          });
-
-          // Load documents if available
-          if (profileData.documents) {
-            setLocalDocuments(profileData.documents);
-          } else {
-            // Fetch documents separately
-            const docsResponse = await driverApi.getDocuments();
-            if (docsResponse.success) {
-              setLocalDocuments(docsResponse.data || []);
-            }
-          }
-
-          // Load stats if available
-          if (profileData.stats) {
-            setLocalStats(profileData.stats);
-          } else {
-            const statsResponse = await driverApi.getStats();
-            if (statsResponse.success) {
-              setLocalStats(statsResponse.data || getSeedStats());
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error loading profile:', error);
-      }
-    };
-
-    const loadVehicles = async () => {
-      try {
-        const response = await driverApi.getVehicles();
-        if (response.success && response.data) {
-          const vehiclesList = Array.isArray(response.data) 
-            ? response.data 
-            : response.data.data || [];
-
-          console.log('🚗 Vehicles loaded:', vehiclesList);
-          setVehicles(vehiclesList);
-
-          // Set active vehicle if we have one
-          if (vehiclesList.length > 0) {
-            setActiveVehicleId(vehiclesList[0].id);
-          }
-        }
-      } catch (error) {
-        console.error('Error loading vehicles:', error);
-      }
-    };
-
-    // Load both in parallel
-    Promise.all([loadDriverProfile(), loadVehicles()]);
+    loadProfileData();
   }, []);
 
-  const activeVehicle = vehicles.find(v => v.id === activeVehicleId);
+  const loadProfileData = async () => {
+    setLoading(true);
+    try {
+      console.log('🔄 Loading driver profile data...');
 
-  const getSeedDocuments = (): Document[] => [
-    {
-      id: 'DOC001',
-      type: 'license',
-      name: 'Driver License',
-      status: 'pending',
-      uploadDate: new Date().toISOString().split('T')[0],
-      expiryDate: '2026-03-15'
-    },
-    {
-      id: 'DOC002',
-      type: 'insurance',
-      name: 'Auto Insurance',
-      status: 'pending',
-      uploadDate: new Date().toISOString().split('T')[0],
-      expiryDate: '2024-12-01'
+      // Load driver profile from API
+      const profileResponse = await driverApi.getProfile();
+      
+      if (profileResponse.success && profileResponse.data) {
+        const data = profileResponse.data;
+        console.log('✅ Driver profile loaded:', data);
+        setProfileData(data);
+
+        // Set form data from profile
+        setFormData({
+          firstName: data.user?.firstName || '',
+          lastName: data.user?.lastName || '',
+          email: data.user?.email || '',
+          phone: data.user?.phone || '',
+          address: '', // Note: address might not be in the API response
+          dateOfBirth: '', // Not in your API response
+          joinDate: data.onboardedAt ? new Date(data.onboardedAt).toISOString().split('T')[0] : '',
+          licenseNumber: data.licenseNumber || '',
+          licenseExpiry: data.licenseExpiry ? new Date(data.licenseExpiry).toISOString().split('T')[0] : '',
+          insuranceNumber: data.insuranceNumber || '',
+          insuranceExpiry: data.insuranceExpiry ? new Date(data.insuranceExpiry).toISOString().split('T')[0] : '',
+        });
+
+        // Set vehicles
+        if (data.vehicles && Array.isArray(data.vehicles)) {
+          setVehicles(data.vehicles);
+          if (data.vehicles.length > 0) {
+            setActiveVehicleId(data.vehicles[0].id);
+          }
+        }
+
+        // Set documents
+        if (data.documents && Array.isArray(data.documents)) {
+          setDocuments(data.documents);
+        }
+      } else {
+        console.log('No profile data found');
+        // Get user data from localStorage as fallback
+        const userStr = localStorage.getItem('user');
+        if (userStr) {
+          try {
+            const userData = JSON.parse(userStr);
+            setFormData(prev => ({
+              ...prev,
+              firstName: userData.firstName || '',
+              lastName: userData.lastName || '',
+              email: userData.email || '',
+              phone: userData.phone || '',
+            }));
+          } catch (e) {
+            console.error('Error parsing user data:', e);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Error loading profile:', error);
+      toast.error('Failed to load profile data');
+    } finally {
+      setLoading(false);
     }
-  ];
+  };
 
-  const getSeedStats = () => ({
-    totalDeliveries: 0,
-    rating: 0,
-    totalEarnings: 0,
-    completionRate: 0
-  });
-
-  const getSeedVerification = (data: any) => {
-    const completionScore = 
-      (data?.firstName ? 20 : 0) +
-      (data?.lastName ? 20 : 0) +
-      (data?.phone ? 15 : 0) +
-      (data?.address ? 15 : 0) +
-      (data?.vehicleType || data?.vehicleInfo?.type ? 30 : 0);
+  const getProfileCompletion = () => {
+    if (!profileData) return 0;
     
-    return {
-      backgroundCheck: 'pending' as const,
-      profileCompletion: Math.min(completionScore, 100),
-      canDrive: false
-    };
+    let score = 0;
+    const fields = [
+      profileData.licenseNumber,
+      profileData.licenseExpiry,
+      profileData.insuranceNumber,
+      profileData.insuranceExpiry,
+      profileData.user?.firstName,
+      profileData.user?.lastName,
+      profileData.user?.phone,
+    ];
+
+    fields.forEach(field => {
+      if (field && field.toString().trim().length > 0) {
+        score += 14.3; // 100/7 ≈ 14.3
+      }
+    });
+
+    return Math.min(Math.round(score), 100);
   };
 
   const getDocumentStatusColor = (status: string) => {
@@ -265,129 +216,173 @@ export function DriverProfile() {
     }
   };
 
-  const handleDocumentStatusUpdate = (docType: string) => {
-    // Mock document upload (using seed data)
-    const updatedDocs = localDocuments.map((doc: Document) => 
-      doc.type === docType ? { 
-        ...doc, 
-        status: 'pending' as const, 
-        uploadDate: new Date().toISOString().split('T')[0] 
-      } : doc
-    );
-    setLocalDocuments(updatedDocs);
-  };
-
   const canDriveStatus = () => {
-    const hasExpiredDocs = localDocuments.some((doc: Document) => doc.status === 'expired');
-    const hasPendingDocs = localDocuments.some((doc: Document) => doc.status === 'pending');
-    const hasRejectedDocs = localDocuments.some((doc: Document) => doc.status === 'rejected');
+    if (!profileData) {
+      return { canDrive: false, reason: 'Profile not loaded' };
+    }
+
+    if (profileData.status !== 'active') {
+      return { canDrive: false, reason: 'Account not active' };
+    }
+
+    const hasExpiredDocs = documents.some((doc) => doc.status === 'expired');
+    const hasPendingDocs = documents.some((doc) => doc.status === 'pending');
+    const hasRejectedDocs = documents.some((doc) => doc.status === 'rejected');
     
-    if (hasExpiredDocs || hasRejectedDocs) {
-      return { canDrive: false, reason: 'Document issues need to be resolved' };
+    if (hasExpiredDocs) {
+      return { canDrive: false, reason: 'Expired documents need renewal' };
+    }
+    if (hasRejectedDocs) {
+      return { canDrive: false, reason: 'Rejected documents need re-upload' };
     }
     if (hasPendingDocs) {
       return { canDrive: false, reason: 'Waiting for document approval' };
     }
-    return { canDrive: true, reason: 'All documents approved' };
+    
+    // Check license and insurance expiry
+    if (profileData.licenseExpiry && new Date(profileData.licenseExpiry) < new Date()) {
+      return { canDrive: false, reason: 'License expired' };
+    }
+    if (profileData.insuranceExpiry && new Date(profileData.insuranceExpiry) < new Date()) {
+      return { canDrive: false, reason: 'Insurance expired' };
+    }
+
+    return { canDrive: true, reason: 'All documents approved and valid' };
   };
 
   const handleSaveProfile = async () => {
-    // Prepare data for backend
-    const updateData = {
-      // Personal info
-      firstName: formData.personalInfo.firstName,
-      lastName: formData.personalInfo.lastName,
-      phone: formData.personalInfo.phone,
-      address: formData.personalInfo.address,
-      dateOfBirth: formData.personalInfo.dateOfBirth,
+    try {
+      const updateData = {
+        licenseNumber: formData.licenseNumber,
+        licenseExpiry: formData.licenseExpiry,
+        insuranceNumber: formData.insuranceNumber,
+        insuranceExpiry: formData.insuranceExpiry,
+      };
 
-      // Vehicle info
-      vehicleInfo: {
-        type: formData.vehicleInfo.type,
-        make: formData.vehicleInfo.make,
-        model: formData.vehicleInfo.model,
-        year: formData.vehicleInfo.year,
-        color: formData.vehicleInfo.color,
-        licensePlate: formData.vehicleInfo.licensePlate,
-        maxWeight: formData.vehicleInfo.maxWeight,
-        maxVolume: formData.vehicleInfo.maxVolume
+      const response = await driverApi.updateProfile(updateData);
+      
+      if (response.success) {
+        toast.success('Profile updated successfully');
+        setIsEditing(false);
+        await loadProfileData(); // Refresh profile data
+      } else {
+        toast.error(`Failed to update profile: ${response.error}`);
       }
-    };
-
-    const success = await updateProfile(updateData);
-    if (success) {
-      setIsEditing(false);
+    } catch (error: any) {
+      console.error('Error updating profile:', error);
+      toast.error(`Error: ${error.message}`);
     }
   };
 
   const handleAddVehicle = async () => {
-    if (!activeVehicleId) {
-      // Creating a new vehicle
-      const vehicleData = {
-        type: formData.vehicleInfo.type,
-        make: formData.vehicleInfo.make,
-        model: formData.vehicleInfo.model,
-        year: formData.vehicleInfo.year,
-        color: formData.vehicleInfo.color,
-        licensePlate: formData.vehicleInfo.licensePlate,
-        maxWeight: formData.vehicleInfo.maxWeight,
-        maxVolume: formData.vehicleInfo.maxVolume
-      };
-      
-      const response = await driverApi.addVehicle(vehicleData);
-      if (response.success) {
-        // Refresh vehicles list
-        const vehiclesResponse = await driverApi.getVehicles();
-        if (vehiclesResponse.success) {
-          setVehicles(vehiclesResponse.data);
-        }
-        setIsEditing(false);
-        toast.success('Vehicle added successfully');
-      }
-    } else {
+    if (isEditing && activeVehicleId) {
       // Updating existing vehicle
       const activeVehicle = vehicles.find(v => v.id === activeVehicleId);
       if (!activeVehicle) return;
       
       const updateData = {
-        type: activeVehicle.type,
         make: activeVehicle.make,
         model: activeVehicle.model,
         year: activeVehicle.year,
         color: activeVehicle.color,
         licensePlate: activeVehicle.licensePlate,
         maxWeight: activeVehicle.maxWeight,
-        maxVolume: activeVehicle.maxVolume
+        maxVolume: activeVehicle.maxVolume,
       };
       
-      // Note: Your backend API needs a PUT endpoint for vehicles
-      // If not available, you'll need to implement it
-      toast.info('Vehicle update requires backend PUT endpoint');
+      const response = await driverApi.updateVehicle(activeVehicleId, updateData);
+      if (response.success) {
+        toast.success('Vehicle updated successfully');
+        setIsEditing(false);
+        await loadProfileData();
+      } else {
+        toast.error(`Failed to update vehicle: ${response.error}`);
+      }
+    } else {
+      // Adding new vehicle
+      const vehicleData = {
+        type: 'small_van',
+        make: 'Unknown',
+        model: 'Unknown',
+        year: new Date().getFullYear(),
+        color: 'Unknown',
+        licensePlate: '',
+        maxWeight: 1000,
+        maxVolume: 10,
+      };
+      
+      const response = await driverApi.addVehicle(vehicleData);
+      if (response.success) {
+        toast.success('Vehicle added successfully');
+        await loadProfileData();
+      } else {
+        toast.error(`Failed to add vehicle: ${response.error}`);
+      }
     }
   };
 
   const handleDocumentUpload = async (docType: string, file: File) => {
     try {
-      // For now, simulate API call - you'll need to import and use driverApi
-      toast.success(`${docType} uploaded successfully (simulated)`);
+      const formData = new FormData();
+      formData.append('document', file);
+      formData.append('type', docType);
+      formData.append('name', `${docType.charAt(0).toUpperCase() + docType.slice(1)} Document`);
       
-      // Update local documents state
-      const newDoc: Document = {
-        id: `doc-${Date.now()}`,
-        type: docType as any,
-        name: `${docType} Document`,
-        status: 'pending',
-        uploadDate: new Date().toISOString().split('T')[0],
-        expiryDate: '2026-12-31'
-      };
-
-      setLocalDocuments((prev: Document[]) => [...prev, newDoc]);
+      const response = await driverApi.uploadDocument(formData);
+      
+      if (response.success) {
+        toast.success(`${docType} uploaded successfully`);
+        await loadProfileData(); // Refresh data
+      } else {
+        toast.error(`Failed to upload document: ${response.error}`);
+      }
     } catch (error: any) {
+      console.error('Error uploading document:', error);
       toast.error(`Error uploading document: ${error.message}`);
     }
   };
 
+  const handleVehicleImageUpload = async (vehicleId: string, file: File) => {
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      
+      const response = await driverApi.uploadVehicleImage(vehicleId, formData);
+      
+      if (response.success) {
+        toast.success('Vehicle image uploaded successfully');
+        await loadProfileData(); // Refresh data
+      } else {
+        toast.error(`Failed to upload image: ${response.error}`);
+      }
+    } catch (error: any) {
+      console.error('Error uploading vehicle image:', error);
+      toast.error(`Error: ${error.message}`);
+    }
+  };
+
+  const handleProfilePicUpload = async (file: File) => {
+    try {
+      const formData = new FormData();
+      formData.append('profilePicture', file);
+
+      const response = await driverApi.uploadProfilePicture(formData);
+
+      if (response.success) {
+        toast.success('Profile picture uploaded successfully');
+        await loadProfileData(); // Refresh data
+      } else {
+        toast.error(`Failed to upload profile picture: ${response.error}`);
+      }
+    } catch (error: any) {
+      console.error('Error uploading profile picture:', error);
+      toast.error(`Error: ${error.message}`);
+    }
+  };
+
   const drivingStatus = canDriveStatus();
+  const activeVehicle = vehicles.find(v => v.id === activeVehicleId);
+  const profileCompletion = getProfileCompletion();
 
   if (loading) {
     return (
@@ -400,33 +395,83 @@ export function DriverProfile() {
     );
   }
 
-  const currentUser = getCurrentUser();
-  const displayName = formData.personalInfo.firstName && formData.personalInfo.lastName 
-    ? formData.personalInfo 
-    : currentUser || { firstName: 'Driver', lastName: 'User' };
+  if (!profileData && !formData.firstName) {
+    return (
+      <div className="text-center py-12">
+        <User className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+        <h3 className="text-lg font-medium text-gray-900">No Profile Found</h3>
+        <p className="text-gray-600 mt-1">Complete onboarding to create your driver profile</p>
+        <Button className="mt-4" onClick={() => window.location.href = '/driver-onboarding'}>
+          Go to Onboarding
+        </Button>
+      </div>
+    );
+  }
+
+  const firstName = formData.firstName || profileData?.user?.firstName || 'Driver';
+  const lastName = formData.lastName || profileData?.user?.lastName || '';
+  const email = formData.email || profileData?.user?.email || '';
+  const phone = formData.phone || profileData?.user?.phone || '';
+  const rating = profileData?.rating || 0;
+  const totalDeliveries = profileData?.totalDeliveries || 0;
+  const totalEarnings = profileData?.totalEarnings || 0;
+  const completionRate = profileData?.completionRate || 0;
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-start">
         <div className="flex items-center space-x-4">
-          <Avatar className="h-20 w-20">
-            <AvatarFallback className="text-lg">
-              {displayName.firstName?.[0] || 'D'}{displayName.lastName?.[0] || 'U'}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative">
+            <Avatar className="h-20 w-20">
+              {profileData?.profilePicture?.originalUrl ? (
+                <img
+                  src={profileData.profilePicture.originalUrl}
+                  alt={`${firstName} ${lastName}`}
+                  className="w-full h-full object-cover rounded-full"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
+              ) : null}
+              <AvatarFallback className="text-lg bg-blue-100 text-blue-600">
+                {firstName[0]}{lastName[0] || 'D'}
+              </AvatarFallback>
+            </Avatar>
+            <input
+              type="file"
+              accept="image/*"
+              id="profilePicInput"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  await handleProfilePicUpload(file);
+                }
+              }}
+            />
+            <label
+              htmlFor="profilePicInput"
+              className="absolute bottom-0 right-0 bg-blue-600 text-white p-1.5 rounded-full cursor-pointer hover:bg-blue-700 transition"
+              title="Change profile picture"
+            >
+              <Edit className="h-3 w-3" />
+            </label>
+          </div>
           <div>
             <h2 className="text-2xl text-gray-900">
-              {displayName.firstName} {displayName.lastName}
+              {firstName} {lastName}
             </h2>
-            <p className="text-gray-600">{formData.vehicleInfo.type || 'Driver'}</p>
+            <p className="text-gray-600">
+              {activeVehicle ? `${activeVehicle.make} ${activeVehicle.model}` : 'No vehicle'}
+            </p>
             <div className="flex items-center space-x-4 mt-2">
               <div className="flex items-center space-x-1">
                 <Star className="h-4 w-4 text-yellow-500" />
-                <span className="text-sm">{localStats.rating || 0} rating</span>
+                <span className="text-sm">{rating.toFixed(1)} rating</span>
               </div>
               <div className="text-sm text-gray-600">
-                {localStats.totalDeliveries || 0} deliveries
+                {totalDeliveries} deliveries
               </div>
             </div>
           </div>
@@ -443,6 +488,9 @@ export function DriverProfile() {
             <span>{drivingStatus.canDrive ? 'Approved to Drive' : 'Cannot Drive'}</span>
           </div>
           <p className="text-xs text-gray-600 mt-1">{drivingStatus.reason}</p>
+          <p className="text-xs text-gray-600 mt-2">
+            Status: <Badge className="ml-1">{profileData?.status || 'pending'}</Badge>
+          </p>
         </div>
       </div>
 
@@ -451,9 +499,9 @@ export function DriverProfile() {
         <CardContent className="pt-6">
           <div className="flex justify-between items-center mb-2">
             <span className="text-sm font-medium">Profile Completion</span>
-            <span className="text-sm text-gray-600">{localVerification.profileCompletion}%</span>
+            <span className="text-sm text-gray-600">{profileCompletion}%</span>
           </div>
-          <Progress value={localVerification.profileCompletion} className="h-2" />
+          <Progress value={profileCompletion} className="h-2" />
         </CardContent>
       </Card>
 
@@ -465,6 +513,7 @@ export function DriverProfile() {
           <TabsTrigger value="stats">Statistics</TabsTrigger>
         </TabsList>
 
+        {/* Personal Info Tab */}
         <TabsContent value="personal">
           <Card>
             <CardHeader>
@@ -483,6 +532,7 @@ export function DriverProfile() {
                     }
                   }}
                 >
+                  {isEditing ? <Save className="mr-2 h-4 w-4" /> : <Edit className="mr-2 h-4 w-4" />}
                   {isEditing ? 'Save Changes' : 'Edit Profile'}
                 </Button>
               </div>
@@ -493,11 +543,11 @@ export function DriverProfile() {
                   <Label htmlFor="firstName">First Name</Label>
                   <Input
                     id="firstName"
-                    value={formData.personalInfo.firstName}
-                    disabled={!isEditing}
-                    onChange={(e: any) => setFormData({
+                    value={formData.firstName}
+                    disabled={true} // User data comes from user service
+                    onChange={(e) => setFormData({
                       ...formData,
-                      personalInfo: { ...formData.personalInfo, firstName: e.target.value }
+                      firstName: e.target.value
                     })}
                   />
                 </div>
@@ -505,11 +555,11 @@ export function DriverProfile() {
                   <Label htmlFor="lastName">Last Name</Label>
                   <Input
                     id="lastName"
-                    value={formData.personalInfo.lastName}
-                    disabled={!isEditing}
-                    onChange={(e: any) => setFormData({
+                    value={formData.lastName}
+                    disabled={true} // User data comes from user service
+                    onChange={(e) => setFormData({
                       ...formData,
-                      personalInfo: { ...formData.personalInfo, lastName: e.target.value }
+                      lastName: e.target.value
                     })}
                   />
                 </div>
@@ -522,7 +572,7 @@ export function DriverProfile() {
                   <Input
                     id="email"
                     type="email"
-                    value={formData.personalInfo.email}
+                    value={formData.email}
                     disabled={true}
                     className="pl-10"
                   />
@@ -535,30 +585,36 @@ export function DriverProfile() {
                   <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <Input
                     id="phone"
-                    value={formData.personalInfo.phone}
-                    disabled={!isEditing}
+                    value={formData.phone}
+                    disabled={true} // User data comes from user service
                     className="pl-10"
-                    onChange={(e: any) => setFormData({
-                      ...formData,
-                      personalInfo: { ...formData.personalInfo, phone: e.target.value }
-                    })}
                   />
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="address">Address</Label>
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                  <Textarea
-                    id="address"
-                    value={formData.personalInfo.address}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="licenseNumber">License Number</Label>
+                  <Input
+                    id="licenseNumber"
+                    value={formData.licenseNumber}
                     disabled={!isEditing}
-                    className="pl-10"
-                    rows={2}
-                    onChange={(e: any) => setFormData({
+                    onChange={(e) => setFormData({
                       ...formData,
-                      personalInfo: { ...formData.personalInfo, address: e.target.value }
+                      licenseNumber: e.target.value
+                    })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="licenseExpiry">License Expiry</Label>
+                  <Input
+                    id="licenseExpiry"
+                    type="date"
+                    value={formData.licenseExpiry}
+                    disabled={!isEditing}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      licenseExpiry: e.target.value
                     })}
                   />
                 </div>
@@ -566,27 +622,38 @@ export function DriverProfile() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="dateOfBirth">Date of Birth</Label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <Input
-                      id="dateOfBirth"
-                      type="date"
-                      value={formData.personalInfo.dateOfBirth}
-                      disabled={!isEditing}
-                      className="pl-10"
-                      onChange={(e: any) => setFormData({
-                        ...formData,
-                        personalInfo: { ...formData.personalInfo, dateOfBirth: e.target.value }
-                      })}
-                    />
-                  </div>
+                  <Label htmlFor="insuranceNumber">Insurance Number</Label>
+                  <Input
+                    id="insuranceNumber"
+                    value={formData.insuranceNumber}
+                    disabled={!isEditing}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      insuranceNumber: e.target.value
+                    })}
+                  />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="insuranceExpiry">Insurance Expiry</Label>
+                  <Input
+                    id="insuranceExpiry"
+                    type="date"
+                    value={formData.insuranceExpiry}
+                    disabled={!isEditing}
+                    onChange={(e) => setFormData({
+                      ...formData,
+                      insuranceExpiry: e.target.value
+                    })}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="joinDate">Member Since</Label>
                   <Input
                     id="joinDate"
-                    value={new Date(formData.personalInfo.joinDate).toLocaleDateString()}
+                    value={formData.joinDate || 'Not available'}
                     disabled
                   />
                 </div>
@@ -595,6 +662,7 @@ export function DriverProfile() {
           </Card>
         </TabsContent>
 
+        {/* Vehicle Info Tab */}
         <TabsContent value="vehicle">
           <Card>
             <CardHeader>
@@ -603,190 +671,257 @@ export function DriverProfile() {
                   <Car className="h-5 w-5" />
                   Vehicle Information
                 </CardTitle>
-                <Button variant="outline" onClick={() => {
-                  if (isEditing) {
-                    handleAddVehicle();
-                  } else {
-                    setIsEditing(true);
-                  }
-                }}>
+                <Button variant="outline" onClick={() => setIsEditing(!isEditing)}>
+                  {isEditing ? <Save className="mr-2 h-4 w-4" /> : <Edit className="mr-2 h-4 w-4" />}
                   {isEditing ? 'Save Vehicle' : 'Edit Vehicle'}
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <ImageWithFallback
-                    src={activeVehicle?.imageUrl || ''}
-                    alt="Vehicle"
-                    className="w-full h-48 object-cover rounded-lg"
-                    fallbackText="No vehicle image"
-                  />
-                  
-                  <input
-                    type="file"
-                    accept="image/*"
-                    hidden
-                    ref={fileRef}
-                    onChange={async (e: any) => {
-                      const file = e.target.files?.[0];
-                      if (!file || !activeVehicleId) return;
-                      
-                      const formData = new FormData();
-                      formData.append('image', file);
-                      
-                      await driverApi.uploadVehicleImage(activeVehicleId, formData);
-                      
-                      // Refresh vehicle list
-                      const response = await driverApi.getVehicles();
-                      if (response.success) {
-                        setVehicles(response.data);
-                      }
-                    }}
-                  />
-                  
-                  <Button
-                    variant="outline"
-                    className="w-full mt-2"
-                    onClick={() => fileRef.current?.click()}
-                  >
-                    <Upload className="mr-2 h-4 w-4" />
-                    Update Vehicle Photo
+              {vehicles.length === 0 ? (
+                <div className="text-center py-8">
+                  <Car className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900">No Vehicles</h3>
+                  <p className="text-gray-600 mt-1">Add your first vehicle to get started</p>
+                  <Button className="mt-4" onClick={handleAddVehicle}>
+                    Add Vehicle
                   </Button>
                 </div>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="vehicleType">Vehicle Type</Label>
-                      <Select 
-                        value={formData.vehicleInfo.type} 
-                        disabled={!isEditing}
-                        onValueChange={(value: string) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, type: value }
-                        })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Motorbike">Motorbike</SelectItem>
-                          <SelectItem value="Small Van">Small Van</SelectItem>
-                          <SelectItem value="Medium Truck">Medium Truck</SelectItem>
-                          <SelectItem value="Large Truck">Large Truck</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="licensePlate">License Plate</Label>
-
-                      // Then in your form inputs, use activeVehicle instead of formData.vehicleInfo:
-                      <Input
-                        id="licensePlate"
-                        value={activeVehicle?.licensePlate || ''}
-                        disabled={!isEditing}
-                        onChange={(e: any) => {
-                          if (!activeVehicleId) return;
-                          // Update the specific vehicle in state
-                          setVehicles(prev => prev.map(vehicle => 
-                            vehicle.id === activeVehicleId 
-                              ? { ...vehicle, licensePlate: e.target.value }
-                              : vehicle
-                          ));
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                      <div className="relative w-full h-48 bg-gray-100 rounded-lg overflow-hidden">
+                        {activeVehicle?.imageUrl ? (
+                          <img
+                            src={activeVehicle.imageUrl}
+                            alt="Vehicle"
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              console.error('Failed to load vehicle image:', activeVehicle.imageUrl);
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        ) : null}
+                        {!activeVehicle?.imageUrl && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                            <Car className="h-12 w-12 mb-2" />
+                            <span>No vehicle image</span>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <input
+                        type="file"
+                        accept="image/*"
+                        id="vehicleImageInput"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file || !activeVehicleId) return;
+                          
+                          await handleVehicleImageUpload(activeVehicleId, file);
                         }}
                       />
+                      
+                      <Button
+                        variant="outline"
+                        className="w-full mt-2"
+                        onClick={() => document.getElementById('vehicleImageInput')?.click()}
+                      >
+                        <Upload className="mr-2 h-4 w-4" />
+                        Update Vehicle Photo
+                      </Button>
                     </div>
-                  </div>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="vehicleType">Vehicle Type</Label>
+                          <Select 
+                            value={activeVehicle?.type || ''} 
+                            disabled={!isEditing}
+                            onValueChange={(value) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, type: value }
+                                  : vehicle
+                              ));
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="motorcycle">Motorcycle</SelectItem>
+                              <SelectItem value="small_van">Small Van</SelectItem>
+                              <SelectItem value="medium_van">Medium Van</SelectItem>
+                              <SelectItem value="truck">Truck</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="licensePlate">License Plate</Label>
+                          <Input
+                            id="licensePlate"
+                            value={activeVehicle?.licensePlate || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, licensePlate: e.target.value }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="make">Make</Label>
-                      <Input
-                        id="make"
-                        value={formData.vehicleInfo.make}
-                        disabled={!isEditing}
-                        onChange={(e: any) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, make: e.target.value }
-                        })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="model">Model</Label>
-                      <Input
-                        id="model"
-                        value={formData.vehicleInfo.model}
-                        disabled={!isEditing}
-                        onChange={(e: any) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, model: e.target.value }
-                        })}
-                      />
-                    </div>
-                  </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="make">Make</Label>
+                          <Input
+                            id="make"
+                            value={activeVehicle?.make || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, make: e.target.value }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="model">Model</Label>
+                          <Input
+                            id="model"
+                            value={activeVehicle?.model || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, model: e.target.value }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="year">Year</Label>
-                      <Input
-                        id="year"
-                        value={formData.vehicleInfo.year}
-                        disabled={!isEditing}
-                        onChange={(e: any) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, year: e.target.value }
-                        })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="color">Color</Label>
-                      <Input
-                        id="color"
-                        value={formData.vehicleInfo.color}
-                        disabled={!isEditing}
-                        onChange={(e: any) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, color: e.target.value }
-                        })}
-                      />
-                    </div>
-                  </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="year">Year</Label>
+                          <Input
+                            id="year"
+                            type="number"
+                            value={activeVehicle?.year || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, year: parseInt(e.target.value) || 0 }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="color">Color</Label>
+                          <Input
+                            id="color"
+                            value={activeVehicle?.color || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, color: e.target.value }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                      </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="maxWeight">Max Weight (kg)</Label>
-                      <Input
-                        id="maxWeight"
-                        type="number"
-                        value={formData.vehicleInfo.maxWeight}
-                        disabled={!isEditing}
-                        onChange={(e: any) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, maxWeight: parseInt(e.target.value) || 0 }
-                        })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="maxVolume">Max Volume (m³)</Label>
-                      <Input
-                        id="maxVolume"
-                        type="number"
-                        value={formData.vehicleInfo.maxVolume}
-                        disabled={!isEditing}
-                        onChange={(e: any) => setFormData({
-                          ...formData,
-                          vehicleInfo: { ...formData.vehicleInfo, maxVolume: parseInt(e.target.value) || 0 }
-                        })}
-                      />
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="maxWeight">Max Weight (kg)</Label>
+                          <Input
+                            id="maxWeight"
+                            type="number"
+                            value={activeVehicle?.maxWeight || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, maxWeight: parseInt(e.target.value) || 0 }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="maxVolume">Max Volume (m³)</Label>
+                          <Input
+                            id="maxVolume"
+                            type="number"
+                            value={activeVehicle?.maxVolume || ''}
+                            disabled={!isEditing}
+                            onChange={(e) => {
+                              if (!activeVehicleId) return;
+                              setVehicles(prev => prev.map(vehicle => 
+                                vehicle.id === activeVehicleId 
+                                  ? { ...vehicle, maxVolume: parseFloat(e.target.value) || 0 }
+                                  : vehicle
+                              ));
+                            }}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </div>
+                  
+                  {isEditing && (
+                    <div className="flex justify-end space-x-2">
+                      <Button variant="outline" onClick={() => setIsEditing(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddVehicle}>
+                        Save Changes
+                      </Button>
+                    </div>
+                  )}
+                  
+                  {vehicles.length > 1 && (
+                    <div>
+                      <Label>Select Vehicle</Label>
+                      <div className="flex gap-2 mt-2">
+                        {vehicles.map((vehicle) => (
+                          <Button
+                            key={vehicle.id}
+                            variant={activeVehicleId === vehicle.id ? "default" : "outline"}
+                            onClick={() => setActiveVehicleId(vehicle.id)}
+                          >
+                            {vehicle.make} {vehicle.model}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* Documents Tab */}
         <TabsContent value="documents">
           <div className="space-y-6">
             {!drivingStatus.canDrive && (
@@ -811,77 +946,150 @@ export function DriverProfile() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {localDocuments.map((doc: Document) => (
-                    <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        {getDocumentIcon(doc.status)}
-                        <div>
-                          <h4 className="font-medium">{doc.name}</h4>
-                          <div className="flex items-center space-x-4 text-sm text-gray-600">
-                            <span>Uploaded: {doc.uploadDate}</span>
-                            {doc.expiryDate && (
-                              <span>Expires: {doc.expiryDate}</span>
+                  {documents.length === 0 ? (
+                    <div className="text-center py-8">
+                      <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900">No Documents</h3>
+                      <p className="text-gray-600 mt-1">Upload your documents to get verified</p>
+                    </div>
+                  ) : (
+                    documents.map((doc) => (
+                      <div key={doc.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
+                        <div className="flex items-center space-x-3">
+                          {getDocumentIcon(doc.status)}
+                          <div>
+                            <h4 className="font-medium">{doc.name}</h4>
+                            <div className="flex flex-col sm:flex-row sm:items-center space-y-1 sm:space-y-0 sm:space-x-4 text-sm text-gray-600">
+                              <span>Type: {doc.type}</span>
+                              <span>Uploaded: {new Date(doc.uploadDate).toLocaleDateString()}</span>
+                              {doc.expiryDate && (
+                                <span>Expires: {new Date(doc.expiryDate).toLocaleDateString()}</span>
+                              )}
+                            </div>
+                            {doc.rejectionReason && (
+                              <p className="text-sm text-red-600 mt-1">
+                                Rejected: {doc.rejectionReason}
+                              </p>
+                            )}
+                            {doc.fileUrl && (
+                              <a 
+                                href={doc.fileUrl} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-sm text-blue-600 hover:underline mt-1 inline-block"
+                              >
+                                View Document
+                              </a>
                             )}
                           </div>
-                          {doc.rejectionReason && (
-                            <p className="text-sm text-red-600 mt-1">
-                              Rejected: {doc.rejectionReason}
-                            </p>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <Badge className={getDocumentStatusColor(doc.status)}>
+                            {doc.status}
+                          </Badge>
+                          {(doc.status === 'expired' || doc.status === 'rejected') && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button size="sm" variant="outline">
+                                  <Upload className="mr-2 h-4 w-4" />
+                                  Re-upload
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Upload {doc.name}</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Please upload a new {doc.name.toLowerCase()} document. Make sure it's clear and not expired.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <div className="py-4">
+                                  <input
+                                    type="file"
+                                    accept="image/*,.pdf"
+                                    className="w-full p-2 border rounded"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (file) {
+                                        handleDocumentUpload(doc.type, file);
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction>
+                                    Upload
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-3">
-                        <Badge className={getDocumentStatusColor(doc.status)}>
-                          {doc.status}
-                        </Badge>
-                        {(doc.status === 'expired' || doc.status === 'rejected') && (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button size="sm" variant="outline">
-                                <Upload className="mr-2 h-4 w-4" />
-                                Re-upload
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Upload {doc.name}</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Please upload a new {doc.name.toLowerCase()} document. Make sure it's clear and not expired.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <div className="py-4">
-                                <input
-                                  type="file"
-                                  accept="image/*,.pdf"
-                                  className="w-full p-2 border rounded"
-                                  onChange={(e: any) => {
-                                    const file = e.target.files?.[0];
-                                    if (file) {
-                                      handleDocumentUpload(doc.type, file);
-                                    }
-                                  }}
-                                />
-                              </div>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => {
-                                  handleDocumentStatusUpdate(doc.type);
-                                }}>
-                                  Upload
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        )}
+                    ))
+                  )}
+                  
+                  {/* Upload new document button */}
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button className="w-full mt-4">
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload New Document
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Upload Document</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          Select document type and file to upload.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <div className="py-4 space-y-4">
+                        <Select onValueChange={(type) => {
+                          const fileInput = document.getElementById('newDocumentFile') as HTMLInputElement;
+                          if (fileInput?.files?.[0]) {
+                            handleDocumentUpload(type as string, fileInput.files[0]);
+                          }
+                        }}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select document type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="license">Driver License</SelectItem>
+                            <SelectItem value="insurance">Insurance</SelectItem>
+                            <SelectItem value="registration">Vehicle Registration</SelectItem>
+                            <SelectItem value="inspection">Inspection Certificate</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <input
+                          id="newDocumentFile"
+                          type="file"
+                          accept="image/*,.pdf"
+                          className="w-full p-2 border rounded"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            const typeSelect = document.querySelector('[data-state="open"] [role="combobox"]') as HTMLInputElement;
+                            if (file && typeSelect?.value) {
+                              handleDocumentUpload(typeSelect.value, file);
+                            }
+                          }}
+                        />
                       </div>
-                    </div>
-                  ))}
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction>
+                          Upload
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
                 </div>
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
+        {/* Statistics Tab */}
         <TabsContent value="stats">
           <div className="space-y-6">
             <Card>
@@ -891,19 +1099,19 @@ export function DriverProfile() {
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                   <div className="text-center">
-                    <p className="text-3xl text-blue-600">{localStats.totalDeliveries}</p>
+                    <p className="text-3xl text-blue-600">{totalDeliveries}</p>
                     <p className="text-gray-600">Total Deliveries</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-3xl text-yellow-600">{localStats.rating}</p>
+                    <p className="text-3xl text-yellow-600">{rating.toFixed(1)}</p>
                     <p className="text-gray-600">Average Rating</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-3xl text-green-600">${localStats.totalEarnings.toLocaleString()}</p>
+                    <p className="text-3xl text-green-600">${totalEarnings.toLocaleString()}</p>
                     <p className="text-gray-600">Total Earnings</p>
                   </div>
                   <div className="text-center">
-                    <p className="text-3xl text-purple-600">{localStats.completionRate}%</p>
+                    <p className="text-3xl text-purple-600">{completionRate}%</p>
                     <p className="text-gray-600">Completion Rate</p>
                   </div>
                 </div>
@@ -918,11 +1126,15 @@ export function DriverProfile() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div className="flex items-center space-x-3">
-                      <CheckCircle className="h-5 w-5 text-green-600" />
-                      <span>Background Check</span>
+                      {profileData?.verificationLevel === 'verified' ? (
+                        <CheckCircle className="h-5 w-5 text-green-600" />
+                      ) : (
+                        <Clock className="h-5 w-5 text-yellow-600" />
+                      )}
+                      <span>Account Verification</span>
                     </div>
-                    <Badge className="bg-green-100 text-green-800">
-                      {localVerification.backgroundCheck === 'approved' ? 'Approved' : 'Pending'}
+                    <Badge className={profileData?.verificationLevel === 'verified' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}>
+                      {profileData?.verificationLevel || 'none'}
                     </Badge>
                   </div>
                   <div className="flex items-center justify-between p-3 border rounded-lg">
@@ -930,7 +1142,7 @@ export function DriverProfile() {
                       <Settings className="h-5 w-5 text-blue-600" />
                       <span>Profile Completion</span>
                     </div>
-                    <Badge className="bg-blue-100 text-blue-800">{localVerification.profileCompletion}%</Badge>
+                    <Badge className="bg-blue-100 text-blue-800">{profileCompletion}%</Badge>
                   </div>
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div className="flex items-center space-x-3">

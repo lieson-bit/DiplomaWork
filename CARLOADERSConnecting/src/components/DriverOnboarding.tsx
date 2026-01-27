@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, MutableRefObject } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -8,11 +8,48 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Checkbox } from "./ui/checkbox";
 import { Badge } from "./ui/badge";
 import { Progress } from "./ui/progress";
-import { Upload, FileText, Camera, Car, User, MapPin, Phone, Mail, CheckCircle, AlertCircle, X, Loader2 } from 'lucide-react';
+import { Upload, FileText, Camera, Car, User, MapPin, Phone, Mail, CheckCircle, AlertCircle, X, Loader2, Calendar } from 'lucide-react';
 import { driverApi, getAuthToken } from '../src/lib/api';
 import { toast } from 'sonner';
-import { getCurrentUser } from '../src/lib/auth-utils';
+import { getCurrentUser }  from '../src/lib/api';
 import { DebugPanel } from './DebugPanel';
+
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('ErrorBoundary caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+          <h3 className="text-red-800 font-semibold">Something went wrong</h3>
+          <p className="text-red-600 text-sm mt-1">{this.state.error}</p>
+          <button 
+            className="mt-2 px-3 py-1 bg-red-100 text-red-700 rounded text-sm"
+            onClick={() => this.setState({ hasError: false, error: '' })}
+          >
+            Try again
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 interface DriverOnboardingProps {
   onComplete: () => void;
@@ -28,12 +65,10 @@ interface DocumentStatus {
 }
 
 interface DriverProfile {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
+  dateOfBirth: string;
   address: string;
   city: string;
+  state: string;
   zipCode: string;
   vehicleType: string;
   vehicleMake: string;
@@ -43,12 +78,22 @@ interface DriverProfile {
   vehicleColor: string;
   maxWeight: string;
   maxVolume: string;
+  licenseNumber: string;
+  licenseExpiry: string;
+  insuranceNumber: string;
+  insuranceExpiry: string;
   vehicleImages: File[];
   categories: string[];
   serviceAreas: string[];
   availability: {
-    [key: string]: { start: string; end: string; available: boolean };
+    [key: string]: AvailabilityDay;
   };
+}
+
+interface AvailabilityDay {
+  start: string;
+  end: string;
+  available: boolean;
 }
 
 export function DriverOnboarding({ onComplete }: DriverOnboardingProps) {
@@ -57,6 +102,7 @@ export function DriverOnboarding({ onComplete }: DriverOnboardingProps) {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [userData, setUserData] = useState<any>(null);
   
   const [documentStatus, setDocumentStatus] = useState({
     driverLicense: { 
@@ -87,18 +133,16 @@ export function DriverOnboarding({ onComplete }: DriverOnboardingProps) {
   
   const [backgroundCheck, setBackgroundCheck] = useState(false);
   
-  // Use proper typing for the refs
-const driverLicenseRef = useRef(null);
-const insuranceRef = useRef(null);
-const registrationRef = useRef(null);
+  const driverLicenseRef = useRef<HTMLInputElement>(null);
+  const insuranceRef = useRef<HTMLInputElement>(null);
+  const registrationRef = useRef<HTMLInputElement>(null);
+  const vehiclePhotosRef = useRef<HTMLInputElement>(null);
   
   const initialProfile: DriverProfile = {
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
+    dateOfBirth: '',
     address: '',
     city: '',
+    state: '',
     zipCode: '',
     vehicleType: '',
     vehicleMake: '',
@@ -108,6 +152,10 @@ const registrationRef = useRef(null);
     vehicleColor: '',
     maxWeight: '',
     maxVolume: '',
+    licenseNumber: '',
+    licenseExpiry: '',
+    insuranceNumber: '',
+    insuranceExpiry: '',
     vehicleImages: [],
     categories: [],
     serviceAreas: [],
@@ -128,12 +176,11 @@ const registrationRef = useRef(null);
   const progress = (currentStep / totalSteps) * 100;
 
   const vehicleTypes = [
-    { value: 'motorbike', label: 'Motorbike/Scooter', capacity: 'Up to 20 kg' },
-    { value: 'small_car', label: 'Small Car', capacity: 'Up to 100 kg' },
-    { value: 'van', label: 'Van/Small Truck', capacity: 'Up to 1,000 kg' },
-    { value: 'truck', label: 'Medium Truck', capacity: 'Up to 3,000 kg' },
-    { value: 'large_truck', label: 'Large Truck', capacity: '3,000+ kg' }
-  ];
+  { value: 'motorbike', label: 'Motorbike' },
+  { value: 'small_van', label: 'Small Van' },
+  { value: 'medium_truck', label: 'Medium Truck' },
+  { value: 'large_truck', label: 'Large Truck' },
+];
 
   const serviceCategories = [
     'Documents & Small Packages',
@@ -148,49 +195,48 @@ const registrationRef = useRef(null);
     'Hazardous Materials'
   ];
 
-  // Add error state
+  const states = [
+    'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut', 'Delaware',
+    'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky',
+    'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota', 'Mississippi',
+    'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire', 'New Jersey', 'New Mexico',
+    'New York', 'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon', 'Pennsylvania',
+    'Rhode Island', 'South Carolina', 'South Dakota', 'Tennessee', 'Texas', 'Utah', 'Vermont',
+    'Virginia', 'Washington', 'West Virginia', 'Wisconsin', 'Wyoming'
+  ];
+
   const [error, setError] = useState(null);
 
-  // Clear error when component mounts
   useEffect(() => {
-    console.log('🔄 DriverOnboarding mounted - clearing errors');
+    console.log('🔄 DriverOnboarding mounted - loading user data');
     setError(null);
+    
+    const currentUser = getCurrentUser();
+    if (currentUser) {
+      console.log('👤 User data loaded:', currentUser);
+      setUserData(currentUser);
+    } else {
+      console.error('❌ No user found in localStorage');
+      toast.error('Please login to continue');
+    }
   }, []);
 
-  // Debug: Log current state
   useEffect(() => {
     console.log('🔄 Current Step:', currentStep);
     console.log('📄 Document Status:', documentStatus);
     console.log('✅ Background Check:', backgroundCheck);
     console.log('🔐 Auth Token exists:', !!getAuthToken());
-    console.log('👤 Current User:', getCurrentUser());
-    console.log('📋 Document Status Debug:', {
-    driverLicense: {
-      file: documentStatus.driverLicense.file?.name || 'none',
-      success: documentStatus.driverLicense.success
-    },
-    insurance: {
-      file: documentStatus.proofOfInsurance.file?.name || 'none',
-      success: documentStatus.proofOfInsurance.success
-    },
-    registration: {
-      file: documentStatus.vehicleRegistration.file?.name || 'none',
-      success: documentStatus.vehicleRegistration.success
-    }
-  });
-  }, [currentStep, documentStatus, backgroundCheck]);
+    console.log('👤 User Data:', userData);
+  }, [currentStep, documentStatus, backgroundCheck, userData]);
 
-  // Validate file before upload
   const validateFile = (file: File): string | null => {
     console.log('📏 Validating file:', file.name, file.size, file.type);
     
-    // Check file size (5MB limit)
     const maxSizeMB = 5;
     if (file.size > maxSizeMB * 1024 * 1024) {
       return `File size must be less than ${maxSizeMB}MB`;
     }
     
-    // Check file type
     const allowedTypes = [
       'image/jpeg', 'image/jpg', 'image/png', 'image/gif',
       'application/pdf', 
@@ -213,10 +259,24 @@ const registrationRef = useRef(null);
       return;
     }
 
+    const validationError = validateFile(file);
+    if (validationError) {
+      toast.error(validationError);
+      return;
+    }
+
     console.log(`✅ Starting upload for ${field}:`, file.name);
 
     try {
-      // Map field to document type
+      setDocumentStatus(prev => ({ 
+        ...prev, 
+        [field]: { 
+          ...prev[field],
+          uploading: true,
+          error: undefined
+        } 
+      }));
+
       const documentTypeMap = {
         driverLicense: 'license',
         proofOfInsurance: 'insurance',
@@ -228,22 +288,6 @@ const registrationRef = useRef(null);
       formData.append('type', documentTypeMap[field]);
       formData.append('name', getDocumentName(field));
 
-      // Upload using your existing driverApi
-      setDocumentStatus(prev => ({ 
-        ...prev, 
-        [field]: { 
-          uploaded: true, 
-          uploading: false, 
-          success: true,
-          error: undefined,
-          id: `test-${Date.now()}`,
-          file: file 
-        } 
-      }));
-
-      console.log('✅ UI state updated (testing mode)');
-      return; // Stop here for testing
-      
       const response = await driverApi.uploadDocument(formData);
 
       if (response.success) {
@@ -260,14 +304,19 @@ const registrationRef = useRef(null);
           } 
         }));
       } else {
-        toast.error(`Failed to upload ${getDocumentName(field)}: ${response.error}`);
+        // SAFELY extract error message
+        const errorMessage = response.error 
+          ? (typeof response.error === 'string' ? response.error : response.error.message || 'Upload failed')
+          : 'Upload failed';
+        
+        toast.error(`Failed to upload ${getDocumentName(field)}: ${errorMessage}`);
         setDocumentStatus(prev => ({ 
           ...prev, 
           [field]: { 
             uploaded: true,
             uploading: false, 
             success: false,
-            error: response.error,
+            error: errorMessage, // Store string, not object
             id: undefined,
             file: file 
           } 
@@ -275,14 +324,15 @@ const registrationRef = useRef(null);
       }
     } catch (error: any) {
       console.error('🚨 Error uploading document:', error);
-      toast.error(`Error uploading document: ${error.message}`);
+      const errorMessage = error?.message || 'Network error';
+      toast.error(`Error uploading document: ${errorMessage}`);
       setDocumentStatus(prev => ({ 
         ...prev, 
         [field]: { 
           uploaded: true,
           uploading: false, 
           success: false,
-          error: error.message,
+          error: errorMessage, // Store string, not object
           id: undefined,
           file: file 
         } 
@@ -343,74 +393,94 @@ const registrationRef = useRef(null);
 
   const createDriverProfile = async (): Promise<boolean> => {
     console.log('👤 Creating driver profile...');
+    
+    if (!userData) {
+      toast.error('No user found. Please login again.');
+      return false;
+    }
+
     try {
-      const currentUser = getCurrentUser();
-      if (!currentUser) {
-        toast.error('No user found. Please login again.');
-        return false;
+      // Check if profile already exists
+      const existingProfile = await driverApi.getProfile();
+      if (existingProfile.success) {
+        console.log('✅ Driver profile already exists:', existingProfile.data);
+        return true;
       }
+    } catch (error) {
+      console.log('No existing profile found, will create new one');
+    }
 
-      // Get user data from localStorage
-      const userData = JSON.parse(localStorage.getItem('user') || '{}');
-
-      try {
-        const existingProfile = await driverApi.getProfile();
-        if (existingProfile.success) {
-          console.log('✅ Driver profile already exists:', existingProfile.data);
-          return true;
-        }
-      } catch (error) {
-        console.log('No existing profile found, will create new one');
-      }
-
+    try {
+      const formatDate = (date: Date | string): string => {
+        if (!date) return '';
+        const d = date instanceof Date ? date : new Date(date);
+        return d.toISOString().split('T')[0]; // "2026-12-31"
+      };
       const profileData = {
         licenseNumber: profile.licenseNumber,
-        licenseExpiry: profile.licenseExpiry,
-        insuranceNumber: profile.insuaranceNumber,
-        insuranceExpiry: profile.insuaranceExpiry,
-        phone: profile.phone || userData.phone || '',
-        address: `${profile.address}, ${profile.city}, ${profile.zipCode}`,
-        userId: userData.id,
-        email: userData.email || profile.email,
-        firstName: userData.firstName || profile.firstName,
-        lastName: userData.lastName || profile.lastName,
-        status: 'pending',
-        verificationStatus: 'pending',
-        isActive: true
+        licenseExpiry: formatDate(profile.licenseExpiry),
+        insuranceNumber: profile.insuranceNumber,
+        insuranceExpiry: formatDate(profile.insuranceExpiry),
       };
 
-      console.log('📤 Sending profile data:', profileData);
+      console.log('📤 Sending profile data to driver service:', profileData);
 
-      // REAL API CALL
       const response = await driverApi.createProfile(profileData);
 
       console.log('📨 Profile creation response:', response);
 
-      // Handle different response formats
       if (response.success) {
         console.log('✅ Driver profile created successfully');
         toast.success('Driver profile created successfully');
         return true;
       }
 
-      const errorMessage = response.error?.message || response.error || 'Unknown error';
-      console.log('Profile creation failed:', errorMessage);
-      
-      // If profile already exists in some form, that's OK
-      if (errorMessage.includes('already') || errorMessage.includes('exists') || response.status === 409) {
-        console.log('Profile seems to exist in some form, continuing...');
-        return true;
+      // 🔴 FIXED: Safely handle error message (it might be an object)
+      let errorMessage = response.error || 'Unknown error';
+
+      // Convert error to string if it's an object
+      if (typeof errorMessage === 'object') {
+        errorMessage = errorMessage.message || JSON.stringify(errorMessage);
       }
 
-      toast.error(`Could not create profile: ${errorMessage}`);
+      console.log('Profile creation failed:', errorMessage);
+
+      // 🔴 FIXED: Only call .includes() if errorMessage is a string
+      const errorString = String(errorMessage).toLowerCase();
+
+      // If profile already exists in some form, try to update it
+      if (errorString.includes('already') || errorString.includes('exists') || response.status === 409) {
+        console.log('Profile seems to exist in some form, trying to update...');
+
+        const updateResponse = await driverApi.updateProfile(profileData);
+        if (updateResponse.success) {
+          toast.success('Driver profile updated');
+          return true;
+        }
+
+        // If update also failed, show the update error
+        let updateError = updateResponse.error || 'Update failed';
+        if (typeof updateError === 'object') {
+          updateError = updateError.message || JSON.stringify(updateError);
+        }
+        toast.error(`Could not update profile: ${updateError}`);
+        return false;
+      }
+
+      toast.error(`Could not create profile: ${errorString}`);
       return false;
 
     } catch (error: any) {
       console.error('❌ Error in createDriverProfile:', error);
 
-      // For development, let's just return true to continue
-      console.log('⚠️ Allowing continuation despite error (for development)');
-      return true; // TEMPORARY: Allow continuation for now
+      // 🔴 FIXED: Safely extract error message
+      let errorMsg = error?.message || 'Network error';
+      if (typeof errorMsg === 'object') {
+        errorMsg = errorMsg.message || JSON.stringify(errorMsg);
+      }
+
+      toast.error(`Error creating profile: ${errorMsg}`);
+      return false;
     }
   };
 
@@ -426,18 +496,16 @@ const registrationRef = useRef(null);
         licensePlate: profile.licensePlate,
         maxWeight: parseFloat(profile.maxWeight) || 1000,
         maxVolume: parseFloat(profile.maxVolume) || 10,
-        insuranceInfo: 'To be uploaded'
+        insuranceInfo: profile.insuranceNumber || 'To be uploaded'
       };
     
       console.log('📤 Vehicle data:', vehicleData);
       
-      // Check if we have minimum required data
       if (!vehicleData.type || !vehicleData.licensePlate) {
-        console.log('⚠️ Missing required vehicle data, using mock');
-        return 'mock-vehicle-id'; // Return mock ID for now
+        toast.error('Please provide vehicle type and license plate');
+        return null;
       }
       
-      // REAL API CALL
       const response = await driverApi.addVehicle(vehicleData);
       
       console.log('📨 Vehicle add response:', response);
@@ -458,14 +526,16 @@ const registrationRef = useRef(null);
         }
       }
       
-      // If vehicle add fails, continue anyway for now
-      console.log('Vehicle add failed, but continuing:', response.error);
-      return 'mock-vehicle-id';
+      console.log('Vehicle add failed:', response.error);
+      toast.error(`Failed to add vehicle: ${response.error}`);
+      return null;
       
     } catch (error: any) {
       console.error('Error adding vehicle:', error);
-      // Don't show error toast for now, just continue
-      return 'mock-vehicle-id';
+      const errorMsg = response.error 
+        ? (typeof response.error === 'string' ? response.error : response.error?.message || 'Add failed')
+        : 'Add vehicle failed';
+      return null;
     }
   };
 
@@ -478,7 +548,6 @@ const registrationRef = useRef(null);
         const formData = new FormData();
         formData.append('image', file);
         
-        // Use the correct endpoint from your driverApi
         const response = await driverApi.uploadVehicleImage(vehicleId, formData);
         return response.success;
       });
@@ -486,7 +555,11 @@ const registrationRef = useRef(null);
       const results = await Promise.all(uploadPromises);
       const successfulUploads = results.filter(result => result).length;
       
-      return successfulUploads === files.length;
+      if (successfulUploads > 0) {
+        toast.success(`${successfulUploads} vehicle image(s) uploaded`);
+      }
+      
+      return successfulUploads > 0;
     } catch (error: any) {
       console.error('Error uploading vehicle images:', error);
       return false;
@@ -498,11 +571,10 @@ const registrationRef = useRef(null);
     try {
       const availabilityData = Object.entries(profile.availability)
         .filter(([day, data]) => {
-          const availabilityData = data as { start: string; end: string; available: boolean };
-          return availabilityData.available;
+          return (data as AvailabilityDay).available;
         })
         .map(([day, data]) => {
-          const availabilityData = data as { start: string; end: string; available: boolean };
+          const availabilityData = data as AvailabilityDay;
           return {
             dayOfWeek: dayToNumber(day),
             startTime: availabilityData.start,
@@ -510,23 +582,24 @@ const registrationRef = useRef(null);
           };
         });
 
-      // REAL API CALL
-      const response = await driverApi.setAvailability(availabilityData);
-      
+    const response = await driverApi.setAvailability(availabilityData);
+    
       if (response.success) {
         toast.success('Availability preferences saved');
         return true;
       }
-      
-      throw new Error(response.error || 'Failed to save availability');
-      
+
+      const errorMsg = response.error 
+        ? (typeof response.error === 'string' ? response.error : response.error?.message || 'Save failed')
+        : 'Failed to save availability';
+      throw new Error(errorMsg);
+
     } catch (error: any) {
       console.error('Error setting availability:', error);
       toast.error(`Error saving availability: ${error.message}`);
       return false;
     }
   };
-
   const dayToNumber = (day: string): number => {
     const days: string[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
     return days.indexOf(day.toLowerCase());
@@ -536,29 +609,38 @@ const registrationRef = useRef(null);
     console.log('➡️ Next step clicked. Current step:', currentStep);
     
     if (currentStep < totalSteps) {
-      // For step 2, only check if files are selected and background check is agreed
+      if (currentStep === 1) {
+        console.log('📋 Moving from Step 1 to Step 2 - Creating driver profile...');
+
+        // 🔴 CRITICAL: Create driver profile BEFORE allowing document uploads
+        toast.info('Creating your driver profile...', { duration: 3000 });
+        const profileCreated = await createDriverProfile();
+
+        if (!profileCreated) {
+          toast.error('Failed to create driver profile. Please check your information.');
+          return; // Don't proceed to next step
+        }
+
+        console.log('✅ Driver profile created, proceeding to Step 2');
+      }
+
       if (currentStep === 2) {
         console.log('📄 Checking Step 2 validation...');
-        console.log('Driver License file:', documentStatus.driverLicense.file?.name || 'null');
-        console.log('Insurance file:', documentStatus.proofOfInsurance.file?.name || 'null');
-        console.log('Registration file:', documentStatus.vehicleRegistration.file?.name || 'null');
-        console.log('Background Check:', backgroundCheck);
-        
-        const hasAllFiles = 
+
+        const hasAllFilesSelected = 
           documentStatus.driverLicense.file &&
           documentStatus.proofOfInsurance.file &&
           documentStatus.vehicleRegistration.file &&
           backgroundCheck;
-        
-        console.log('Has all files and background check?', hasAllFiles);
-        
-        if (!hasAllFiles) {
+
+        console.log('Has all files selected and background check?', hasAllFilesSelected);
+
+        if (!hasAllFilesSelected) {
           toast.error('Please select all required files and consent to background check');
           return;
         }
-        
       }
-      
+
       console.log('✅ Moving to step:', currentStep + 1);
       setCurrentStep(currentStep + 1);
     } else {
@@ -576,31 +658,70 @@ const registrationRef = useRef(null);
   const handleCompleteRegistration = async (): Promise<void> => {
     console.log('🏁 Completing registration...');
     setIsSubmitting(true);
+    
     try {
-      toast.info('Finalizing your registration...', { duration: Infinity });
-      
-      // Step 1: Create/verify driver profile
+      toast.info('Starting registration process...', { duration: Infinity });
+
+      // 🔴 STEP 1: CREATE DRIVER PROFILE FIRST (MUST BE FIRST!)
+      console.log('Step 1: Creating driver profile...');
       const profileCreated = await createDriverProfile();
       if (!profileCreated) {
         toast.dismiss();
         toast.error('Failed to create driver profile');
         return;
       }
+      toast.success('Driver profile created');
 
-      // Step 2: Check document upload status
-      const successfulUploads = [
-        documentStatus.driverLicense.success === true,
-        documentStatus.proofOfInsurance.success === true,
-        documentStatus.vehicleRegistration.success === true
-      ].filter(Boolean).length;
+      // 🔴 STEP 2: NOW upload documents (only after profile exists)
+      console.log('Step 2: Uploading documents...');
 
-      console.log('Successful uploads:', successfulUploads, '/ 3');
+      // Track successful uploads
+      const uploadResults = [];
 
-      if (successfulUploads < 3) {
-        toast.warning(`${3 - successfulUploads} document(s) were not uploaded successfully. You can upload them later in your profile.`);
+      // Upload driver license if file exists
+      if (documentStatus.driverLicense.file) {
+        console.log('Uploading driver license...');
+        toast.info('Uploading driver license...');
+        try {
+          await handleFileUpload('driverLicense', documentStatus.driverLicense.file);
+          uploadResults.push(documentStatus.driverLicense.success === true);
+        } catch (error) {
+          console.error('Driver license upload failed:', error);
+          uploadResults.push(false);
+        }
       }
 
-      // Step 3: Add vehicle
+      // Upload insurance if file exists
+      if (documentStatus.proofOfInsurance.file) {
+        console.log('Uploading proof of insurance...');
+        toast.info('Uploading proof of insurance...');
+        try {
+          await handleFileUpload('proofOfInsurance', documentStatus.proofOfInsurance.file);
+          uploadResults.push(documentStatus.proofOfInsurance.success === true);
+        } catch (error) {
+          console.error('Insurance upload failed:', error);
+          uploadResults.push(false);
+        }
+      }
+
+      // Upload registration if file exists
+      if (documentStatus.vehicleRegistration.file) {
+        console.log('Uploading vehicle registration...');
+        toast.info('Uploading vehicle registration...');
+        try {
+          await handleFileUpload('vehicleRegistration', documentStatus.vehicleRegistration.file);
+          uploadResults.push(documentStatus.vehicleRegistration.success === true);
+        } catch (error) {
+          console.error('Registration upload failed:', error);
+          uploadResults.push(false);
+        }
+      }
+
+      const successfulUploads = uploadResults.filter(Boolean).length;
+      console.log(`Document upload results: ${successfulUploads}/3 successful`);
+
+      // 🔴 STEP 3: Add vehicle (requires profile to exist)
+      console.log('Step 3: Adding vehicle...');
       const vehicleId = await addVehicle();
       if (!vehicleId) {
         toast.dismiss();
@@ -608,70 +729,69 @@ const registrationRef = useRef(null);
         return;
       }
 
-      // Step 4: Upload vehicle images (optional)
+      // 🔴 STEP 4: Upload vehicle images (optional)
       if (profile.vehicleImages.length > 0) {
+        console.log('Step 4: Uploading vehicle images...');
         await uploadVehicleImages(vehicleId, profile.vehicleImages);
       }
 
-      // Step 5: Set availability
+      // 🔴 STEP 5: Set availability
+      console.log('Step 5: Setting availability...');
       await setAvailability();
 
       toast.dismiss();
-      
+
       if (successfulUploads === 3) {
-        toast.success('🎉 Driver onboarding completed successfully!');
+        toast.success('🎉 Driver onboarding completed successfully! All documents uploaded.');
+      } else if (successfulUploads > 0) {
+        toast.success(`✅ Registration complete! ${successfulUploads}/3 documents uploaded successfully.`);
       } else {
-        toast.success(`✅ Registration complete! ${successfulUploads}/3 documents uploaded. You can upload missing documents in your profile.`);
+        toast.success(`✅ Registration complete! You can upload documents later in your profile.`);
       }
-      
-      // Store completion flag
+
       localStorage.setItem('driverOnboardingCompleted', 'true');
-      
-      // Wait a moment before redirecting
+
       setTimeout(() => {
         console.log('✅ Onboarding complete, calling onComplete');
         onComplete();
-      }, 1500);
-      
+      }, 2000);
+
     } catch (error: any) {
       toast.dismiss();
-      toast.error(`Registration failed: ${error.message}`);
+      console.error('Registration failed:', error);
+      const errorMsg = error?.message || 'Registration failed';
+      toast.error(`Registration failed: ${errorMsg}`);
     } finally {
       setIsSubmitting(false);
     }
   };
-
   const isStepValid = (): boolean => {
     console.log(`🔍 Checking if step ${currentStep} is valid...`);
     
     switch (currentStep) {
       case 1:
         const step1Valid = (
-          !!profile.firstName &&
-          !!profile.lastName &&
-          !!profile.email &&
-          !!profile.phone &&
+          !!profile.dateOfBirth &&
           !!profile.address &&
           !!profile.city &&
-          !!profile.zipCode
+          !!profile.state &&
+          !!profile.zipCode &&
+          !!profile.licenseNumber &&
+          !!profile.licenseExpiry &&
+          !!profile.insuranceNumber &&
+          !!profile.insuranceExpiry
         );
         console.log('Step 1 valid?', step1Valid);
         return step1Valid;
         
       case 2:
-        // Only check if files are selected and background check is agreed
-        // Don't require successful uploads
         const step2Valid = (
-          //!!documentStatus.driverLicense.file &&
-          //!!documentStatus.proofOfInsurance.file &&
-          //!!documentStatus.vehicleRegistration.file &&
+          !!documentStatus.driverLicense.file &&
+          !!documentStatus.proofOfInsurance.file &&
+          !!documentStatus.vehicleRegistration.file &&
           backgroundCheck
         );
         console.log('Step 2 valid?', step2Valid);
-        //console.log('  Driver License file:', !!documentStatus.driverLicense.file);
-        //console.log('  Insurance file:', !!documentStatus.proofOfInsurance.file);
-        //console.log('  Registration file:', !!documentStatus.vehicleRegistration.file);
-        console.log('  Background Check:', backgroundCheck);
         return step2Valid;
         
       case 3:
@@ -690,11 +810,11 @@ const registrationRef = useRef(null);
         
       case 4:
         console.log('Step 4 always valid (optional)');
-        return true; // All optional
+        return true;
         
       case 5:
         console.log('Step 5 always valid (review)');
-        return true; // Review step
+        return true;
         
       default:
         console.log('Default case, not valid');
@@ -702,13 +822,12 @@ const registrationRef = useRef(null);
     }
   };
 
-  // Helper function to trigger file input click
-  const triggerFileInput = (ref: any) => {
-  console.log('🖱️ Triggering file input click');
-  if (ref.current) {
-    ref.current.click();
-  }
-};
+  const triggerFileInput = (ref: React.RefObject<HTMLInputElement>) => {
+    console.log('🖱️ Triggering file input click');
+    if (ref.current) {
+      ref.current.click();
+    }
+  };
 
   const renderStep = () => {
     console.log('🎨 Rendering step:', currentStep);
@@ -719,62 +838,31 @@ const registrationRef = useRef(null);
           <div className="space-y-6">
             <div className="text-center">
               <User className="mx-auto h-12 w-12 text-blue-600 mb-4" />
-              <h3 className="text-xl mb-2">Personal Information</h3>
-              <p className="text-gray-600">Let's start with your basic details</p>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="firstName">First Name *</Label>
-                <Input
-                  id="firstName"
-                  value={profile.firstName}
-                  onChange={(e) => {
-                    console.log('First name changed:', e.target.value);
-                    setProfile({...profile, firstName: e.target.value});
-                  }}
-                  placeholder="John"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="lastName">Last Name *</Label>
-                <Input
-                  id="lastName"
-                  value={profile.lastName}
-                  onChange={(e) => {
-                    console.log('Last name changed:', e.target.value);
-                    setProfile({...profile, lastName: e.target.value});
-                  }}
-                  placeholder="Doe"
-                  required
-                />
-              </div>
+              <h3 className="text-xl mb-2">Driver Information</h3>
+              <p className="text-gray-600">Complete your driver profile details</p>
+              {userData && (
+                <div className="mt-2 p-3 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-blue-700">
+                    Welcome, <strong>{userData.firstName} {userData.lastName}</strong> ({userData.email})
+                  </p>
+                </div>
+              )}
             </div>
             
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={profile.email}
-                  onChange={(e) => setProfile({...profile, email: e.target.value})}
-                  placeholder="john@example.com"
-                  required
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number *</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  value={profile.phone}
-                  onChange={(e) => setProfile({...profile, phone: e.target.value})}
-                  placeholder="+1 (555) 123-4567"
-                  required
-                />
+                <Label htmlFor="dateOfBirth">Date of Birth *</Label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                  <Input
+                    id="dateOfBirth"
+                    type="date"
+                    value={profile.dateOfBirth}
+                    onChange={(e) => setProfile({...profile, dateOfBirth: e.target.value})}
+                    className="pl-10"
+                    required
+                  />
+                </div>
               </div>
               
               <div className="space-y-2">
@@ -800,15 +888,76 @@ const registrationRef = useRef(null);
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="zipCode">ZIP Code *</Label>
-                  <Input
-                    id="zipCode"
-                    value={profile.zipCode}
-                    onChange={(e) => setProfile({...profile, zipCode: e.target.value})}
-                    placeholder="10001"
-                    required
-                  />
+                  <Label htmlFor="state">State *</Label>
+                  <Select 
+                    value={profile.state} 
+                    onValueChange={(value: string) => setProfile({...profile, state: value})}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select state" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {states.map((state) => (
+                        <SelectItem key={state} value={state}>{state}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="zipCode">ZIP Code *</Label>
+                <Input
+                  id="zipCode"
+                  value={profile.zipCode}
+                  onChange={(e) => setProfile({...profile, zipCode: e.target.value})}
+                  placeholder="10001"
+                  required
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="licenseNumber">Driver License Number *</Label>
+                <Input
+                  id="licenseNumber"
+                  value={profile.licenseNumber}
+                  onChange={(e) => setProfile({...profile, licenseNumber: e.target.value})}
+                  placeholder="DL12345678"
+                  required
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="licenseExpiry">License Expiry Date *</Label>
+                <Input
+                  id="licenseExpiry"
+                  type="date"
+                  value={profile.licenseExpiry}
+                  onChange={(e) => setProfile({...profile, licenseExpiry: e.target.value})}
+                  required
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="insuranceNumber">Insurance Policy Number *</Label>
+                <Input
+                  id="insuranceNumber"
+                  value={profile.insuranceNumber}
+                  onChange={(e) => setProfile({...profile, insuranceNumber: e.target.value})}
+                  placeholder="INS12345678"
+                  required
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="insuranceExpiry">Insurance Expiry Date *</Label>
+                <Input
+                  id="insuranceExpiry"
+                  type="date"
+                  value={profile.insuranceExpiry}
+                  onChange={(e) => setProfile({...profile, insuranceExpiry: e.target.value})}
+                  required
+                />
               </div>
             </div>
           </div>
@@ -816,11 +965,17 @@ const registrationRef = useRef(null);
 
       case 2:
         return (
+          <ErrorBoundary>
           <div className="space-y-6">
             <div className="text-center">
               <FileText className="mx-auto h-12 w-12 text-blue-600 mb-4" />
               <h3 className="text-xl mb-2">Required Documents</h3>
-              <p className="text-gray-600">Upload your documents for verification (Max 5MB each)</p>
+              <p className="text-gray-600">Select your documents for upload (Max 5MB each)</p>
+              <div className="mt-2 p-3 bg-blue-50 rounded-lg">
+              <p className="text-sm text-blue-700">
+               <strong>Note:</strong> Documents will be uploaded after creating your profile in the final step.
+              </p>
+          </div>
             </div>
             
             <div className="space-y-6">
@@ -1014,7 +1169,7 @@ const registrationRef = useRef(null);
                     ref={registrationRef}
                     type="file"
                     accept="image/*,.pdf"
-                    onChange={async (e: any) => {
+                    onChange={async (e) => {
                       console.log('Registration file selected:', e.target.files?.[0]?.name);
                       const file = e.target.files?.[0];
                       if (file) {
@@ -1053,7 +1208,7 @@ const registrationRef = useRef(null);
                           </Badge>
                         ) : (
                           <Badge className="bg-blue-100 text-blue-800">
-                            <CheckCircle className="mr-1 h-3 w-3" />
+                            <Upload className="mr-1 h-3 w-3" />
                             Selected
                           </Badge>
                         )}
@@ -1154,15 +1309,9 @@ const registrationRef = useRef(null);
                     );
                   })}
                 </div>
-                <p className="text-sm text-amber-700 mt-3">
-                  ℹ️ Files are selected but not uploaded automatically. Click "Upload Now" to upload each file.
-                </p>
-                <p className="text-sm text-green-700 mt-1">
-                  ✅ You can proceed once all 3 files are selected and background check is consented.
-                </p>
               </div>
             </div>
-          </div>
+          </div></ErrorBoundary>
         );
 
       case 3:
@@ -1184,10 +1333,7 @@ const registrationRef = useRef(null);
                   <SelectContent>
                     {vehicleTypes.map((type) => (
                       <SelectItem key={type.value} value={type.value}>
-                        <div>
-                          <div>{type.label}</div>
-                          <div className="text-sm text-gray-500">{type.capacity}</div>
-                        </div>
+                        {type.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1200,7 +1346,7 @@ const registrationRef = useRef(null);
                   <Input
                     id="make"
                     value={profile.vehicleMake}
-                    onChange={(e: any) => setProfile({...profile, vehicleMake: e.target.value})}
+                    onChange={(e) => setProfile({...profile, vehicleMake: e.target.value})}
                     placeholder="Ford"
                     required
                   />
@@ -1210,7 +1356,7 @@ const registrationRef = useRef(null);
                   <Input
                     id="model"
                     value={profile.vehicleModel}
-                    onChange={(e: any) => setProfile({...profile, vehicleModel: e.target.value})}
+                    onChange={(e) => setProfile({...profile, vehicleModel: e.target.value})}
                     placeholder="Transit"
                     required
                   />
@@ -1223,7 +1369,7 @@ const registrationRef = useRef(null);
                   <Input
                     id="year"
                     value={profile.vehicleYear}
-                    onChange={(e: any) => setProfile({...profile, vehicleYear: e.target.value})}
+                    onChange={(e) => setProfile({...profile, vehicleYear: e.target.value})}
                     placeholder="2020"
                     required
                   />
@@ -1233,7 +1379,7 @@ const registrationRef = useRef(null);
                   <Input
                     id="color"
                     value={profile.vehicleColor}
-                    onChange={(e: any) => setProfile({...profile, vehicleColor: e.target.value})}
+                    onChange={(e) => setProfile({...profile, vehicleColor: e.target.value})}
                     placeholder="White"
                     required
                   />
@@ -1245,7 +1391,7 @@ const registrationRef = useRef(null);
                 <Input
                   id="licensePlate"
                   value={profile.licensePlate}
-                  onChange={(e: any) => setProfile({...profile, licensePlate: e.target.value})}
+                  onChange={(e) => setProfile({...profile, licensePlate: e.target.value})}
                   placeholder="ABC-123"
                   required
                 />
@@ -1258,7 +1404,7 @@ const registrationRef = useRef(null);
                     id="maxWeight"
                     type="number"
                     value={profile.maxWeight}
-                    onChange={(e: any) => setProfile({...profile, maxWeight: e.target.value})}
+                    onChange={(e) => setProfile({...profile, maxWeight: e.target.value})}
                     placeholder="1000"
                     min="0"
                     step="0.1"
@@ -1271,7 +1417,7 @@ const registrationRef = useRef(null);
                     id="maxVolume"
                     type="number"
                     value={profile.maxVolume}
-                    onChange={(e: any) => setProfile({...profile, maxVolume: e.target.value})}
+                    onChange={(e) => setProfile({...profile, maxVolume: e.target.value})}
                     placeholder="10"
                     min="0"
                     step="0.1"
@@ -1287,23 +1433,30 @@ const registrationRef = useRef(null);
                   <Camera className="mx-auto h-8 w-8 text-gray-400 mb-2" />
                   <p className="text-sm text-gray-600 mb-2">Upload photos of your vehicle (exterior and interior)</p>
                   <input
+                    ref={vehiclePhotosRef}
                     type="file"
                     accept="image/*"
                     multiple
-                    onChange={(e: any) => {
+                    onChange={(e) => {
                       const files = Array.from(e.target.files || []);
-                      // Limit to 5 files max
                       const selectedFiles = files.slice(0, 5);
-                      setProfile({...profile, vehicleImages: selectedFiles});
+                      setProfile({ ...profile, vehicleImages: selectedFiles as File[] });
+                      // Reset input value to allow re-selecting same file
+                      if (e.target) e.target.value = '';
                     }}
                     className="hidden"
-                    id="vehicle-photos"
                   />
-                  <label htmlFor="vehicle-photos">
-                    <Button variant="outline" className="cursor-pointer">
-                      Choose Photos (Max 5)
-                    </Button>
-                  </label>
+                  <Button
+                    variant="outline"
+                    className="cursor-pointer"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      vehiclePhotosRef.current?.click(); // Programmatically trigger
+                    }}
+                  >
+                    Choose Photos (Max 5)
+                  </Button>
                   {profile.vehicleImages.length > 0 && (
                     <div className="mt-3">
                       <Badge className="bg-green-100 text-green-800 mb-2">
@@ -1376,9 +1529,48 @@ const registrationRef = useRef(null);
                 <Textarea
                   placeholder="Enter the areas you're willing to serve (e.g., Downtown, Uptown, specific neighborhoods)"
                   value={profile.serviceAreas.join(', ')}
-                  onChange={(e: any) => setProfile({...profile, serviceAreas: e.target.value.split(', ').filter(Boolean)})}
+                  onChange={(e) => setProfile({...profile, serviceAreas: e.target.value.split(', ').filter(Boolean)})}
                   rows={3}
                 />
+              </div>
+
+              <div className="space-y-3">
+                <Label>Weekly Availability *</Label>
+                <div className="space-y-3">
+                  {Object.entries(profile.availability).map(([day, data]) => {
+                    const availabilityData = data as AvailabilityDay;
+                    return (
+                      <div key={day} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center space-x-3">
+                          <Checkbox
+                            checked={availabilityData.available}
+                            onCheckedChange={(checked: boolean) => 
+                              handleAvailabilityChange(day, 'available', checked)
+                            }
+                          />
+                          <span className="capitalize">{day}</span>
+                        </div>
+                        {availabilityData.available && (
+                          <div className="flex items-center space-x-2">
+                            <Input
+                              type="time"
+                              value={availabilityData.start}
+                              onChange={(e) => handleAvailabilityChange(day, 'start', e.target.value)}
+                              className="w-24"
+                            />
+                            <span>to</span>
+                            <Input
+                              type="time"
+                              value={availabilityData.end}
+                              onChange={(e) => handleAvailabilityChange(day, 'end', e.target.value)}
+                              className="w-24"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -1400,16 +1592,36 @@ const registrationRef = useRef(null);
             </div>
             
             <div className="space-y-4">
+              {userData && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Account Information</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div><span className="text-gray-600">Name:</span> {userData.firstName} {userData.lastName}</div>
+                      <div><span className="text-gray-600">Email:</span> {userData.email}</div>
+                      <div><span className="text-gray-600">Phone:</span> {userData.phone || 'Not provided'}</div>
+                      <div><span className="text-gray-600">User Type:</span> {userData.userType}</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Personal Information</CardTitle>
+                  <CardTitle className="text-base">Driver Information</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
                   <div className="grid grid-cols-2 gap-4">
-                    <div><span className="text-gray-600">Name:</span> {profile.firstName} {profile.lastName}</div>
-                    <div><span className="text-gray-600">Phone:</span> {profile.phone}</div>
-                    <div><span className="text-gray-600">Email:</span> {profile.email}</div>
-                    <div><span className="text-gray-600">Address:</span> {profile.address}, {profile.city}, {profile.zipCode}</div>
+                    <div><span className="text-gray-600">Date of Birth:</span> {profile.dateOfBirth}</div>
+                    <div><span className="text-gray-600">Address:</span> {profile.address}</div>
+                    <div><span className="text-gray-600">City:</span> {profile.city}</div>
+                    <div><span className="text-gray-600">State:</span> {profile.state}</div>
+                    <div><span className="text-gray-600">ZIP Code:</span> {profile.zipCode}</div>
+                    <div><span className="text-gray-600">License #:</span> {profile.licenseNumber}</div>
+                    <div><span className="text-gray-600">License Expiry:</span> {profile.licenseExpiry}</div>
+                    <div><span className="text-gray-600">Insurance #:</span> {profile.insuranceNumber}</div>
                   </div>
                 </CardContent>
               </Card>
@@ -1422,8 +1634,10 @@ const registrationRef = useRef(null);
                   <div className="grid grid-cols-2 gap-4">
                     <div><span className="text-gray-600">Vehicle:</span> {profile.vehicleYear} {profile.vehicleMake} {profile.vehicleModel}</div>
                     <div><span className="text-gray-600">License Plate:</span> {profile.licensePlate}</div>
-                    <div><span className="text-gray-600">Capacity:</span> {profile.maxWeight} kg / {profile.maxVolume} m³</div>
                     <div><span className="text-gray-600">Type:</span> {vehicleTypes.find(t => t.value === profile.vehicleType)?.label}</div>
+                    <div><span className="text-gray-600">Color:</span> {profile.vehicleColor}</div>
+                    <div><span className="text-gray-600">Capacity:</span> {profile.maxWeight} kg / {profile.maxVolume} m³</div>
+                    <div><span className="text-gray-600">Photos:</span> {profile.vehicleImages.length} uploaded</div>
                   </div>
                 </CardContent>
               </Card>
@@ -1507,13 +1721,6 @@ const registrationRef = useRef(null);
         return null;
     }
   };
-
-  // Check document upload status on step 2
-  useEffect(() => {
-    if (currentStep === 2) {
-      console.log('Document Status:', documentStatus);
-    }
-  }, [currentStep, documentStatus]);
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">

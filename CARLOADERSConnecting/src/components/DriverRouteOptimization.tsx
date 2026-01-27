@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { MapPin, Navigation, Package, Clock, TrendingUp, Map, CheckCircle2 } from 'lucide-react';
-import { orderService } from '../src/services/order.service';
+import { orderApi } from '../src/lib/api';
 import { toast } from 'sonner';
 
 interface RouteStop {

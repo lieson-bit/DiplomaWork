@@ -1,275 +1,145 @@
-import { useState, useEffect } from 'react';
-import { driverApi, userApi } from '../lib/api';
+import { useState, useEffect, useCallback } from 'react';
+import api from '../lib/api';
 import { toast } from 'sonner';
-import { getCurrentUser, getCurrentUserId } from '../lib/auth-utils';
+import { getCurrentUser } from '../lib/auth-utils';
 
-export function useDriverProfile() {
+export const useDriverProfile = () => {
   const [driverData, setDriverData] = useState(null);
+  const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [userProfile, setUserProfile] = useState(null);
 
-  const loadDriverProfile = async () => {
+  const loadDriverProfile = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
+
+      console.log('👤 Loading driver profile...');
       
-      // First try to load user profile from localStorage
-      const currentUser = getCurrentUser();
-      console.log('Current user from localStorage:', currentUser);
+      // 🔴 FIX: Typo was "getp()" → should be "getProfile()"
+      const profileResponse = await api.driver.getProfile();
+      console.log('📨 Profile API response:', profileResponse);
       
-      if (!currentUser) {
-        throw new Error('No user found in localStorage. Please login again.');
-      }
-      
-      // Try to get user profile from API
-      let userResponse;
-      try {
-        userResponse = await userApi.getProfile();
-        console.log('User API response:', userResponse);
-      } catch (apiError: any) {
-        console.warn('Failed to fetch user profile from API:', apiError.message);
-        // Use localStorage data as fallback
-        userResponse = {
-          success: true,
-          data: currentUser
-        };
-      }
-      
-      if (!userResponse.success) {
-        console.warn('User API returned error, using localStorage data');
-        // Use localStorage data as fallback
-        setUserProfile(currentUser);
-      } else {
-        setUserProfile(userResponse.data || currentUser);
-      }
-      
-      // Try to load driver profile from driver service
-      let driverResponse;
-      try {
-        driverResponse = await driverApi.getProfile();
-        console.log('Driver API response:', driverResponse);
-      } catch (driverError: any) {
-        console.warn('Failed to fetch driver profile from API:', driverError.message);
-        driverResponse = {
-          success: false,
-          error: driverError.message
-        };
-      }
-      
-      if (!driverResponse.success) {
-        // If no driver profile exists yet, create a basic structure
-        if (driverResponse.error?.includes('not found') || 
-            driverResponse.error?.includes('No profile') ||
-            driverResponse.error?.includes('No token') ||
-            driverResponse.error?.includes('401')) {
-          console.log('Creating new driver profile structure');
-          const effectiveUserData = userResponse.data || currentUser;
-          setDriverData({
-            personalInfo: {
-              firstName: effectiveUserData.firstName || '',
-              lastName: effectiveUserData.lastName || '',
-              email: effectiveUserData.email || '',
-              phone: effectiveUserData.phone || '',
-              address: '',
-              dateOfBirth: '',
-              joinDate: new Date().toISOString().split('T')[0]
-            },
-            vehicleInfo: {
-              type: '',
-              make: '',
-              model: '',
-              year: '',
-              color: '',
-              licensePlate: '',
-              maxWeight: 0,
-              maxVolume: 0
-            },
-            documents: [],
-            stats: {
-              totalDeliveries: 0,
-              rating: 0,
-              totalEarnings: 0,
-              completionRate: 0
-            },
-            verification: {
-              backgroundCheck: 'pending',
-              profileCompletion: 30,
-              canDrive: false
-            }
-          });
+      if (!profileResponse.success) {
+        const errorMsg = profileResponse.error || 'Failed to load driver profile';
+        
+        // Handle "not found" gracefully (onboarding state)
+        if (
+          errorMsg.toLowerCase().includes('not found') ||
+          errorMsg.includes('No profile') ||
+          profileResponse.status === 404
+        ) {
+          console.log('ℹ️ No driver profile found yet — showing onboarding');
+          setDriverData(null);
+          setVehicles([]);
         } else {
-          throw new Error(driverResponse.error || 'Failed to load driver profile');
+          setError(errorMsg);
+          toast.error(`Profile load failed: ${errorMsg}`);
         }
+        setLoading(false);
+        return;
+      }
+
+      // ✅ Success: Set full driver data
+      console.log('✅ Driver profile loaded:', profileResponse.data);
+      setDriverData(profileResponse.data);
+
+      // Load vehicles
+      const vehiclesResponse = await api.driver.getVehicles();
+      if (vehiclesResponse.success) {
+        console.log('🚗 Vehicles loaded:', vehiclesResponse.data);
+        setVehicles(vehiclesResponse.data || []);
       } else {
-        // Merge user data with driver data
-        const effectiveUserData = userResponse.data || currentUser;
-        setDriverData({
-          ...driverResponse.data,
-          personalInfo: {
-            firstName: effectiveUserData.firstName || driverResponse.data.firstName || '',
-            lastName: effectiveUserData.lastName || driverResponse.data.lastName || '',
-            email: effectiveUserData.email || driverResponse.data.email || '',
-            phone: effectiveUserData.phone || driverResponse.data.phone || '',
-            address: effectiveUserData.address || driverResponse.data.address || '',
-            dateOfBirth: effectiveUserData.dateOfBirth || driverResponse.data.dateOfBirth || '',
-            joinDate: driverResponse.data.joinDate || new Date().toISOString().split('T')[0]
-          }
-        });
+        console.warn('⚠️ Failed to load vehicles:', vehiclesResponse.error);
+        setVehicles([]);
       }
-      
+
+      setError(null);
     } catch (err: any) {
-      console.error('Error loading driver profile:', err);
-      setError(err.message);
-      
-      // Create minimal driver data structure for UI
-      const currentUser = getCurrentUser();
-      setDriverData({
-        personalInfo: {
-          firstName: currentUser?.firstName || '',
-          lastName: currentUser?.lastName || '',
-          email: currentUser?.email || '',
-          phone: currentUser?.phone || '',
-          address: '',
-          dateOfBirth: '',
-          joinDate: new Date().toISOString().split('T')[0]
-        },
-        vehicleInfo: {
-          type: '',
-          make: '',
-          model: '',
-          year: '',
-          color: '',
-          licensePlate: '',
-          maxWeight: 0,
-          maxVolume: 0
-        },
-        documents: [],
-        stats: {
-          totalDeliveries: 0,
-          rating: 0,
-          totalEarnings: 0,
-          completionRate: 0
-        },
-        verification: {
-          backgroundCheck: 'pending',
-          profileCompletion: 30,
-          canDrive: false
-        }
-      });
-      
-      // Only show error toast for serious errors
-      if (!err.message.includes('No user found')) {
-        toast.error(`Failed to load driver profile: ${err.message}`);
-      }
+      const message = err.message || 'Unknown error loading profile';
+      console.error('❌ Error loading driver profile:', err);
+      setError(message);
+      toast.error(`Failed to load profile: ${message}`);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  
+  useEffect(() => {
+    loadDriverProfile();
+  }, [loadDriverProfile]);
+
+  // ✅ Update driver profile (license/insurance only)
   const updateProfile = async (data: any) => {
     try {
-      console.log('Updating profile with data:', data);
-
-      // Update driver profile
-      const driverResponse = await driverApi.updateProfile(data);
-      console.log('Driver update response:', driverResponse);
-
-      if (!driverResponse.success) {
-        // If driver profile doesn't exist, try to create it
-        if (driverResponse.error?.includes('not found')) {
-          console.log('Creating new driver profile');
-          const createResponse = await driverApi.createProfile(data);
-          console.log('Create profile response:', createResponse);
-
-          if (!createResponse.success) {
-            throw new Error(createResponse.error || 'Failed to create driver profile');
-          }
-          toast.success('Profile created successfully');
-          await loadDriverProfile();
-          return true;
-        }
-        throw new Error(driverResponse.error || 'Failed to update driver profile');
+      const response = await api.driver.updateProfile(data);
+      if (response.success) {
+        await loadDriverProfile(); // Refresh full state
+        toast.success('Profile updated successfully');
+        return true;
+      } else {
+        const msg = response.error || 'Update failed';
+        toast.error(msg);
+        return false;
       }
-
-      toast.success('Profile updated successfully');
-      await loadDriverProfile(); // Refresh data
-      return true;
-    } catch (err: any) {
-      console.error('Error updating profile:', err);
-      toast.error(`Failed to update profile: ${err.message}`);
+    } catch (error: any) {
+      const msg = error.message || 'Network error';
+      console.error('Error updating profile:', error);
+      toast.error(`Update failed: ${msg}`);
       return false;
     }
   };
 
-  const updateAvailability = async (isAvailable: boolean) => {
+  // ✅ Add new vehicle
+  const addVehicle = async (data: any) => {
     try {
-      const response = await driverApi.updateAvailability(isAvailable);
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to update availability');
+      const response = await api.driver.addVehicle(data);
+      if (response.success) {
+        await loadDriverProfile();
+        toast.success('Vehicle added successfully');
+        return response.data;
+      } else {
+        const msg = response.error || 'Add vehicle failed';
+        toast.error(msg);
+        return null;
       }
-      toast.success(`You are now ${isAvailable ? 'available' : 'unavailable'}`);
-      return true;
-    } catch (err: any) {
-      toast.error(`Failed to update availability: ${err.message}`);
-      return false;
-    }
-  };
-
-  const addVehicle = async (vehicleData: any) => {
-    try {
-      const response = await driverApi.addVehicle(vehicleData);
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to add vehicle');
-      }
-      toast.success('Vehicle added successfully');
-      await loadDriverProfile(); // Refresh data
-      return response.data;
-    } catch (err: any) {
-      toast.error(`Failed to add vehicle: ${err.message}`);
+    } catch (error: any) {
+      const msg = error.message || 'Network error';
+      console.error('Error adding vehicle:', error);
+      toast.error(`Add vehicle failed: ${msg}`);
       return null;
     }
   };
 
-  const getDriverStats = async () => {
+  // ✅ Update availability (online/offline)
+  const updateAvailability = async (isOnline: boolean) => {
     try {
-      const response = await driverApi.getStats();
-      if (!response.success) {
-        // Return mock stats if API fails
-        return {
-          totalDeliveries: 0,
-          rating: 0,
-          totalEarnings: 0,
-          completionRate: 0
-        };
+      const response = await api.driver.updateAvailability(isOnline);
+      if (response.success) {
+        await loadDriverProfile();
+        toast.success(`You are now ${isOnline ? 'online' : 'offline'}`);
+        return true;
+      } else {
+        const msg = response.error || 'Update failed';
+        toast.error(msg);
+        return false;
       }
-      return response.data;
-    } catch (err: any) {
-      console.error('Error loading driver stats:', err);
-      // Return mock stats on error
-      return {
-        totalDeliveries: 0,
-        rating: 0,
-        totalEarnings: 0,
-        completionRate: 0
-      };
+    } catch (error: any) {
+      const msg = error.message || 'Network error';
+      console.error('Error updating availability:', error);
+      toast.error(`Availability update failed: ${msg}`);
+      return false;
     }
   };
 
-  useEffect(() => {
-    loadDriverProfile();
-  }, []);
-
   return {
     driverData,
-    userProfile,
+    vehicles,
     loading,
     error,
     loadDriverProfile,
     updateProfile,
-    updateAvailability,
     addVehicle,
-    getDriverStats
+    updateAvailability,
   };
-}
+};

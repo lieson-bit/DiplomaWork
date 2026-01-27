@@ -1,5 +1,5 @@
-// Helper functions for auth management
-export const getCurrentUser = () => {
+// Simple auth utilities
+export function getCurrentUser() {
   const userStr = localStorage.getItem('user');
   if (!userStr) return null;
   try {
@@ -7,25 +7,18 @@ export const getCurrentUser = () => {
   } catch {
     return null;
   }
-};
+}
 
-export const getCurrentUserType = (): 'driver' | 'customer' | null => {
-  return localStorage.getItem('userType') as 'driver' | 'customer';
-};
+export function isDriver() {
+  const user = getCurrentUser();
+  return user && user.userType === 'driver';
+}
 
-export const getCurrentUserId = (): string | null => {
-  return localStorage.getItem('userId');
-};
+export function isCustomer() {
+  const user = getCurrentUser();
+  return user && user.userType === 'customer';
+}
 
-export const storeUserData = (user: any) => {
-  localStorage.setItem('user', JSON.stringify(user));
-  localStorage.setItem('userType', user.userType);
-  localStorage.setItem('userId', user.id);
-};
-
-export const clearUserData = () => {
-  localStorage.removeItem('user');
-  localStorage.removeItem('userType');
-  localStorage.removeItem('userId');
-  localStorage.removeItem('authToken');
-};
+export function isAuthenticated() {
+  return !!localStorage.getItem('authToken') && !!getCurrentUser();
+}

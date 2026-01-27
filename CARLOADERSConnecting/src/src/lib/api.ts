@@ -1,118 +1,10 @@
 import { MICROSERVICES_CONFIG } from '../config/environment';
-class ApiClient {
-  private async request<T = any>(
-    endpoint: string,
-    method: string = 'GET',
-    body?: any,
-    service: 'user' | 'driver' | 'customer' = 'user'
-  ): Promise<{ success: boolean; data?: T; error?: string; message?: string }> {
-    try {
-      const token = localStorage.getItem('authToken');
-      let baseUrl = '';
-    
-      switch (service) {
-        case 'user':
-          baseUrl = MICROSERVICES_CONFIG.USER_SERVICE.baseUrl;
-          break;
-        case 'driver':
-          baseUrl = MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl;
-          break;
-        case 'customer':
-          baseUrl = MICROSERVICES_CONFIG.CUSTOMER_SERVICE.baseUrl;
-          break;
-      }
-    
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-    
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      } else {
-        console.warn('No auth token found for request to:', endpoint);
-      }
-    
-      const response = await fetch(`${baseUrl}${endpoint}`, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-    
-      const responseText = await response.text();
-      let data;
-      
-      try {
-        data = responseText ? JSON.parse(responseText) : {};
-      } catch {
-        data = { message: responseText };
-      }
-    
-      if (!response.ok) {
-        // Handle 401 unauthorized (token expired or invalid)
-        if (response.status === 401) {
-          // Clear invalid token
-          localStorage.removeItem('authToken');
-          return {
-            success: false,
-            error: 'Session expired. Please login again.',
-            message: 'Unauthorized'
-          };
-        }
-        
-        return {
-          success: false,
-          error: data.error || data.message || `HTTP ${response.status}`,
-          message: data.message
-        };
-      }
-    
-      return {
-        success: true,
-        data: data.data || data,
-        message: data.message
-      };
-    } catch (error: any) {
-      console.error('API Request Error:', error);
-      
-      // Handle network errors
-      if (error.message.includes('Failed to fetch')) {
-        return {
-          success: false,
-          error: `Cannot connect to ${service} service at port ${service === 'user' ? '3001' : service === 'driver' ? '3002' : '3003'}. Please make sure the service is running.`,
-        };
-      }
-      
-      return {
-        success: false,
-        error: error.message || 'An unknown error occurred',
-      };
-    }
-  }
 
-  async get<T = any>(endpoint: string, service?: 'user' | 'driver' | 'customer') {
-    return this.request<T>(endpoint, 'GET', undefined, service);
-  }
-
-  async post<T = any>(endpoint: string, body?: any, service?: 'user' | 'driver' | 'customer') {
-    return this.request<T>(endpoint, 'POST', body, service);
-  }
-
-  async put<T = any>(endpoint: string, body?: any, service?: 'user' | 'driver' | 'customer') {
-    return this.request<T>(endpoint, 'PUT', body, service);
-  }
-
-  async patch<T = any>(endpoint: string, body?: any, service?: 'user' | 'driver' | 'customer') {
-    return this.request<T>(endpoint, 'PATCH', body, service);
-  }
-
-  async delete<T = any>(endpoint: string, service?: 'user' | 'driver' | 'customer') {
-    return this.request<T>(endpoint, 'DELETE', undefined, service);
-  }
+// Helper functions
+export function getAuthToken(): string | null {
+  return localStorage.getItem('authToken');
 }
 
-export const apiClient = new ApiClient();
-
-// Auth token management
 export function setAuthToken(token: string) {
   localStorage.setItem('authToken', token);
 }
@@ -121,12 +13,221 @@ export function clearAuthToken() {
   localStorage.removeItem('authToken');
 }
 
-export function getAuthToken() {
-  return localStorage.getItem('authToken');
+export function getCurrentUser() {
+  const userStr = localStorage.getItem('user');
+  if (!userStr) return null;
+  try {
+    return JSON.parse(userStr);
+  } catch {
+    return null;
+  }
+}
+
+// Generic request function
+async function makeRequest<T = any>(
+  endpoint: string,
+  method: string = 'GET',
+  body?: any,
+  service: 'user' | 'driver' | 'customer' = 'user'
+): Promise<{
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+  status?: number;
+}> {
+  try {
+    const token = getAuthToken();
+    let baseUrl = '';
+    
+    // Determine base URL based on service
+    switch (service) {
+      case 'user':
+        baseUrl = MICROSERVICES_CONFIG.USER_SERVICE.baseUrl;
+        break;
+      case 'driver':
+        baseUrl = MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl;
+        break;
+      case 'customer':
+        baseUrl = MICROSERVICES_CONFIG.CUSTOMER_SERVICE.baseUrl;
+        break;
+    }
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const url = `${baseUrl}${endpoint}`;
+    const config: RequestInit = {
+      method,
+      headers,
+    };
+
+    if (body && method !== 'GET' && method !== 'DELETE') {
+      config.body = JSON.stringify(body);
+    }
+
+    console.log(`🌐 API ${method} ${url}`);
+    if (body) console.log('📦 Request body:', body);
+
+    const response = await fetch(url, config);
+    const responseText = await response.text();
+    let data;
+    
+    try {
+      data = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      data = { message: responseText };
+    }
+
+    console.log(`📨 Response ${response.status}:`, data);
+
+    // Handle unauthorized
+    if (response.status === 401) {
+      clearAuthToken();
+      return {
+        success: false,
+        error: 'Session expired. Please login again.',
+        status: 401,
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: data.error || data.message || `HTTP ${response.status}`,
+        status: response.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: data.data || data,
+      message: data.message,
+      status: response.status,
+    };
+  } catch (error: any) {
+    console.error('❌ API Request Error:', error);
+    
+    if (error.message.includes('Failed to fetch')) {
+      return {
+        success: false,
+        error: `Cannot connect to ${service} service. Please make sure it's running on localhost:${service === 'user' ? '3001' : service === 'driver' ? '3002' : '3003'}.`,
+        status: 0,
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Network error',
+      status: 0,
+    };
+  }
+}
+
+// Upload function for FormData
+async function makeUploadRequest<T = any>(
+  endpoint: string,
+  formData: FormData,
+  service: 'user' | 'driver' | 'customer' = 'user'
+): Promise<{
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+  status?: number;
+}> {
+  try {
+    const token = getAuthToken();
+    let baseUrl = '';
+    
+    switch (service) {
+      case 'user':
+        baseUrl = MICROSERVICES_CONFIG.USER_SERVICE.baseUrl;
+        break;
+      case 'driver':
+        baseUrl = MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl;
+        break;
+      case 'customer':
+        baseUrl = MICROSERVICES_CONFIG.CUSTOMER_SERVICE.baseUrl;
+        break;
+    }
+
+    const headers: HeadersInit = {};
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const url = `${baseUrl}${endpoint}`;
+    
+    console.log(`📤 Upload to ${url}`);
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const responseText = await response.text();
+    let data;
+    
+    try {
+      data = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      data = { message: responseText };
+    }
+
+    console.log(`📨 Upload response ${response.status}:`, data);
+
+    if (response.status === 401) {
+      clearAuthToken();
+      return {
+        success: false,
+        error: 'Session expired. Please login again.',
+        status: 401,
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: data.error || data.message || `HTTP ${response.status}`,
+        status: response.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: data.data || data,
+      message: data.message,
+      status: response.status,
+    };
+  } catch (error: any) {
+    console.error('❌ Upload Error:', error);
+    
+    if (error.message.includes('Failed to fetch')) {
+      return {
+        success: false,
+        error: `Cannot connect to ${service} service. Please make sure it's running.`,
+        status: 0,
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Network error',
+      status: 0,
+    };
+  }
 }
 
 // ==========================================
-// AUTH API (User Service)
+// AUTH API (User Service - Port 3001)
 // ==========================================
 
 export const authApi = {
@@ -138,40 +239,30 @@ export const authApi = {
     userType: 'driver' | 'customer';
     phone?: string;
   }) => {
-    const response = await apiClient.post('/api/auth/register', data, 'user');
-    console.log('Register response:', response); // Debug log
+    const response = await makeRequest('/api/auth/register', 'POST', data, 'user');
+    
     if (response.success && response.data?.tokens?.accessToken) {
       setAuthToken(response.data.tokens.accessToken);
-      // Store user data - check the actual response structure
+      // Store user data
       if (response.data.user) {
         localStorage.setItem('user', JSON.stringify(response.data.user));
         localStorage.setItem('userType', response.data.user.userType);
         localStorage.setItem('userId', response.data.user.id);
-      } else if (response.data) {
-        // Try alternative structure
-        localStorage.setItem('user', JSON.stringify(response.data));
-        localStorage.setItem('userType', response.data.userType);
-        localStorage.setItem('userId', response.data.id);
       }
     }
     return response;
   },
 
   login: async (data: { email: string; password: string }) => {
-    const response = await apiClient.post('/api/auth/login', data, 'user');
-    console.log('Login response:', response); // Debug log
+    const response = await makeRequest('/api/auth/login', 'POST', data, 'user');
+    
     if (response.success && response.data?.tokens?.accessToken) {
       setAuthToken(response.data.tokens.accessToken);
-      // Store user data - check the actual response structure
+      // Store user data
       if (response.data.user) {
         localStorage.setItem('user', JSON.stringify(response.data.user));
         localStorage.setItem('userType', response.data.user.userType);
         localStorage.setItem('userId', response.data.user.id);
-      } else if (response.data) {
-        // Try alternative structure
-        localStorage.setItem('user', JSON.stringify(response.data));
-        localStorage.setItem('userType', response.data.userType);
-        localStorage.setItem('userId', response.data.id);
       }
     }
     return response;
@@ -179,343 +270,159 @@ export const authApi = {
 
   logout: async () => {
     try {
-      await apiClient.post('/api/auth/logout', undefined, 'user');
+      await makeRequest('/api/auth/logout', 'POST', undefined, 'user');
     } catch (error) {
       console.warn('Logout API call failed:', error);
     } finally {
-      localStorage.removeItem('authToken');
+      clearAuthToken();
       localStorage.removeItem('user');
       localStorage.removeItem('userType');
       localStorage.removeItem('userId');
+      localStorage.removeItem('driverId');
     }
   },
 
   getCurrentUser: async () => {
-    return apiClient.get('/api/auth/profile', 'user');
-  },
-
-  refreshToken: async () => {
-    const response = await apiClient.post('/api/auth/refresh-token', undefined, 'user');
-    if (response.success && response.data?.tokens?.accessToken) {
-      setAuthToken(response.data.tokens.accessToken);
-    }
-    return response;
+    return makeRequest('/api/auth/profile', 'GET', undefined, 'user');
   },
 };
 
 // ==========================================
-// USER API (User Service)
-// ==========================================
-
-export const userApi = {
-   getProfile: async () => {
-    // Try /api/auth/profile first, then /api/users/profile
-    const authResponse = await apiClient.get('/api/auth/profile', 'user');
-    if (authResponse.success) {
-      return authResponse;
-    }
-    // Fallback to /api/users/profile
-    return apiClient.get('/api/users/profile', 'user');
-  },
-
-  updateProfile: async (data: any) => {
-    return apiClient.put('/api/users/profile', data, 'user');
-  },
-
-  getAllUsers: async () => {
-    return apiClient.get('/api/users', 'user');
-  },
-
-  getUserById: async (id: string) => {
-    return apiClient.get(`/api/users/${id}`, 'user');
-  },
-
-  searchUsers: async (query: string) => {
-    return apiClient.get(`/api/users/search?q=${encodeURIComponent(query)}`, 'user');
-  },
-
-  getUsersByType: async (type: 'driver' | 'customer') => {
-    return apiClient.get(`/api/users/type/${type}`, 'user');
-  },
-};
-
-// ==========================================
-// DRIVER API (Driver Service)
+// DRIVER API (Driver Service - Port 3002) 
 // ==========================================
 
 export const driverApi = {
-  createProfile: async (data: any) => {
-    return apiClient.post('/api/drivers/profile', data, 'driver');
-  },
-
+  // Profile
   getProfile: async () => {
-    return apiClient.get('/api/drivers/profile', 'driver');
+    return makeRequest('/api/drivers/profile', 'GET', undefined, 'driver');
   },
 
-  updateProfile: async (data: any) => {
-    return apiClient.put('/api/drivers/profile', data, 'driver');
+  createProfile: async (data: {
+    licenseNumber: string;
+    licenseExpiry: string;
+    insuranceNumber: string;
+    insuranceExpiry: string;
+  }) => {
+    return makeRequest('/api/drivers/profile', 'POST', data, 'driver');
   },
 
-  updateAvailability: async (isAvailable: boolean) => {
-    return apiClient.put('/api/drivers/availability', { isAvailable }, 'driver');
+  updateProfile: async (data: {
+    licenseNumber?: string;
+    licenseExpiry?: string;
+    insuranceNumber?: string;
+    insuranceExpiry?: string;
+  }) => {
+    return makeRequest('/api/drivers/profile', 'PUT', data, 'driver');
   },
 
-  getAvailability: async () => {
-    return apiClient.get('/api/drivers/availability', 'driver');
-  },
-
-  updateStatus: async (status: 'available' | 'busy' | 'offline') => {
-    return apiClient.patch('/api/drivers/status', { status }, 'driver');
-  },
-
-  addVehicle: async (data: any) => {
-    return apiClient.post('/api/drivers/vehicles', data, 'driver');
-  },
-
+  // Vehicles
   getVehicles: async () => {
-    return apiClient.get('/api/drivers/vehicles', 'driver');
+    return makeRequest('/api/drivers/vehicles', 'GET', undefined, 'driver');
   },
 
+  addVehicle: async (data: {
+    type: string;
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    licensePlate: string;
+    maxWeight: number;
+    maxVolume: number;
+  }) => {
+    return makeRequest('/api/drivers/vehicles', 'POST', data, 'driver');
+  },
+
+  updateVehicle: async (vehicleId: string, data: {
+    make?: string;
+    model?: string;
+    year?: number;
+    color?: string;
+    licensePlate?: string;
+    maxWeight?: number;
+    maxVolume?: number;
+    insuranceInfo?: string;
+  }) => {
+    return makeRequest(`/api/drivers/vehicles/${vehicleId}`, 'PUT', data, 'driver');
+  },
+
+  // Uploads
   uploadVehicleImage: async (vehicleId: string, formData: FormData) => {
-    const token = getAuthToken();
-    const response = await fetch(
-      `${MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl}/api/drivers/vehicles/${vehicleId}/image`,
-      {
-        method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        body: formData,
-      }
-    );
-    
-    const data = await response.json();
-    return { success: response.ok, data, status: response.status };
-  },
-
-  getStats: async () => {
-    return apiClient.get('/api/drivers/stats', 'driver');
+    return makeUploadRequest(`/api/drivers/vehicles/${vehicleId}/image`, formData, 'driver');
   },
 
   uploadProfilePicture: async (formData: FormData) => {
-    const token = getAuthToken();
-    const response = await fetch(
-      `${MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl}/api/drivers/profile-picture`,
-      {
-        method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        body: formData,
-      }
-    );
-    
-    const data = await response.json();
-    return { success: response.ok, data };
-  },
-  
-  setAvailability: async (availability: any[]) => {
-    return apiClient.put('/api/drivers/availability', { availability }, 'driver');
+    return makeUploadRequest('/api/drivers/profile-picture', formData, 'driver');
   },
 
-  // For updating driver profile with additional fields
-  updateProfileDetails: async (data: any) => {
-    return apiClient.patch('/api/drivers/profile/details', data, 'driver');
-  },
-
-  getVerificationStatus: async () => {
-    return apiClient.get('/api/drivers/verification-status', 'driver');
-  },
-
-  uploadDocument: async (formData: FormData): Promise<{
-    success: boolean;
-    data?: any;
-    error?: string;
-    status?: number;
-    message?: string;
-  }> => {
-    try {
-      const token = getAuthToken();
-      
-      if (!token) {
-        console.error('❌ No auth token found');
-        return { 
-          success: false, 
-          error: 'No authentication token found. Please login again.',
-          data: null,
-          status: 401
-        };
-      }
-
-      console.log('🔐 Auth Token:', token.substring(0, 20) + '...');
-      console.log('📤 Uploading document to:', `${MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl}/api/drivers/documents`);
-      
-      // Debug FormData contents
-      console.log('📋 FormData contents:');
-      for (const [key, value] of formData.entries()) {
-        if (value instanceof File) {
-          console.log(`  ${key}:`, value.name, `(${value.type}, ${value.size} bytes)`);
-        } else {
-          console.log(`  ${key}:`, value);
-        }
-      }
-
-      const response = await fetch(
-        `${MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl}/api/drivers/documents`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            // NOTE: Don't set Content-Type for FormData - browser does it automatically with boundary
-          },
-          body: formData,
-        }
-      );
-
-      console.log('📨 Upload response status:', response.status, response.statusText);
-      
-      // Get response as text first to debug
-      const responseText = await response.text();
-      console.log('📄 Response text:', responseText);
-      
-      let data;
-      try {
-        data = responseText ? JSON.parse(responseText) : {};
-        console.log('📊 Parsed response data:', data);
-      } catch (parseError) {
-        console.error('❌ Failed to parse JSON response:', parseError);
-        console.log('Raw response:', responseText);
-        data = { message: 'Invalid JSON response from server' };
-      }
-
-      if (!response.ok) {
-        console.error('❌ Upload failed with status:', response.status);
-        
-        // Handle specific error codes
-        if (response.status === 401) {
-          localStorage.removeItem('authToken');
-          return { 
-            success: false, 
-            error: 'Session expired. Please login again.',
-            data: null,
-            status: 401
-          };
-        }
-        
-        if (response.status === 413) {
-          return { 
-            success: false, 
-            error: 'File too large. Maximum size is 5MB.',
-            data: null,
-            status: 413
-          };
-        }
-        
-        return { 
-          success: response.ok, 
-          error: data.error || data.message || `HTTP ${response.status}: ${response.statusText}`,
-          data: data.data || data,
-          status: response.status
-        };
-      }
-
-      console.log('✅ Upload successful:', data);
-      return { 
-        success: true, 
-        data: data.data || data,
-        message: data.message,
-        status: response.status
-      };
-      
-    } catch (error: any) {
-      console.error('🚨 Network error during upload:', error);
-      
-      // Handle network errors
-      if (error.message.includes('Failed to fetch')) {
-        return { 
-          success: false, 
-          error: `Cannot connect to driver service at ${MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl}. Please make sure the service is running.`,
-          data: null,
-          status: 0
-        };
-      }
-      
-      return { 
-        success: false, 
-        error: error.message || 'Network error occurred',
-        data: null,
-        status: 0
-      };
-    }
+  // Documents
+  uploadDocument: async (formData: FormData) => {
+    return makeUploadRequest('/api/drivers/documents', formData, 'driver');
   },
 
   getDocuments: async () => {
-    return apiClient.get('/api/drivers/documents', 'driver');
+    return makeRequest('/api/drivers/documents', 'GET', undefined, 'driver');
+  },
+
+  // Availability
+  updateAvailability: async (isAvailable: boolean) => {
+    return makeRequest('/api/drivers/availability', 'PUT', { isAvailable }, 'driver');
+  },
+
+  setAvailability: async (availability: any[]) => {
+    return makeRequest('/api/drivers/availability', 'PUT', { availability }, 'driver');
+  },
+
+  getAvailability: async () => {
+    return makeRequest('/api/drivers/availability', 'GET', undefined, 'driver');
+  },
+
+  // Stats
+  getStats: async () => {
+    const profile = await driverApi.getProfile();
+    if (profile.success && profile.data) {
+      return {
+        success: true,
+        data: {
+          totalDeliveries: profile.data.totalDeliveries || 0,
+          rating: profile.data.rating || 0,
+          totalEarnings: profile.data.totalEarnings || 0,
+          completionRate: profile.data.completionRate || 0
+        }
+      };
+    }
+    return { 
+      success: false, 
+      error: 'Failed to load stats',
+      status: profile.status 
+    };
   },
 };
 
 // ==========================================
-// CUSTOMER API (Customer Service)
+// CUSTOMER API (Customer Service - Port 3003)
 // ==========================================
 
 export const customerApi = {
-  createProfile: async (data: any) => {
-    return apiClient.post('/api/customers/profile', data, 'customer');
+  getProfile: async () => {
+    return makeRequest('/api/customers/profile', 'GET', undefined, 'customer');
   },
 
-  getProfile: async () => {
-    return apiClient.get('/api/customers/profile', 'customer');
+  createProfile: async (data: any) => {
+    return makeRequest('/api/customers/profile', 'POST', data, 'customer');
   },
 
   updateProfile: async (data: any) => {
-    return apiClient.put('/api/customers/profile', data, 'customer');
-  },
-
-  addAddress: async (data: any) => {
-    return apiClient.post('/api/customers/addresses', data, 'customer');
-  },
-
-  getAddresses: async () => {
-    return apiClient.get('/api/customers/addresses', 'customer');
-  },
-
-  updateAddress: async (id: string, data: any) => {
-    return apiClient.put(`/api/customers/addresses/${id}`, data, 'customer');
-  },
-
-  deleteAddress: async (id: string) => {
-    return apiClient.delete(`/api/customers/addresses/${id}`, 'customer');
-  },
-
-  addPaymentMethod: async (data: any) => {
-    return apiClient.post('/api/customers/payment-methods', data, 'customer');
-  },
-
-  updatePreferences: async (data: any) => {
-    return apiClient.put('/api/customers/preferences', data, 'customer');
-  },
-
-  getStats: async () => {
-    return apiClient.get('/api/customers/stats', 'customer');
-  },
-
-  uploadProfilePicture: async (formData: FormData) => {
-    const token = getAuthToken();
-    const response = await fetch(
-      `${MICROSERVICES_CONFIG.CUSTOMER_SERVICE.baseUrl}/api/customers/profile-picture`,
-      {
-        method: 'POST',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
-        body: formData,
-      }
-    );
-    
-    const data = await response.json();
-    return { success: response.ok, data };
+    return makeRequest('/api/customers/profile', 'PUT', data, 'customer');
   },
 };
 
+// ==========================================
 // Export all APIs
+// ==========================================
+
 export default {
   auth: authApi,
-  user: userApi,
   driver: driverApi,
   customer: customerApi,
 };
-
