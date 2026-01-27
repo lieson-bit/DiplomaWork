@@ -7,7 +7,7 @@ import { Switch } from "./ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Truck, MapPin, Package, Clock, Star, Weight, Gauge, Upload, Eye, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Truck, MapPin, Package, Clock, Star, Weight, Gauge, Upload, Eye, AlertTriangle, RefreshCw, Navigation, Compass, User, Wifi, WifiOff } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { driverApi } from '../src/lib/api';
 import { useDriverProfile } from '../src/hooks/useDriverProfile';
@@ -47,6 +47,13 @@ interface Stats {
   completionRate: number;
 }
 
+interface LocationCoords {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp?: number;
+}
+
 export function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState('');
@@ -56,12 +63,25 @@ export function DriverDashboard() {
   const [loading, setLoading] = useState(true);
   const [uploadingVehiclePic, setUploadingVehiclePic] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  
+  // Location state
+  const [currentLocation, setCurrentLocation] = useState<string>('Downtown Area');
+  const [locationCoords, setLocationCoords] = useState<LocationCoords | null>(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
   const { driverData } = useDriverProfile();
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+    // Initialize with current driver status
+    if (driverData?.isOnline !== undefined) {
+      setIsOnline(driverData.isOnline);
+    }
+    if (driverData?.currentLocation) {
+      setCurrentLocation(driverData.currentLocation);
+    }
+  }, [driverData]);
 
   const loadDashboardData = async () => {
     try {
@@ -153,21 +173,186 @@ export function DriverDashboard() {
     }
   };
 
+  const getCurrentLocation = async (): Promise<string> => {
+    try {
+      setGettingLocation(true);
+      setLocationError(null);
+
+      // Try to get precise location from browser
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error('Geolocation not supported'));
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          (error) => {
+            reject(error);
+          },
+          {
+            timeout: 10000,
+            enableHighAccuracy: true,
+            maximumAge: 0
+          }
+        );
+      });
+
+      const { latitude, longitude, accuracy } = position.coords;
+      setLocationCoords({
+        latitude,
+        longitude,
+        accuracy,
+        timestamp: position.timestamp
+      });
+
+      // Try to get human-readable address using reverse geocoding
+      try {
+        const address = await reverseGeocode(latitude, longitude);
+        return address;
+      } catch (geocodeError) {
+        console.warn('Reverse geocoding failed:', geocodeError);
+        // Return coordinates if reverse geocoding fails
+        return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+      }
+
+    } catch (error: any) {
+      console.warn('Could not get precise location:', error);
+      
+      let errorMessage = 'Unable to get location';
+      if (error.code === error.PERMISSION_DENIED) {
+        errorMessage = 'Location permission denied. Please enable location services in your browser settings.';
+      } else if (error.code === error.TIMEOUT) {
+        errorMessage = 'Location request timed out.';
+      } else if (error.code === error.POSITION_UNAVAILABLE) {
+        errorMessage = 'Location information is unavailable.';
+      }
+      
+      setLocationError(errorMessage);
+      return "Downtown Area"; // Fallback location
+    } finally {
+      setGettingLocation(false);
+    }
+  };
+
+  const reverseGeocode = async (latitude: number, longitude: number): Promise<string> => {
+    try {
+      // Using OpenStreetMap Nominatim API (free, no API key required)
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
+      );
+      
+      if (!response.ok) {
+        throw new Error('Reverse geocoding failed');
+      }
+      
+      const data = await response.json();
+      
+      if (data.display_name) {
+        const addressParts = data.display_name.split(',');
+        // Extract area/suburb from address (usually 2nd or 3rd from end)
+        if (addressParts.length >= 3) {
+          return addressParts[addressParts.length - 3]?.trim() || data.display_name;
+        }
+        return data.display_name;
+      }
+      
+      return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+    } catch (error) {
+      console.error('Reverse geocoding error:', error);
+      throw error;
+    }
+  };
+
   const handleToggleOnline = async (value: boolean) => {
     try {
-      // Use the correct endpoint for online/offline toggle
-      const response = await driverApi.updateStatus({ isOnline: value });
+      setGettingLocation(true);
+      
+      // Get current location for the API call
+      const location = await getCurrentLocation();
+      
+      // Update location state
+      setCurrentLocation(location);
+      
+      // Make API call with both isOnline and location
+      const response = await driverApi.updateStatus({ 
+        isOnline: value, 
+        location: location 
+      });
 
       if (response.success) {
         setIsOnline(value);
-        toast.success(`You are now ${value ? 'available' : 'offline'}`);
+        toast.success(`You are now ${value ? 'online and available for orders' : 'offline'}`);
+        
+        // Update driver data if needed
+        if (driverData) {
+          driverData.isOnline = value;
+          driverData.currentLocation = location;
+        }
       } else {
         toast.error(response.error || 'Failed to update status');
       }
     } catch (error: any) {
       console.error('Error updating status:', error);
-      toast.error('Failed to update availability');
+      
+      // Even if location failed, try to update status with fallback location
+      try {
+        const fallbackResponse = await driverApi.updateStatus({ 
+          isOnline: value, 
+          location: "Downtown Area" 
+        });
+        
+        if (fallbackResponse.success) {
+          setIsOnline(value);
+          toast.warning(`You are now ${value ? 'online' : 'offline'} (using approximate location)`);
+          setCurrentLocation("Downtown Area");
+        } else {
+          toast.error('Failed to update status');
+        }
+      } catch (fallbackError) {
+        toast.error('Network error. Please check your connection.');
+      }
+    } finally {
+      setGettingLocation(false);
     }
+  };
+
+  const refreshLocation = async () => {
+    try {
+      setGettingLocation(true);
+      const newLocation = await getCurrentLocation();
+      
+      if (isOnline) {
+        // Update location in backend
+        const response = await driverApi.updateStatus({ 
+          isOnline: true, 
+          location: newLocation 
+        });
+        
+        if (response.success) {
+          setCurrentLocation(newLocation);
+          toast.success('Location updated');
+        }
+      } else {
+        setCurrentLocation(newLocation);
+        toast.success('Location refreshed');
+      }
+    } catch (error) {
+      console.error('Error refreshing location:', error);
+      toast.error('Failed to refresh location');
+    } finally {
+      setGettingLocation(false);
+    }
+  };
+
+  const openInMaps = () => {
+    if (!locationCoords) {
+      toast.error('No location coordinates available');
+      return;
+    }
+    
+    const url = `https://www.google.com/maps?q=${locationCoords.latitude},${locationCoords.longitude}`;
+    window.open(url, '_blank');
   };
 
   const getVehicleImageUrl = (vehicle: Vehicle): string | null => {
@@ -224,10 +409,6 @@ export function DriverDashboard() {
   const currentVehicleImageUrl = currentVehicle ? getVehicleImageUrl(currentVehicle) : null;
   const hasVehiclePicError = currentVehicle ? imageErrors[currentVehicle.id] : false;
 
-  const getDefaultVehicleImage = () => {
-    return 'https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=400&h=250&fit=crop';
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -246,50 +427,131 @@ export function DriverDashboard() {
         <CardHeader>
           <div className="flex justify-between items-center">
             <CardTitle>Driver Status</CardTitle>
-            {/* Make the status itself a clickable button */}
-            <Button
-              variant={isOnline ? "default" : "outline"}
-              size="sm"
-              onClick={() => handleToggleOnline(!isOnline)}
-              className={`flex items-center space-x-2 ${
-                isOnline ? 'bg-green-500 hover:bg-green-600' : ''
-              }`}
-              aria-label={isOnline ? "Go offline" : "Go online"}
-            >
-              {isOnline ? (
-                <>
-                  <div className="w-2 h-2 rounded-full bg-white animate-pulse"></div>
-                  <span>Available</span>
-                </>
-              ) : (
-                <>
-                  <div className="w-2 h-2 rounded-full bg-gray-400"></div>
-                  <span>Offline</span>
-                </>
-              )}
-            </Button>
+            
+            <div className="flex items-center space-x-4">
+              {/* Location refresh button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={refreshLocation}
+                disabled={gettingLocation}
+                className="flex items-center space-x-1"
+                title="Refresh location"
+              >
+                {gettingLocation ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Navigation className="h-4 w-4" />
+                )}
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+              
+              {/* Online/Offline button */}
+              <Button
+                variant={isOnline ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleToggleOnline(!isOnline)}
+                disabled={gettingLocation}
+                className={`flex items-center space-x-2 transition-all ${
+                  isOnline 
+                    ? 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg' 
+                    : ''
+                }`}
+                aria-label={isOnline ? "Go offline" : "Go online"}
+              >
+                {isOnline ? (
+                  <>
+                    <Wifi className="h-4 w-4" />
+                    <span>Online</span>
+                    <div className="ml-1 w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="h-4 w-4" />
+                    <span>Offline</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </CardHeader>
+        
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="flex items-center space-x-3">
-              <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
-              <span className="text-sm font-medium">
-                {isOnline ? 'Available for orders' : 'Unavailable'}
-              </span>
+          <div className="space-y-4">
+            {/* Status indicators */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="flex items-center space-x-3">
+                <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                <span className="text-sm font-medium">
+                  {isOnline ? 'Available for orders' : 'Unavailable for orders'}
+                </span>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <MapPin className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium block truncate" title={currentLocation}>
+                    {currentLocation}
+                  </span>
+                  {locationError && (
+                    <span className="text-xs text-red-500 block">{locationError}</span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Star className="h-4 w-4 text-yellow-500 flex-shrink-0" />
+                <span className="text-sm">{stats?.rating?.toFixed(1) || 0} Rating</span>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                <span className="text-sm">{stats?.totalDeliveries || 0} Deliveries</span>
+              </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <MapPin className="h-4 w-4 text-gray-500" />
-              <span className="text-sm">Downtown Area</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Star className="h-4 w-4 text-yellow-500" />
-              <span className="text-sm">{stats?.rating?.toFixed(1) || 0} Rating</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-blue-500" />
-              <span className="text-sm">{stats?.totalDeliveries || 0} Deliveries</span>
-            </div>
+            
+            {/* Location details and actions */}
+            {locationCoords && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-sm text-gray-600">
+                    <p>Coordinates: {locationCoords.latitude.toFixed(6)}, {locationCoords.longitude.toFixed(6)}</p>
+                    {locationCoords.accuracy && (
+                      <p className="text-xs">Accuracy: ±{Math.round(locationCoords.accuracy)} meters</p>
+                    )}
+                  </div>
+                  
+                  <div className="flex space-x-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={openInMaps}
+                      className="flex items-center space-x-1"
+                    >
+                      <Compass className="h-3 w-3" />
+                      <span>Open in Maps</span>
+                    </Button>
+                    
+                    {isOnline && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleToggleOnline(true)} // Refresh status with current location
+                        disabled={gettingLocation}
+                        className="flex items-center space-x-1"
+                      >
+                        {gettingLocation ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                        <span>Update Status</span>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -500,19 +762,19 @@ export function DriverDashboard() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div className="text-center p-4 bg-blue-50 rounded-lg">
+            <div className="text-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
               <p className="text-3xl font-bold text-blue-600">{stats?.totalDeliveries || 0}</p>
               <p className="text-gray-600">Total Deliveries</p>
             </div>
-            <div className="text-center p-4 bg-yellow-50 rounded-lg">
+            <div className="text-center p-4 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition">
               <p className="text-3xl font-bold text-yellow-600">{stats?.rating?.toFixed(1) || 0}</p>
               <p className="text-gray-600">Average Rating</p>
             </div>
-            <div className="text-center p-4 bg-green-50 rounded-lg">
+            <div className="text-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition">
               <p className="text-3xl font-bold text-green-600">${(stats?.totalEarnings || 0).toLocaleString()}</p>
               <p className="text-gray-600">Total Earnings</p>
             </div>
-            <div className="text-center p-4 bg-purple-50 rounded-lg">
+            <div className="text-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
               <p className="text-3xl font-bold text-purple-600">{stats?.completionRate || 0}%</p>
               <p className="text-gray-600">Completion Rate</p>
             </div>
