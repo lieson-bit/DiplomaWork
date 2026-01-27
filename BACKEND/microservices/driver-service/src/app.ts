@@ -31,9 +31,28 @@ const stream = {
 app.use(morgan('combined', { stream }));
 
 // Static files for uploads
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploads with CORS headers
+// Static files for uploads WITH CORS
+app.use(
+  '/uploads',
+  express.static(path.join(process.cwd(), 'uploads'), {
+    setHeaders: (res, filePath, stat) => {
+      // Only set CORS for image and PDF files
+      if (filePath.endsWith('.jpg') || 
+          filePath.endsWith('.jpeg') || 
+          filePath.endsWith('.png') || 
+          filePath.endsWith('.gif') || 
+          filePath.endsWith('.pdf')) {
+        res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || 'http://localhost:3000');
+        res.setHeader('Access-Control-Allow-Methods', 'GET');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      }
+    }
+  })
+);
+
 // Add this line to serve vehicle images
-app.use('/uploads/vehicles', express.static(path.join(__dirname, 'uploads', 'vehicles')));
+//app.use('/uploads/vehicles', express.static(path.join(__dirname, 'uploads', 'vehicles')));
 // Routes
 
 

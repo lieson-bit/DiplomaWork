@@ -87,7 +87,7 @@ services:
       USER_SERVICE_URL: http://user-service:3001  # This WILL work in single network
       APP_URL: http://localhost:3002
       CORS_ORIGIN: http://localhost:3000
-      UPLOAD_PATH: ./src/uploads
+      UPLOAD_PATH: ./app/uploads
       MAX_FILE_SIZE: 5242880
       ALLOWED_FILE_TYPES: image/jpeg,image/png,image/jpg,application/pdf
     ports:
@@ -98,8 +98,9 @@ services:
       user-service:
         condition: service_started
     volumes:
-      - driver-uploads:/app/src/uploads
+      - driver-uploads:/app/uploads
       - driver-logs:/app/logs
+      #- ./microservices/driver-service/src/uploads:/app/src/uploads
     networks:
       - app-network
     # Add curl for debugging

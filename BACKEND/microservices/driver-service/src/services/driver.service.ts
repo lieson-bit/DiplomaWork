@@ -132,10 +132,28 @@ export class DriverService {
     if (!driver) {
       throw new Error('Driver profile not found');
     }
-
+  
+    // 🔥 CRITICAL FIX: Delete existing profile picture FIRST
+    const existingPicture = await this.profilePictureRepository.findByDriverId(driver.id);
+    if (existingPicture) {
+      // Delete physical files
+      const filesToDelete = [
+        existingPicture.originalUrl.replace(`${process.env.APP_URL}/uploads/`, ''),
+        existingPicture.thumbnailUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+        existingPicture.smallUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+        existingPicture.mediumUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+      ].filter(Boolean) as string[];
+    
+      for (const filePath of filesToDelete) {
+        await uploadService.deleteFile(filePath);
+      }
+    
+      // Delete from DB
+      await this.profilePictureRepository.deleteByDriverId(driver.id);
+    }
+  
+    // Now process and save new picture
     const processed = await uploadService.processProfilePicture(file.path, userId);
-    await this.profilePictureRepository.deactivateByDriverId(driver.id);
-
     const profilePicture = await this.profilePictureRepository.create({
       driverId: driver.id,
       originalUrl: uploadService.getFileUrl(processed.processedFiles.original),
@@ -148,7 +166,7 @@ export class DriverService {
       height: processed.metadata.height,
       isActive: true
     });
-
+  
     logger.info(`Uploaded profile picture for driver: ${userId}`);
     return profilePicture;
   }

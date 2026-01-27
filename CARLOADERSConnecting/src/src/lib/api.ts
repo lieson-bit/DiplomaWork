@@ -1,6 +1,9 @@
 import { MICROSERVICES_CONFIG } from '../config/environment';
 
-// Helper functions
+// ==========================================
+// Helper Functions
+// ==========================================
+
 export function getAuthToken(): string | null {
   return localStorage.getItem('authToken');
 }
@@ -11,6 +14,10 @@ export function setAuthToken(token: string) {
 
 export function clearAuthToken() {
   localStorage.removeItem('authToken');
+  localStorage.removeItem('user');
+  localStorage.removeItem('userType');
+  localStorage.removeItem('userId');
+  localStorage.removeItem('driverId');
 }
 
 export function getCurrentUser() {
@@ -23,7 +30,11 @@ export function getCurrentUser() {
   }
 }
 
-// Generic request function
+// ==========================================
+// API Request Functions
+// ==========================================
+
+// Generic API request
 async function makeRequest<T = any>(
   endpoint: string,
   method: string = 'GET',
@@ -71,20 +82,12 @@ async function makeRequest<T = any>(
       config.body = JSON.stringify(body);
     }
 
-    console.log(`🌐 API ${method} ${url}`);
-    if (body) console.log('📦 Request body:', body);
+    console.log(`🌐 ${method} ${url}`, body ? { body } : '');
 
     const response = await fetch(url, config);
-    const responseText = await response.text();
-    let data;
-    
-    try {
-      data = responseText ? JSON.parse(responseText) : {};
-    } catch {
-      data = { message: responseText };
-    }
+    const data = await response.json();
 
-    console.log(`📨 Response ${response.status}:`, data);
+    console.log(`📨 ${response.status} ${url}:`, data);
 
     // Handle unauthorized
     if (response.status === 401) {
@@ -97,9 +100,14 @@ async function makeRequest<T = any>(
     }
 
     if (!response.ok) {
+      // Extract error message safely
+      let errorMsg = data.error || data.message || `HTTP ${response.status}`;
+      if (typeof errorMsg === 'object') {
+        errorMsg = errorMsg.message || JSON.stringify(errorMsg);
+      }
       return {
         success: false,
-        error: data.error || data.message || `HTTP ${response.status}`,
+        error: String(errorMsg),
         status: response.status,
       };
     }
@@ -111,12 +119,12 @@ async function makeRequest<T = any>(
       status: response.status,
     };
   } catch (error: any) {
-    console.error('❌ API Request Error:', error);
+    console.error('❌ API Error:', error);
     
     if (error.message.includes('Failed to fetch')) {
       return {
         success: false,
-        error: `Cannot connect to ${service} service. Please make sure it's running on localhost:${service === 'user' ? '3001' : service === 'driver' ? '3002' : '3003'}.`,
+        error: `Cannot connect to ${service} service.`,
         status: 0,
       };
     }
@@ -166,21 +174,14 @@ async function makeUploadRequest<T = any>(
     const url = `${baseUrl}${endpoint}`;
     
     console.log(`📤 Upload to ${url}`);
-    
+
     const response = await fetch(url, {
       method: 'POST',
       headers,
       body: formData,
     });
 
-    const responseText = await response.text();
-    let data;
-    
-    try {
-      data = responseText ? JSON.parse(responseText) : {};
-    } catch {
-      data = { message: responseText };
-    }
+    const data = await response.json();
 
     console.log(`📨 Upload response ${response.status}:`, data);
 
@@ -194,9 +195,14 @@ async function makeUploadRequest<T = any>(
     }
 
     if (!response.ok) {
+      // Extract error message safely
+      let errorMsg = data.error || data.message || `HTTP ${response.status}`;
+      if (typeof errorMsg === 'object') {
+        errorMsg = errorMsg.message || JSON.stringify(errorMsg);
+      }
       return {
         success: false,
-        error: data.error || data.message || `HTTP ${response.status}`,
+        error: String(errorMsg),
         status: response.status,
       };
     }
@@ -213,7 +219,7 @@ async function makeUploadRequest<T = any>(
     if (error.message.includes('Failed to fetch')) {
       return {
         success: false,
-        error: `Cannot connect to ${service} service. Please make sure it's running.`,
+        error: `Cannot connect to ${service} service.`,
         status: 0,
       };
     }
@@ -275,10 +281,6 @@ export const authApi = {
       console.warn('Logout API call failed:', error);
     } finally {
       clearAuthToken();
-      localStorage.removeItem('user');
-      localStorage.removeItem('userType');
-      localStorage.removeItem('userId');
-      localStorage.removeItem('driverId');
     }
   },
 
@@ -346,6 +348,10 @@ export const driverApi = {
     return makeRequest(`/api/drivers/vehicles/${vehicleId}`, 'PUT', data, 'driver');
   },
 
+  deleteVehicle: async (vehicleId: string) => {
+    return makeRequest(`/api/drivers/vehicles/${vehicleId}`, 'DELETE', undefined, 'driver');
+  },
+
   // Uploads
   uploadVehicleImage: async (vehicleId: string, formData: FormData) => {
     return makeUploadRequest(`/api/drivers/vehicles/${vehicleId}/image`, formData, 'driver');
@@ -364,6 +370,10 @@ export const driverApi = {
     return makeRequest('/api/drivers/documents', 'GET', undefined, 'driver');
   },
 
+  deleteDocument: async (documentId: string) => {
+    return makeRequest(`/api/drivers/documents/${documentId}`, 'DELETE', undefined, 'driver');
+  },
+
   // Availability
   updateAvailability: async (isAvailable: boolean) => {
     return makeRequest('/api/drivers/availability', 'PUT', { isAvailable }, 'driver');
@@ -379,23 +389,18 @@ export const driverApi = {
 
   // Stats
   getStats: async () => {
-    const profile = await driverApi.getProfile();
-    if (profile.success && profile.data) {
-      return {
-        success: true,
-        data: {
-          totalDeliveries: profile.data.totalDeliveries || 0,
-          rating: profile.data.rating || 0,
-          totalEarnings: profile.data.totalEarnings || 0,
-          completionRate: profile.data.completionRate || 0
-        }
-      };
+    return makeRequest('/api/drivers/stats', 'GET', undefined, 'driver');
+  },
+
+  getEarnings: async (startDate?: string, endDate?: string) => {
+    let url = '/api/drivers/earnings';
+    if (startDate || endDate) {
+      const params = new URLSearchParams();
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      url += `?${params.toString()}`;
     }
-    return { 
-      success: false, 
-      error: 'Failed to load stats',
-      status: profile.status 
-    };
+    return makeRequest(url, 'GET', undefined, 'driver');
   },
 };
 
@@ -418,7 +423,7 @@ export const customerApi = {
 };
 
 // ==========================================
-// Export all APIs
+// Export Default
 // ==========================================
 
 export default {
