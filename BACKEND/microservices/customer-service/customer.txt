@@ -1,0 +1,2778 @@
+Project Path: src
+
+Source Tree:
+
+```txt
+src
+├── app.ts
+├── config
+│   └── database.ts
+├── controllers
+│   └── customer.controller.ts
+├── index.ts
+├── middleware
+│   ├── auth.middleware.ts
+│   └── validation.middleware.ts
+├── routes
+│   └── customer.routes.ts
+├── services
+│   └── customer.service.ts
+├── sql
+│   └── schema.sql
+├── types
+│   └── index.ts
+├── uploads
+└── utils
+    ├── httpClient.ts
+    ├── logger.ts
+    └── response.util.ts
+
+```
+
+`app.ts`:
+
+```ts
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import path from 'path';
+import multer from 'multer';
+import customerRoutes from './routes/customer.routes';
+import { ResponseUtil } from './utils/response.util';
+import logger from './utils/logger';
+
+const app = express();
+
+// Middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  credentials: true
+}));
+app.use(express.json());
+app.use(morgan('combined', { stream: { write: (message) => logger.http(message.trim()) } }));
+
+// Serve uploaded files
+const uploadPath = process.env.UPLOAD_PATH || './src/uploads';
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Routes
+app.use('/api/customers', customerRoutes);
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    service: 'customer-service',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// 404 handler
+app.use('*', (req, res) => {
+  ResponseUtil.notFound(res, 'Route not found');
+});
+
+// Global error handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  logger.error('Global error handler:', err);
+
+  if (err instanceof multer.MulterError) {
+    return ResponseUtil.badRequest(res, `File upload error: ${err.message}`);
+  }
+
+  if (err.status === 400 || err.name === 'ValidationError') {
+    return ResponseUtil.badRequest(res, err.message);
+  }
+
+  if (err.status === 401) {
+    return ResponseUtil.unauthorized(res, err.message);
+  }
+
+  if (err.status === 403) {
+    return ResponseUtil.forbidden(res, err.message);
+  }
+
+  if (err.status === 404) {
+    return ResponseUtil.notFound(res, err.message);
+  }
+
+  // Default error
+  return ResponseUtil.error(res, 'Internal server error', 500, err.message);
+});
+
+export default app;
+```
+
+`config\database.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import logger from '../utils/logger';
+
+class Database {
+  private static instance: Database;
+  private pool: mysql.Pool;
+  private isConnected = false;
+
+  private constructor() {
+    this.pool = mysql.createPool({
+      host: process.env.MYSQL_HOST || 'customer-db',
+      port: parseInt(process.env.MYSQL_PORT || '3306'),
+      user: process.env.MYSQL_USER || 'customer_user',
+      password: process.env.MYSQL_PASSWORD || 'customer_pass',
+      database: process.env.MYSQL_DATABASE || 'customer_service_db',
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0
+    });
+
+    this.initialize();
+  }
+
+  public static getInstance(): Database {
+    if (!Database.instance) {
+      Database.instance = new Database();
+    }
+    return Database.instance;
+  }
+
+  private async initialize() {
+    try {
+      const connection = await this.pool.getConnection();
+      await connection.ping();
+      connection.release();
+      
+      this.isConnected = true;
+      logger.info('Database connected successfully');
+      
+      // Test query
+      const [rows] = await this.pool.query('SELECT 1 + 1 AS result');
+      logger.info('Database test query successful:', rows);
+    } catch (error) {
+      logger.error('Database connection failed:', error);
+      this.isConnected = false;
+      
+      // Retry connection after 5 seconds
+      setTimeout(() => this.initialize(), 5000);
+    }
+  }
+
+  public getConnection(): mysql.Pool {
+    return this.pool;
+  }
+
+  public async query<T = any>(sql: string, params?: any[]): Promise<T[]> {
+    try {
+      const [rows] = await this.pool.execute(sql, params);
+      // mysql2 returns [rows, fields], and rows is already an array
+      return rows as T[];
+    } catch (error) {
+      logger.error('Database query error:', error);
+      throw error;
+    }
+  }
+
+  public async queryOne<T = any>(sql: string, params?: any[]): Promise<T | null> {
+    try {
+      const [rows] = await this.pool.execute(sql, params);
+      const results = rows as T[];
+      return results.length > 0 ? results[0] : null;
+    } catch (error) {
+      logger.error('Database query error:', error);
+      throw error;
+    }
+  }
+
+  public async transaction<T = any>(
+    callback: (connection: mysql.PoolConnection) => Promise<T>
+  ): Promise<T> {
+    const connection = await this.pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const result = await callback(connection);
+      await connection.commit();
+      return result;
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  }
+
+  public async checkHealth(): Promise<boolean> {
+    try {
+      const connection = await this.pool.getConnection();
+      await connection.ping();
+      connection.release();
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+}
+
+export const db = Database.getInstance();
+export default db;
+```
+
+`controllers\customer.controller.ts`:
+
+```ts
+import { Request, Response } from 'express';
+import { CustomerService } from '../services/customer.service';
+import { ResponseUtil } from '../utils/response.util';
+import logger from '../utils/logger';
+
+export class CustomerController {
+  private customerService: CustomerService;
+
+  constructor() {
+    this.customerService = new CustomerService();
+  }
+
+  createProfile = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const customerData = req.body;
+
+      const customer = await this.customerService.createCustomer(userId, customerData);
+      
+      return ResponseUtil.success(
+        res,
+        customer,
+        'Customer profile created successfully',
+        201
+      );
+    } catch (error: any) {
+      logger.error('Create customer profile error:', error);
+      
+      if (error.message.includes('already exists')) {
+        return ResponseUtil.badRequest(res, error.message);
+      }
+      
+      if (error.message.includes('User not found')) {
+        return ResponseUtil.badRequest(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to create customer profile', 500, error);
+    }
+  };
+
+  getProfile = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      
+      const profile = await this.customerService.getCustomerProfile(userId);
+      
+      return ResponseUtil.success(res, profile, 'Customer profile retrieved successfully');
+    } catch (error: any) {
+      logger.error('Get customer profile error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to retrieve customer profile', 500, error);
+    }
+  };
+
+  updateProfile = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const updateData = req.body;
+
+      const customer = await this.customerService.updateCustomer(userId, updateData);
+      
+      return ResponseUtil.success(res, customer, 'Customer profile updated successfully');
+    } catch (error: any) {
+      logger.error('Update customer profile error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to update customer profile', 500, error);
+    }
+  };
+
+  addAddress = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const addressData = req.body;
+
+      const address = await this.customerService.addAddress(userId, addressData);
+      
+      return ResponseUtil.success(
+        res,
+        address,
+        'Address added successfully',
+        201
+      );
+    } catch (error: any) {
+      logger.error('Add address error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to add address', 500, error);
+    }
+  };
+
+  updateAddress = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const addressId = req.params.id;
+      const updateData = req.body;
+
+      const address = await this.customerService.updateAddress(userId, addressId, updateData);
+      
+      return ResponseUtil.success(res, address, 'Address updated successfully');
+    } catch (error: any) {
+      logger.error('Update address error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to update address', 500, error);
+    }
+  };
+
+  deleteAddress = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const addressId = req.params.id;
+
+      await this.customerService.deleteAddress(userId, addressId);
+      
+      return ResponseUtil.success(res, null, 'Address deleted successfully');
+    } catch (error: any) {
+      logger.error('Delete address error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      if (error.message.includes('only address')) {
+        return ResponseUtil.badRequest(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to delete address', 500, error);
+    }
+  };
+
+  addPaymentMethod = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const paymentData = req.body;
+
+      const paymentMethod = await this.customerService.addPaymentMethod(userId, paymentData);
+      
+      return ResponseUtil.success(
+        res,
+        paymentMethod,
+        'Payment method added successfully',
+        201
+      );
+    } catch (error: any) {
+      logger.error('Add payment method error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to add payment method', 500, error);
+    }
+  };
+
+  updatePaymentMethod = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const paymentMethodId = req.params.id;
+      const updateData = req.body;
+
+      const paymentMethod = await this.customerService.updatePaymentMethod(
+        userId,
+        paymentMethodId,
+        updateData
+      );
+      
+      return ResponseUtil.success(res, paymentMethod, 'Payment method updated successfully');
+    } catch (error: any) {
+      logger.error('Update payment method error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to update payment method', 500, error);
+    }
+  };
+
+  deletePaymentMethod = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const paymentMethodId = req.params.id;
+
+      await this.customerService.deletePaymentMethod(userId, paymentMethodId);
+      
+      return ResponseUtil.success(res, null, 'Payment method deleted successfully');
+    } catch (error: any) {
+      logger.error('Delete payment method error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      if (error.message.includes('only payment method')) {
+        return ResponseUtil.badRequest(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to delete payment method', 500, error);
+    }
+  };
+
+  updatePreferences = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const preferencesData = req.body;
+
+      const preferences = await this.customerService.updatePreferences(userId, preferencesData);
+      
+      return ResponseUtil.success(res, preferences, 'Preferences updated successfully');
+    } catch (error: any) {
+      logger.error('Update preferences error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to update preferences', 500, error);
+    }
+  };
+
+  updateTimeSlots = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const timeSlots = req.body;
+
+      await this.customerService.updateTimeSlots(userId, timeSlots);
+      
+      return ResponseUtil.success(res, null, 'Time slots updated successfully');
+    } catch (error: any) {
+      logger.error('Update time slots error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to update time slots', 500, error);
+    }
+  };
+
+  addFeedback = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const feedbackData = req.body;
+
+      const feedback = await this.customerService.addFeedback(userId, feedbackData);
+      
+      return ResponseUtil.success(
+        res,
+        feedback,
+        'Feedback submitted successfully',
+        201
+      );
+    } catch (error: any) {
+      logger.error('Add feedback error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to submit feedback', 500, error);
+    }
+  };
+
+  updateOrderStats = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      const { orderAmount } = req.body;
+
+      const customer = await this.customerService.updateOrderStats(userId, orderAmount);
+      
+      return ResponseUtil.success(res, customer, 'Order stats updated successfully');
+    } catch (error: any) {
+      logger.error('Update order stats error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to update order stats', 500, error);
+    }
+  };
+
+  getStats = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      
+      const stats = await this.customerService.getCustomerStats(userId);
+      
+      return ResponseUtil.success(res, stats, 'Customer stats retrieved successfully');
+    } catch (error: any) {
+      logger.error('Get customer stats error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to retrieve customer stats', 500, error);
+    }
+  };
+
+  uploadProfilePicture = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+      
+      if (!req.file) {
+        return ResponseUtil.badRequest(res, 'No file uploaded');
+      }
+
+      const fileUrl = await this.customerService.uploadProfilePicture(userId, req.file);
+      
+      return ResponseUtil.success(
+        res,
+        { profilePictureUrl: fileUrl },
+        'Profile picture uploaded successfully'
+      );
+    } catch (error: any) {
+      logger.error('Upload profile picture error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to upload profile picture', 500, error);
+    }
+  };
+
+  deleteProfilePicture = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const userId = req.user!.userId;
+
+      await this.customerService.deleteProfilePicture(userId);
+      
+      return ResponseUtil.success(res, null, 'Profile picture deleted successfully');
+    } catch (error: any) {
+      logger.error('Delete profile picture error:', error);
+      
+      if (error.message.includes('not found')) {
+        return ResponseUtil.notFound(res, error.message);
+      }
+      
+      if (error.message.includes('No profile picture')) {
+        return ResponseUtil.badRequest(res, error.message);
+      }
+      
+      return ResponseUtil.error(res, 'Failed to delete profile picture', 500, error);
+    }
+  };
+
+  searchCustomers = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const {
+        search,
+        accountType,
+        status,
+        membershipLevel,
+        minOrders,
+        maxOrders,
+        page = 1,
+        limit = 20
+      } = req.query;
+
+      const filters = {
+        accountType: accountType as string,
+        status: status as string,
+        membershipLevel: membershipLevel as string,
+        minOrders: minOrders ? parseInt(minOrders as string) : undefined,
+        maxOrders: maxOrders ? parseInt(maxOrders as string) : undefined
+      };
+
+      const result = await this.customerService.searchCustomers(
+        search as string,
+        filters,
+        parseInt(page as string),
+        parseInt(limit as string)
+      );
+
+      return ResponseUtil.success(
+        res,
+        {
+          customers: result.customers,
+          pagination: {
+            page: parseInt(page as string),
+            limit: parseInt(limit as string),
+            total: result.total,
+            totalPages: Math.ceil(result.total / parseInt(limit as string))
+          }
+        },
+        'Customers retrieved successfully'
+      );
+    } catch (error: any) {
+      logger.error('Search customers error:', error);
+      return ResponseUtil.error(res, 'Failed to search customers', 500, error);
+    }
+  };
+}
+```
+
+`index.ts`:
+
+```ts
+import 'dotenv/config';
+import app from './app';
+import { db } from './config/database';
+import logger from './utils/logger';
+
+const PORT = process.env.PORT || 3003;
+
+async function startServer() {
+  try {
+    // Test database connection
+    const isDbHealthy = await db.checkHealth();
+    
+    if (!isDbHealthy) {
+      throw new Error('Failed to connect to database');
+    }
+
+    logger.info('Database connection established');
+
+    // Start server
+    app.listen(PORT, () => {
+      logger.info(`Customer Service running on port ${PORT}`);
+      logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`User Service URL: ${process.env.USER_SERVICE_URL}`);
+    });
+
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      logger.info('SIGTERM received. Shutting down gracefully...');
+      process.exit(0);
+    });
+
+    process.on('SIGINT', () => {
+      logger.info('SIGINT received. Shutting down gracefully...');
+      process.exit(0);
+    });
+
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+      logger.error('Uncaught Exception:', error);
+      process.exit(1);
+    });
+
+    process.on('unhandledRejection', (reason, promise) => {
+      logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      process.exit(1);
+    });
+
+  } catch (error) {
+    logger.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
+```
+
+`middleware\auth.middleware.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { ResponseUtil } from '../utils/response.util';
+import logger from '../utils/logger';
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        userId: string;
+        userType: string;
+        email: string;
+      };
+    }
+  }
+}
+
+export const authenticate = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      ResponseUtil.unauthorized(res, 'No token provided');
+      return;
+    }
+
+    const token = authHeader.split(' ')[1];
+    const jwtSecret = process.env.JWT_SECRET;
+
+    if (!jwtSecret) {
+      logger.error('JWT_SECRET not configured');
+      ResponseUtil.error(res, 'Server configuration error', 500);
+      return;
+    }
+
+    // Verify JWT token
+    const decoded = jwt.verify(token, jwtSecret) as any;
+    
+    // Set user in request
+    req.user = {
+      userId: decoded.userId,
+      userType: decoded.userType,
+      email: decoded.email || ''
+    };
+
+    next();
+  } catch (error: any) {
+    logger.error('Authentication error:', error);
+    
+    if (error.name === 'JsonWebTokenError') {
+      ResponseUtil.unauthorized(res, 'Invalid token');
+      return;
+    }
+    
+    if (error.name === 'TokenExpiredError') {
+      ResponseUtil.unauthorized(res, 'Token expired');
+      return;
+    }
+    
+    ResponseUtil.unauthorized(res, 'Authentication failed');
+  }
+};
+
+export const authorizeCustomer = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (!req.user) {
+    ResponseUtil.unauthorized(res, 'No user found');
+    return;
+  }
+
+  if (req.user.userType !== 'customer') {
+    ResponseUtil.forbidden(res, 'Access denied. Customer access required');
+    return;
+  }
+
+  next();
+};
+
+export const optionalAuthenticate = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next();
+    }
+
+    const token = authHeader.split(' ')[1];
+    const jwtSecret = process.env.JWT_SECRET;
+
+    if (!jwtSecret) {
+      return next();
+    }
+
+    const decoded = jwt.verify(token, jwtSecret) as any;
+    
+    req.user = {
+      userId: decoded.userId,
+      userType: decoded.userType,
+      email: decoded.email || ''
+    };
+
+    next();
+  } catch (error) {
+    // If token is invalid, just continue without user
+    next();
+  }
+};
+```
+
+`middleware\validation.middleware.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import Joi from 'joi';
+import { ResponseUtil } from '../utils/response.util';
+
+// Validation schemas
+export const validationSchemas = {
+  customer: {
+    create: Joi.object({
+      userId: Joi.string().required(),
+      accountType: Joi.string().valid('personal', 'business').default('personal'),
+      dateOfBirth: Joi.date().iso(),
+      businessName: Joi.string().when('accountType', {
+        is: 'business',
+        then: Joi.required(),
+        otherwise: Joi.optional()
+      }),
+      businessType: Joi.string(),
+      businessPhone: Joi.string(),
+      taxId: Joi.string()
+    }),
+
+    update: Joi.object({
+      accountType: Joi.string().valid('personal', 'business'),
+      dateOfBirth: Joi.date().iso(),
+      businessName: Joi.string(),
+      businessType: Joi.string(),
+      businessPhone: Joi.string(),
+      taxId: Joi.string(),
+      profilePictureUrl: Joi.string().uri()
+    })
+  },
+
+  address: {
+    create: Joi.object({
+      label: Joi.string().required().max(50),
+      address: Joi.string().required(),
+      city: Joi.string().required(),
+      state: Joi.string().required(),
+      country: Joi.string().default('US'),
+      postalCode: Joi.string().required(),
+      latitude: Joi.number().min(-90).max(90),
+      longitude: Joi.number().min(-180).max(180),
+      isDefault: Joi.boolean().default(false),
+      notes: Joi.string()
+    }),
+
+    update: Joi.object({
+      label: Joi.string().max(50),
+      address: Joi.string(),
+      city: Joi.string(),
+      state: Joi.string(),
+      country: Joi.string(),
+      postalCode: Joi.string(),
+      latitude: Joi.number().min(-90).max(90),
+      longitude: Joi.number().min(-180).max(180),
+      isDefault: Joi.boolean(),
+      isActive: Joi.boolean(),
+      notes: Joi.string()
+    })
+  },
+
+  paymentMethod: {
+    create: Joi.object({
+      type: Joi.string().valid('card', 'paypal', 'apple_pay', 'google_pay', 'bank_transfer').required(),
+      provider: Joi.string().required(),
+      last4: Joi.string().length(4),
+      expiryMonth: Joi.number().min(1).max(12),
+      expiryYear: Joi.number().min(new Date().getFullYear()),
+      nameOnCard: Joi.string(),
+      paypalEmail: Joi.string().email(),
+      bankName: Joi.string(),
+      accountNumberMasked: Joi.string(),
+      isDefault: Joi.boolean().default(false),
+      token: Joi.string()
+    }),
+
+    update: Joi.object({
+      isDefault: Joi.boolean(),
+      isActive: Joi.boolean(),
+      expiryMonth: Joi.number().min(1).max(12),
+      expiryYear: Joi.number().min(new Date().getFullYear()),
+      nameOnCard: Joi.string()
+    })
+  },
+
+  preferences: Joi.object({
+    defaultPickupType: Joi.string().valid('home', 'business', 'other'),
+    defaultPaymentId: Joi.string(),
+    notificationEmail: Joi.boolean(),
+    notificationSMS: Joi.boolean(),
+    notificationPush: Joi.boolean(),
+    shareLocationData: Joi.boolean(),
+    shareUsageAnalytics: Joi.boolean(),
+    marketingEmails: Joi.boolean(),
+    language: Joi.string(),
+    timezone: Joi.string()
+  }),
+
+  timeSlots: Joi.array().items(
+    Joi.object({
+      dayOfWeek: Joi.number().min(0).max(6).required(),
+      startTime: Joi.string().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/).required(),
+      endTime: Joi.string().pattern(/^([0-1][0-9]|2[0-3]):[0-5][0-9]$/).required(),
+      isActive: Joi.boolean().default(true)
+    })
+  ),
+
+  feedback: Joi.object({
+    orderId: Joi.string(),
+    rating: Joi.number().min(1).max(5).required(),
+    comment: Joi.string(),
+    category: Joi.string().valid('delivery', 'driver', 'packaging', 'app', 'other')
+  }),
+
+  orderStats: Joi.object({
+    orderAmount: Joi.number().min(0).required()
+  })
+};
+
+// Middleware factory
+export const validate = (schema: Joi.ObjectSchema | Joi.ArraySchema) => {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const { error, value } = schema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true
+    });
+
+    if (error) {
+      const errors = error.details.map(detail => ({
+        field: detail.path.join('.'),
+        message: detail.message
+      }));
+      
+      ResponseUtil.badRequest(res, 'Validation failed', errors);
+      return;
+    }
+
+    req.body = value;
+    next();
+  };
+};
+
+// Params validation
+export const validateId = (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+  id: string,
+  name: string
+): void => {
+  const schema = Joi.string().uuid().required();
+  const { error } = schema.validate(req.params[id]);
+
+  if (error) {
+    ResponseUtil.badRequest(res, `Invalid ${name} ID`);
+    return;
+  }
+
+  next();
+};
+
+// File validation middleware
+export const validateFile = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void => {
+  if (!req.file) {
+    ResponseUtil.badRequest(res, 'No file uploaded');
+    return;
+  }
+
+  const allowedTypes = process.env.ALLOWED_FILE_TYPES?.split(',') || [
+    'image/jpeg',
+    'image/png',
+    'image/jpg'
+  ];
+  
+  const maxSize = parseInt(process.env.MAX_FILE_SIZE || '5242880'); // 5MB default
+
+  if (!allowedTypes.includes(req.file.mimetype)) {
+    ResponseUtil.badRequest(
+      res,
+      `File type not allowed. Allowed types: ${allowedTypes.join(', ')}`
+    );
+    return;
+  }
+
+  if (req.file.size > maxSize) {
+    ResponseUtil.badRequest(
+      res,
+      `File too large. Maximum size: ${maxSize / 1024 / 1024}MB`
+    );
+    return;
+  }
+
+  next();
+};
+```
+
+`routes\customer.routes.ts`:
+
+```ts
+import express from 'express';
+import { CustomerController } from '../controllers/customer.controller';
+import { authenticate, authorizeCustomer, optionalAuthenticate } from '../middleware/auth.middleware';
+import { validate, validationSchemas, validateFile } from '../middleware/validation.middleware';
+import multer from 'multer';
+
+const router = express.Router();
+const customerController = new CustomerController();
+
+// Configure multer for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  limits: {
+    fileSize: parseInt(process.env.MAX_FILE_SIZE || '5242880') // 5MB default
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = process.env.ALLOWED_FILE_TYPES?.split(',') || [
+      'image/jpeg',
+      'image/png',
+      'image/jpg'
+    ];
+    
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type. Allowed types: ${allowedTypes.join(', ')}`));
+    }
+  }
+});
+
+// Apply authentication and authorization to all customer routes
+router.use(authenticate);
+router.use(authorizeCustomer);
+
+// Profile routes
+router.post(
+  '/profile',
+  validate(validationSchemas.customer.create),
+  customerController.createProfile
+);
+
+router.get('/profile', customerController.getProfile);
+
+router.put(
+  '/profile',
+  validate(validationSchemas.customer.update),
+  customerController.updateProfile
+);
+
+// Profile picture routes
+router.post(
+  '/profile-picture',
+  upload.single('profilePicture'),
+  validateFile,
+  customerController.uploadProfilePicture
+);
+
+router.delete(
+  '/profile-picture',
+  customerController.deleteProfilePicture
+);
+
+// Address routes
+router.post(
+  '/addresses',
+  validate(validationSchemas.address.create),
+  customerController.addAddress
+);
+
+router.put(
+  '/addresses/:id',
+  validate(validationSchemas.address.update),
+  customerController.updateAddress
+);
+
+router.delete('/addresses/:id', customerController.deleteAddress);
+
+// Payment method routes
+router.post(
+  '/payment-methods',
+  validate(validationSchemas.paymentMethod.create),
+  customerController.addPaymentMethod
+);
+
+router.put(
+  '/payment-methods/:id',
+  validate(validationSchemas.paymentMethod.update),
+  customerController.updatePaymentMethod
+);
+
+router.delete('/payment-methods/:id', customerController.deletePaymentMethod);
+
+// Preferences routes
+router.put(
+  '/preferences',
+  validate(validationSchemas.preferences),
+  customerController.updatePreferences
+);
+
+// Time slots routes
+router.put(
+  '/time-slots',
+  validate(validationSchemas.timeSlots),
+  customerController.updateTimeSlots
+);
+
+// Feedback routes
+router.post(
+  '/feedback',
+  validate(validationSchemas.feedback),
+  customerController.addFeedback
+);
+
+// Stats and orders routes
+router.post(
+  '/order-stats',
+  validate(validationSchemas.orderStats),
+  customerController.updateOrderStats
+);
+
+router.get('/stats', customerController.getStats);
+
+// Admin/search routes (optional authentication for admin)
+router.get(
+  '/search',
+  optionalAuthenticate,
+  customerController.searchCustomers
+);
+
+// Public health check route
+router.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    service: 'customer-service',
+    timestamp: new Date().toISOString()
+  });
+});
+
+export default router;
+```
+
+`services\customer.service.ts`:
+
+```ts
+import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import fs from 'fs/promises';
+import { db } from '../config/database';
+import httpClient from '../utils/httpClient';
+import logger from '../utils/logger';
+import {
+  Customer,
+  CustomerAddress,
+  CustomerPreference,
+  CustomerPaymentMethod,
+  DeliveryTimeSlot,
+  CustomerFeedback,
+  CreateCustomerDto,
+  UpdateCustomerDto,
+  AddressDto,
+  PaymentMethodDto,
+  PreferencesDto,
+  TimeSlotDto,
+  FeedbackDto,
+  CustomerStats
+} from '../types';
+
+export class CustomerService {
+  private async validateUser(userId: string): Promise<boolean> {
+    try {
+      const userServiceUrl = process.env.USER_SERVICE_URL;
+      const serviceSecret = process.env.SERVICE_SECRET;
+      
+      const response = await httpClient.get(
+        `${userServiceUrl}/api/auth/validate/${userId}`,
+        {
+          headers: {
+            'x-service-secret': serviceSecret
+          }
+        }
+      );
+      
+      return response.data.valid === true;
+    } catch (error: any) {
+      logger.error('User validation failed:', error);
+      
+      // If user service is down but we have service secret, we can trust the JWT
+      if (error.response?.status === 503 || error.code === 'ECONNREFUSED') {
+        logger.warn('User service unavailable, proceeding with caution');
+        return true;
+      }
+      
+      return false;
+    }
+  }
+
+  async createCustomer(userId: string, data: CreateCustomerDto): Promise<Customer> {
+    // Validate user exists
+    const isValidUser = await this.validateUser(userId);
+    if (!isValidUser) {
+      throw new Error('User not found or invalid');
+    }
+
+    // Check if customer already exists
+    const existingCustomers = await db.query<Customer>(
+      'SELECT * FROM customers WHERE user_id = ?',
+      [userId]
+    );
+
+    if (existingCustomers.length > 0) {
+      throw new Error('Customer profile already exists');
+    }
+
+    const customerId = uuidv4();
+    const now = new Date();
+
+    // Create customer
+    await db.query(
+      `INSERT INTO customers (
+        id, user_id, account_type, date_of_birth, business_name,
+        business_type, business_phone, tax_id, join_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        customerId,
+        userId,
+        data.accountType || 'personal',
+        data.dateOfBirth || null,
+        data.businessName || null,
+        data.businessType || null,
+        data.businessPhone || null,
+        data.taxId || null,
+        now
+      ]
+    );
+
+    // Create default preferences
+    await db.query(
+      `INSERT INTO customer_preferences (
+        id, customer_id, language, timezone
+      ) VALUES (UUID(), ?, ?, ?)`,
+      [customerId, 'en', 'UTC']
+    );
+
+    // Return created customer
+    const customer = await db.queryOne<Customer>(
+      'SELECT * FROM customers WHERE id = ?',
+      [customerId]
+    );
+
+    if (!customer) {
+      throw new Error('Failed to create customer');
+    }
+
+    return customer;
+  }
+
+  async getCustomerByUserId(userId: string): Promise<Customer | null> {
+    return await db.queryOne<Customer>(
+      'SELECT * FROM customers WHERE user_id = ?',
+      [userId]
+    );
+  }
+
+  async getCustomerProfile(userId: string): Promise<any> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Get related data
+    const addresses = await db.query<CustomerAddress>(
+      'SELECT * FROM customer_addresses WHERE customer_id = ? ORDER BY is_default DESC, created_at DESC',
+      [customer.id]
+    );
+
+    const preferences = await db.query<CustomerPreference>(
+      'SELECT * FROM customer_preferences WHERE customer_id = ?',
+      [customer.id]
+    );
+
+    const paymentMethods = await db.query<CustomerPaymentMethod>(
+      'SELECT * FROM customer_payment_methods WHERE customer_id = ? AND is_active = TRUE ORDER BY is_default DESC, created_at DESC',
+      [customer.id]
+    );
+
+    const timeSlots = await db.query<DeliveryTimeSlot>(
+      'SELECT * FROM delivery_time_slots WHERE customer_id = ? AND is_active = TRUE ORDER BY day_of_week, start_time',
+      [customer.id]
+    );
+
+    const recentFeedback = await db.query<CustomerFeedback>(
+      'SELECT * FROM customer_feedback WHERE customer_id = ? ORDER BY created_at DESC LIMIT 10',
+      [customer.id]
+    );
+
+    return {
+      ...customer,
+      addresses,
+      preferences: preferences.length > 0 ? preferences[0] : {},
+      paymentMethods,
+      timeSlots,
+      recentFeedback
+    };
+  }
+
+  async updateCustomer(userId: string, data: UpdateCustomerDto): Promise<Customer> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Build update fields
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (data.accountType) {
+      updates.push('account_type = ?');
+      values.push(data.accountType);
+    }
+
+    if (data.dateOfBirth) {
+      updates.push('date_of_birth = ?');
+      values.push(data.dateOfBirth);
+    } else if (data.dateOfBirth === null) {
+      updates.push('date_of_birth = NULL');
+    }
+
+    if (data.businessName !== undefined) {
+      updates.push('business_name = ?');
+      values.push(data.businessName);
+    }
+
+    if (data.businessType !== undefined) {
+      updates.push('business_type = ?');
+      values.push(data.businessType);
+    }
+
+    if (data.businessPhone !== undefined) {
+      updates.push('business_phone = ?');
+      values.push(data.businessPhone);
+    }
+
+    if (data.taxId !== undefined) {
+      updates.push('tax_id = ?');
+      values.push(data.taxId);
+    }
+
+    if (data.profilePictureUrl !== undefined) {
+      updates.push('profile_picture_url = ?');
+      values.push(data.profilePictureUrl);
+    }
+
+    if (updates.length === 0) {
+      return customer;
+    }
+
+    updates.push('updated_at = ?');
+    values.push(new Date());
+
+    values.push(customer.id);
+
+    await db.query(
+      `UPDATE customers SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    // Return updated customer
+    const updatedCustomer = await db.queryOne<Customer>(
+      'SELECT * FROM customers WHERE id = ?',
+      [customer.id]
+    );
+
+    if (!updatedCustomer) {
+      throw new Error('Failed to update customer');
+    }
+
+    return updatedCustomer;
+  }
+
+  async addAddress(userId: string, data: AddressDto): Promise<CustomerAddress> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // If setting as default, update other addresses
+    if (data.isDefault) {
+      await db.query(
+        'UPDATE customer_addresses SET is_default = FALSE WHERE customer_id = ?',
+        [customer.id]
+      );
+    }
+
+    const addressId = uuidv4();
+
+    await db.query(
+      `INSERT INTO customer_addresses (
+        id, customer_id, label, address, city, state, country,
+        postal_code, latitude, longitude, is_default, is_active, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        addressId,
+        customer.id,
+        data.label,
+        data.address,
+        data.city,
+        data.state,
+        data.country || 'US',
+        data.postalCode,
+        data.latitude || null,
+        data.longitude || null,
+        data.isDefault || false,
+        true,
+        data.notes || null
+      ]
+    );
+
+    const address = await db.queryOne<CustomerAddress>(
+      'SELECT * FROM customer_addresses WHERE id = ?',
+      [addressId]
+    );
+
+    if (!address) {
+      throw new Error('Failed to create address');
+    }
+
+    return address;
+  }
+
+  async updateAddress(userId: string, addressId: string, data: any): Promise<CustomerAddress> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Check if address exists and belongs to customer
+    const existingAddress = await db.queryOne<CustomerAddress>(
+      'SELECT * FROM customer_addresses WHERE id = ? AND customer_id = ?',
+      [addressId, customer.id]
+    );
+
+    if (!existingAddress) {
+      throw new Error('Address not found');
+    }
+
+    // If setting as default, update other addresses
+    if (data.isDefault === true && !existingAddress.isDefault) {
+      await db.query(
+        'UPDATE customer_addresses SET is_default = FALSE WHERE customer_id = ?',
+        [customer.id]
+      );
+    }
+
+    // Build update fields
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (data.label !== undefined) {
+      updates.push('label = ?');
+      values.push(data.label);
+    }
+
+    if (data.address !== undefined) {
+      updates.push('address = ?');
+      values.push(data.address);
+    }
+
+    if (data.city !== undefined) {
+      updates.push('city = ?');
+      values.push(data.city);
+    }
+
+    if (data.state !== undefined) {
+      updates.push('state = ?');
+      values.push(data.state);
+    }
+
+    if (data.country !== undefined) {
+      updates.push('country = ?');
+      values.push(data.country);
+    }
+
+    if (data.postalCode !== undefined) {
+      updates.push('postal_code = ?');
+      values.push(data.postalCode);
+    }
+
+    if (data.latitude !== undefined) {
+      updates.push('latitude = ?');
+      values.push(data.latitude);
+    }
+
+    if (data.longitude !== undefined) {
+      updates.push('longitude = ?');
+      values.push(data.longitude);
+    }
+
+    if (data.isDefault !== undefined) {
+      updates.push('is_default = ?');
+      values.push(data.isDefault);
+    }
+
+    if (data.isActive !== undefined) {
+      updates.push('is_active = ?');
+      values.push(data.isActive);
+    }
+
+    if (data.notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(data.notes);
+    }
+
+    if (updates.length === 0) {
+      return existingAddress;
+    }
+
+    updates.push('updated_at = ?');
+    values.push(new Date());
+
+    values.push(addressId);
+
+    await db.query(
+      `UPDATE customer_addresses SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    const updatedAddress = await db.queryOne<CustomerAddress>(
+      'SELECT * FROM customer_addresses WHERE id = ?',
+      [addressId]
+    );
+
+    if (!updatedAddress) {
+      throw new Error('Failed to update address');
+    }
+
+    return updatedAddress;
+  }
+
+  async deleteAddress(userId: string, addressId: string): Promise<void> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Check if address exists and belongs to customer
+    const address = await db.queryOne<CustomerAddress>(
+      'SELECT * FROM customer_addresses WHERE id = ? AND customer_id = ?',
+      [addressId, customer.id]
+    );
+
+    if (!address) {
+      throw new Error('Address not found');
+    }
+
+    // Don't allow deleting the only address
+    const allAddresses = await db.query<CustomerAddress>(
+      'SELECT * FROM customer_addresses WHERE customer_id = ? AND is_active = TRUE',
+      [customer.id]
+    );
+
+    if (allAddresses.length <= 1) {
+        throw new Error('Cannot delete the only address');
+    }
+
+    // If deleting default address, set another as default
+    if (address.isDefault) {
+      const otherAddress = allAddresses.find((a: CustomerAddress) => a.id !== addressId);
+      if (otherAddress) {
+        await db.query(
+          'UPDATE customer_addresses SET is_default = TRUE WHERE id = ?',
+          [otherAddress.id]
+        );
+      }
+    }
+
+    await db.query(
+      'DELETE FROM customer_addresses WHERE id = ?',
+      [addressId]
+    );
+  }
+
+  async addPaymentMethod(userId: string, data: PaymentMethodDto): Promise<CustomerPaymentMethod> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // If setting as default, update other payment methods
+    if (data.isDefault) {
+      await db.query(
+        'UPDATE customer_payment_methods SET is_default = FALSE WHERE customer_id = ?',
+        [customer.id]
+      );
+    }
+
+    const paymentMethodId = uuidv4();
+
+    await db.query(
+      `INSERT INTO customer_payment_methods (
+        id, customer_id, type, provider, last4, expiry_month, expiry_year,
+        name_on_card, paypal_email, bank_name, account_number_masked,
+        is_default, is_active, token
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        paymentMethodId,
+        customer.id,
+        data.type,
+        data.provider,
+        data.last4 || null,
+        data.expiryMonth || null,
+        data.expiryYear || null,
+        data.nameOnCard || null,
+        data.paypalEmail || null,
+        data.bankName || null,
+        data.accountNumberMasked || null,
+        data.isDefault || false,
+        true,
+        data.token || null
+      ]
+    );
+
+    const paymentMethod = await db.queryOne<CustomerPaymentMethod>(
+      'SELECT * FROM customer_payment_methods WHERE id = ?',
+      [paymentMethodId]
+    );
+
+    if (!paymentMethod) {
+      throw new Error('Failed to create payment method');
+    }
+
+    return paymentMethod;
+  }
+
+  async updatePaymentMethod(
+    userId: string,
+    paymentMethodId: string,
+    data: any
+  ): Promise<CustomerPaymentMethod> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Check if payment method exists and belongs to customer
+    const existingMethod = await db.queryOne<CustomerPaymentMethod>(
+      'SELECT * FROM customer_payment_methods WHERE id = ? AND customer_id = ?',
+      [paymentMethodId, customer.id]
+    );
+
+    if (!existingMethod) {
+      throw new Error('Payment method not found');
+    }
+
+    // If setting as default, update other payment methods
+    if (data.isDefault === true && !existingMethod.isDefault) {
+      await db.query(
+        'UPDATE customer_payment_methods SET is_default = FALSE WHERE customer_id = ?',
+        [customer.id]
+      );
+    }
+
+    // Build update fields
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (data.isDefault !== undefined) {
+      updates.push('is_default = ?');
+      values.push(data.isDefault);
+    }
+
+    if (data.isActive !== undefined) {
+      updates.push('is_active = ?');
+      values.push(data.isActive);
+    }
+
+    if (data.expiryMonth !== undefined) {
+      updates.push('expiry_month = ?');
+      values.push(data.expiryMonth);
+    }
+
+    if (data.expiryYear !== undefined) {
+      updates.push('expiry_year = ?');
+      values.push(data.expiryYear);
+    }
+
+    if (data.nameOnCard !== undefined) {
+      updates.push('name_on_card = ?');
+      values.push(data.nameOnCard);
+    }
+
+    if (updates.length === 0) {
+      return existingMethod;
+    }
+
+    updates.push('updated_at = ?');
+    values.push(new Date());
+
+    values.push(paymentMethodId);
+
+    await db.query(
+      `UPDATE customer_payment_methods SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    const updatedMethod = await db.queryOne<CustomerPaymentMethod>(
+      'SELECT * FROM customer_payment_methods WHERE id = ?',
+      [paymentMethodId]
+    );
+
+    if (!updatedMethod) {
+      throw new Error('Failed to update payment method');
+    }
+
+    return updatedMethod;
+  }
+
+  async deletePaymentMethod(userId: string, paymentMethodId: string): Promise<void> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Check if payment method exists and belongs to customer
+    const paymentMethod = await db.queryOne<CustomerPaymentMethod>(
+      'SELECT * FROM customer_payment_methods WHERE id = ? AND customer_id = ?',
+      [paymentMethodId, customer.id]
+    );
+
+    if (!paymentMethod) {
+      throw new Error('Payment method not found');
+    }
+
+    // Don't allow deleting the only active payment method
+    const allMethods = await db.query<CustomerPaymentMethod>(
+      'SELECT * FROM customer_payment_methods WHERE customer_id = ? AND is_active = TRUE',
+      [customer.id]
+    );
+
+    if (allMethods.length <= 1) {
+      throw new Error('Cannot delete the only payment method');
+    }
+
+    // If deleting default payment method, set another as default
+    if (paymentMethod.isDefault) {
+      const otherMethod = allMethods.find((m: CustomerPaymentMethod) => m.id !== paymentMethodId);
+      if (otherMethod) {
+        await db.query(
+          'UPDATE customer_payment_methods SET is_default = TRUE WHERE id = ?',
+          [otherMethod.id]
+        );
+      }
+    }
+
+    await db.query(
+      'DELETE FROM customer_payment_methods WHERE id = ?',
+      [paymentMethodId]
+    );
+  }
+
+  async updatePreferences(userId: string, data: PreferencesDto): Promise<CustomerPreference | null> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Build update fields
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (data.defaultPickupType !== undefined) {
+      updates.push('default_pickup_type = ?');
+      values.push(data.defaultPickupType);
+    }
+
+    if (data.defaultPaymentId !== undefined) {
+      updates.push('default_payment_id = ?');
+      values.push(data.defaultPaymentId);
+    }
+
+    if (data.notificationEmail !== undefined) {
+      updates.push('notification_email = ?');
+      values.push(data.notificationEmail);
+    }
+
+    if (data.notificationSMS !== undefined) {
+      updates.push('notification_sms = ?');
+      values.push(data.notificationSMS);
+    }
+
+    if (data.notificationPush !== undefined) {
+      updates.push('notification_push = ?');
+      values.push(data.notificationPush);
+    }
+
+    if (data.shareLocationData !== undefined) {
+      updates.push('share_location_data = ?');
+      values.push(data.shareLocationData);
+    }
+
+    if (data.shareUsageAnalytics !== undefined) {
+      updates.push('share_usage_analytics = ?');
+      values.push(data.shareUsageAnalytics);
+    }
+
+    if (data.marketingEmails !== undefined) {
+      updates.push('marketing_emails = ?');
+      values.push(data.marketingEmails);
+    }
+
+    if (data.language !== undefined) {
+      updates.push('language = ?');
+      values.push(data.language);
+    }
+
+    if (data.timezone !== undefined) {
+      updates.push('timezone = ?');
+      values.push(data.timezone);
+    }
+
+    if (updates.length === 0) {
+      const preferences = await db.query<CustomerPreference>(
+        'SELECT * FROM customer_preferences WHERE customer_id = ?',
+        [customer.id]
+      );
+      return preferences.length > 0 ? preferences[0] : null;
+    }
+
+    updates.push('updated_at = ?');
+    values.push(new Date());
+
+    values.push(customer.id);
+
+    await db.query(
+      `UPDATE customer_preferences SET ${updates.join(', ')} WHERE customer_id = ?`,
+      values
+    );
+
+    const preferences = await db.query<CustomerPreference>(
+      'SELECT * FROM customer_preferences WHERE customer_id = ?',
+      [customer.id]
+    );
+
+    return preferences.length > 0 ? preferences[0] : null;
+  }
+
+  async updateTimeSlots(userId: string, timeSlots: TimeSlotDto[]): Promise<void> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Delete existing time slots
+    await db.query(
+      'DELETE FROM delivery_time_slots WHERE customer_id = ?',
+      [customer.id]
+    );
+
+    // Insert new time slots
+    if (timeSlots.length > 0) {
+      const values = timeSlots.map(slot => [
+        uuidv4(),
+        customer.id,
+        slot.dayOfWeek,
+        slot.startTime,
+        slot.endTime,
+        slot.isActive !== false
+      ]);
+
+      await db.query(
+        `INSERT INTO delivery_time_slots 
+        (id, customer_id, day_of_week, start_time, end_time, is_active)
+        VALUES ?`,
+        [values]
+      );
+    }
+  }
+
+  async addFeedback(userId: string, data: FeedbackDto): Promise<CustomerFeedback> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    const feedbackId = uuidv4();
+
+    await db.query(
+      `INSERT INTO customer_feedback (
+        id, customer_id, order_id, rating, comment, category, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        feedbackId,
+        customer.id,
+        data.orderId || null,
+        data.rating,
+        data.comment || null,
+        data.category || 'other',
+        'pending'
+      ]
+    );
+
+    // Update customer's average rating
+    await this.updateCustomerRating(customer.id);
+
+    const feedback = await db.queryOne<CustomerFeedback>(
+      'SELECT * FROM customer_feedback WHERE id = ?',
+      [feedbackId]
+    );
+
+    if (!feedback) {
+      throw new Error('Failed to create feedback');
+    }
+
+    return feedback;
+  }
+
+  private async updateCustomerRating(customerId: string): Promise<void> {
+    const feedback = await db.query<{ avg_rating: number }>(
+      'SELECT AVG(rating) as avg_rating FROM customer_feedback WHERE customer_id = ? AND rating IS NOT NULL',
+      [customerId]
+    );
+
+    const averageRating = feedback.length > 0 ? feedback[0].avg_rating : 0;
+
+    await db.query(
+      'UPDATE customers SET average_rating = ?, updated_at = ? WHERE id = ?',
+      [averageRating, new Date(), customerId]
+    );
+  }
+
+  async updateOrderStats(userId: string, orderAmount: number): Promise<Customer> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Calculate loyalty points (1 point per $10 spent)
+    const loyaltyPointsEarned = Math.floor(orderAmount / 10);
+
+    // Update customer stats
+    await db.query(
+      `UPDATE customers 
+      SET total_orders = total_orders + 1,
+          total_spent = total_spent + ?,
+          loyalty_points = loyalty_points + ?,
+          updated_at = ?
+      WHERE id = ?`,
+      [orderAmount, loyaltyPointsEarned, new Date(), customer.id]
+    );
+
+    // Update membership level based on total spent
+    const updatedCustomer = await db.queryOne<Customer>(
+      'SELECT * FROM customers WHERE id = ?',
+      [customer.id]
+    );
+
+    if (!updatedCustomer) {
+      throw new Error('Failed to update order stats');
+    }
+
+    let membershipLevel = 'standard';
+    if (updatedCustomer.totalSpent >= 10000) {
+      membershipLevel = 'premium';
+    } else if (updatedCustomer.totalSpent >= 50000) {
+      membershipLevel = 'business';
+    }
+
+    if (membershipLevel !== updatedCustomer.membershipLevel) {
+      await db.query(
+        'UPDATE customers SET membership_level = ?, updated_at = ? WHERE id = ?',
+        [membershipLevel, new Date(), customer.id]
+      );
+    }
+
+    const finalCustomer = await db.queryOne<Customer>(
+      'SELECT * FROM customers WHERE id = ?',
+      [customer.id]
+    );
+
+    if (!finalCustomer) {
+      throw new Error('Failed to get updated customer');
+    }
+
+    return finalCustomer;
+  }
+
+  async getCustomerStats(userId: string): Promise<CustomerStats> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Get counts
+    const addressesCount = await db.query<{ count: number }>(
+      'SELECT COUNT(*) as count FROM customer_addresses WHERE customer_id = ? AND is_active = TRUE',
+      [customer.id]
+    );
+
+    const paymentMethodsCount = await db.query<{ count: number }>(
+      'SELECT COUNT(*) as count FROM customer_payment_methods WHERE customer_id = ? AND is_active = TRUE',
+      [customer.id]
+    );
+
+    const feedbackCount = await db.query<{ count: number }>(
+      'SELECT COUNT(*) as count FROM customer_feedback WHERE customer_id = ?',
+      [customer.id]
+    );
+
+    // Calculate account age
+    const accountAgeDays = Math.floor(
+      (new Date().getTime() - new Date(customer.joinDate).getTime()) /
+      (1000 * 60 * 60 * 24)
+    );
+
+    return {
+      totalOrders: customer.totalOrders,
+      totalSpent: customer.totalSpent,
+      averageRating: customer.averageRating,
+      loyaltyPoints: customer.loyaltyPoints,
+      membershipLevel: customer.membershipLevel,
+      addressesCount: addressesCount.length > 0 ? addressesCount[0].count : 0,
+      paymentMethodsCount: paymentMethodsCount.length > 0 ? paymentMethodsCount[0].count : 0,
+      feedbackCount: feedbackCount.length > 0 ? feedbackCount[0].count : 0,
+      memberSince: customer.joinDate,
+      accountAgeDays
+    };
+  }
+
+  async uploadProfilePicture(userId: string, file: Express.Multer.File): Promise<string> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    // Generate unique filename
+    const ext = path.extname(file.originalname);
+    const filename = `profile_${customer.id}_${Date.now()}${ext}`;
+    const uploadPath = process.env.UPLOAD_PATH || './src/uploads';
+    const filePath = path.join(uploadPath, filename);
+
+    // Save file
+    await fs.writeFile(filePath, file.buffer);
+
+    // Generate URL
+    const baseUrl = process.env.APP_URL || 'http://localhost:3003';
+    const fileUrl = `${baseUrl}/uploads/${filename}`;
+
+    // Update customer record
+    await db.query(
+      'UPDATE customers SET profile_picture_url = ?, updated_at = ? WHERE id = ?',
+      [fileUrl, new Date(), customer.id]
+    );
+
+    return fileUrl;
+  }
+
+  async deleteProfilePicture(userId: string): Promise<void> {
+    const customer = await this.getCustomerByUserId(userId);
+    
+    if (!customer) {
+      throw new Error('Customer profile not found');
+    }
+
+    if (!customer.profilePictureUrl) {
+      throw new Error('No profile picture to delete');
+    }
+
+    // Extract filename from URL
+    const urlParts = customer.profilePictureUrl.split('/');
+    const filename = urlParts[urlParts.length - 1];
+    const uploadPath = process.env.UPLOAD_PATH || './src/uploads';
+    const filePath = path.join(uploadPath, filename);
+
+    // Delete file if exists
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      logger.warn('Profile picture file not found:', filePath);
+    }
+
+    // Update customer record
+    await db.query(
+      'UPDATE customers SET profile_picture_url = NULL, updated_at = ? WHERE id = ?',
+      [new Date(), customer.id]
+    );
+  }
+
+  async searchCustomers(
+    searchTerm: string,
+    filters: {
+      accountType?: string;
+      status?: string;
+      membershipLevel?: string;
+      minOrders?: number;
+      maxOrders?: number;
+    } = {},
+    page: number = 1,
+    limit: number = 20
+  ): Promise<{ customers: Customer[]; total: number }> {
+    let query = 'SELECT * FROM customers WHERE 1=1';
+    let countQuery = 'SELECT COUNT(*) as total FROM customers WHERE 1=1';
+    const values: any[] = [];
+    const countValues: any[] = [];
+
+    // Search term
+    if (searchTerm) {
+      query += ' AND (business_name LIKE ? OR user_id LIKE ?)';
+      countQuery += ' AND (business_name LIKE ? OR user_id LIKE ?)';
+      const searchValue = `%${searchTerm}%`;
+      values.push(searchValue, searchValue);
+      countValues.push(searchValue, searchValue);
+    }
+
+    // Filters
+    if (filters.accountType) {
+      query += ' AND account_type = ?';
+      countQuery += ' AND account_type = ?';
+      values.push(filters.accountType);
+      countValues.push(filters.accountType);
+    }
+
+    if (filters.status) {
+      query += ' AND status = ?';
+      countQuery += ' AND status = ?';
+      values.push(filters.status);
+      countValues.push(filters.status);
+    }
+
+    if (filters.membershipLevel) {
+      query += ' AND membership_level = ?';
+      countQuery += ' AND membership_level = ?';
+      values.push(filters.membershipLevel);
+      countValues.push(filters.membershipLevel);
+    }
+
+    if (filters.minOrders !== undefined) {
+      query += ' AND total_orders >= ?';
+      countQuery += ' AND total_orders >= ?';
+      values.push(filters.minOrders);
+      countValues.push(filters.minOrders);
+    }
+
+    if (filters.maxOrders !== undefined) {
+      query += ' AND total_orders <= ?';
+      countQuery += ' AND total_orders <= ?';
+      values.push(filters.maxOrders);
+      countValues.push(filters.maxOrders);
+    }
+
+    // Pagination
+    const offset = (page - 1) * limit;
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    values.push(limit, offset);
+
+    const customers = await db.query<Customer>(query, values);
+    const countResult = await db.query<{ total: number }>(countQuery, countValues);
+
+    return {
+      customers,
+      total: countResult.length > 0 ? countResult[0].total : 0
+    };
+  }
+}
+```
+
+`sql\schema.sql`:
+
+```sql
+-- Customer Service Database Schema
+
+-- Customers table
+CREATE TABLE IF NOT EXISTS customers (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id VARCHAR(36) NOT NULL UNIQUE,
+    account_type ENUM('personal', 'business') DEFAULT 'personal',
+    date_of_birth DATE NULL,
+    business_name VARCHAR(255) NULL,
+    business_type VARCHAR(100) NULL,
+    business_phone VARCHAR(20) NULL,
+    tax_id VARCHAR(50) NULL,
+    join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    total_orders INT DEFAULT 0,
+    total_spent DECIMAL(10, 2) DEFAULT 0.00,
+    average_rating DECIMAL(3, 2) DEFAULT 0.00,
+    loyalty_points INT DEFAULT 0,
+    status ENUM('active', 'inactive', 'suspended') DEFAULT 'active',
+    membership_level ENUM('standard', 'premium', 'business') DEFAULT 'standard',
+    profile_picture_url VARCHAR(500) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_user_id (user_id),
+    INDEX idx_account_type (account_type),
+    INDEX idx_membership_level (membership_level),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer addresses table
+CREATE TABLE IF NOT EXISTS customer_addresses (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    customer_id VARCHAR(36) NOT NULL,
+    label VARCHAR(50) NOT NULL,
+    address TEXT NOT NULL,
+    city VARCHAR(100) NOT NULL,
+    state VARCHAR(100) NOT NULL,
+    country VARCHAR(100) DEFAULT 'US',
+    postal_code VARCHAR(20) NOT NULL,
+    latitude DECIMAL(10, 8) NULL,
+    longitude DECIMAL(11, 8) NULL,
+    is_default BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    notes TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_customer_default (customer_id, is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer preferences table
+CREATE TABLE IF NOT EXISTS customer_preferences (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    customer_id VARCHAR(36) NOT NULL UNIQUE,
+    default_pickup_type ENUM('home', 'business', 'other') DEFAULT 'home',
+    default_payment_id VARCHAR(36) NULL,
+    notification_email BOOLEAN DEFAULT TRUE,
+    notification_sms BOOLEAN DEFAULT TRUE,
+    notification_push BOOLEAN DEFAULT TRUE,
+    share_location_data BOOLEAN DEFAULT FALSE,
+    share_usage_analytics BOOLEAN DEFAULT FALSE,
+    marketing_emails BOOLEAN DEFAULT FALSE,
+    language VARCHAR(10) DEFAULT 'en',
+    timezone VARCHAR(50) DEFAULT 'UTC',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer payment methods table
+CREATE TABLE IF NOT EXISTS customer_payment_methods (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    customer_id VARCHAR(36) NOT NULL,
+    type ENUM('card', 'paypal', 'apple_pay', 'google_pay', 'bank_transfer') NOT NULL,
+    provider VARCHAR(50) NOT NULL,
+    last4 VARCHAR(4) NULL,
+    expiry_month INT NULL,
+    expiry_year INT NULL,
+    name_on_card VARCHAR(100) NULL,
+    paypal_email VARCHAR(255) NULL,
+    bank_name VARCHAR(100) NULL,
+    account_number_masked VARCHAR(20) NULL,
+    is_default BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    token VARCHAR(500) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_customer_default (customer_id, is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Delivery time slots table
+CREATE TABLE IF NOT EXISTS delivery_time_slots (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    customer_id VARCHAR(36) NOT NULL,
+    day_of_week INT NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_customer_day (customer_id, day_of_week),
+    INDEX idx_customer_id (customer_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer feedback table
+CREATE TABLE IF NOT EXISTS customer_feedback (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    customer_id VARCHAR(36) NOT NULL,
+    order_id VARCHAR(36) NULL,
+    rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment TEXT NULL,
+    category ENUM('delivery', 'driver', 'packaging', 'app', 'other') DEFAULT 'other',
+    status ENUM('pending', 'reviewed', 'resolved') DEFAULT 'pending',
+    response TEXT NULL,
+    responded_by VARCHAR(100) NULL,
+    responded_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_category (category),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Customer favorites table (optional)
+CREATE TABLE IF NOT EXISTS customer_favorites (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    customer_id VARCHAR(36) NOT NULL,
+    favorite_type ENUM('driver', 'delivery_address', 'pickup_location') NOT NULL,
+    reference_id VARCHAR(36) NOT NULL,
+    notes TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+    UNIQUE KEY unique_customer_favorite (customer_id, favorite_type, reference_id),
+    INDEX idx_customer_id (customer_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+`types\index.ts`:
+
+```ts
+// Customer types
+export interface Customer {
+  id: string;
+  userId: string;
+  accountType: 'personal' | 'business';
+  dateOfBirth?: Date;
+  businessName?: string;
+  businessType?: string;
+  businessPhone?: string;
+  taxId?: string;
+  joinDate: Date;
+  totalOrders: number;
+  totalSpent: number;
+  averageRating: number;
+  loyaltyPoints: number;
+  status: 'active' | 'inactive' | 'suspended';
+  membershipLevel: 'standard' | 'premium' | 'business';
+  profilePictureUrl?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerAddress {
+  id: string;
+  customerId: string;
+  label: string;
+  address: string;
+  city: string;
+  state: string;
+  country: string;
+  postalCode: string;
+  latitude?: number;
+  longitude?: number;
+  isDefault: boolean;
+  isActive: boolean;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerPreference {
+  id: string;
+  customerId: string;
+  defaultPickupType: 'home' | 'business' | 'other';
+  defaultPaymentId?: string;
+  notificationEmail: boolean;
+  notificationSMS: boolean;
+  notificationPush: boolean;
+  shareLocationData: boolean;
+  shareUsageAnalytics: boolean;
+  marketingEmails: boolean;
+  language: string;
+  timezone: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerPaymentMethod {
+  id: string;
+  customerId: string;
+  type: 'card' | 'paypal' | 'apple_pay' | 'google_pay' | 'bank_transfer';
+  provider: string;
+  last4?: string;
+  expiryMonth?: number;
+  expiryYear?: number;
+  nameOnCard?: string;
+  paypalEmail?: string;
+  bankName?: string;
+  accountNumberMasked?: string;
+  isDefault: boolean;
+  isActive: boolean;
+  token?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface DeliveryTimeSlot {
+  id: string;
+  customerId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerFeedback {
+  id: string;
+  customerId: string;
+  orderId?: string;
+  rating: number;
+  comment?: string;
+  category: 'delivery' | 'driver' | 'packaging' | 'app' | 'other';
+  status: 'pending' | 'reviewed' | 'resolved';
+  response?: string;
+  respondedBy?: string;
+  respondedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CustomerFavorite {
+  id: string;
+  customerId: string;
+  favoriteType: 'driver' | 'delivery_address' | 'pickup_location';
+  referenceId: string;
+  notes?: string;
+  createdAt: Date;
+}
+
+// Database query result types (arrays from MySQL)
+export interface DBCustomer extends Customer {}
+export interface DBCustomerAddress extends CustomerAddress {}
+export interface DBCustomerPreference extends CustomerPreference {}
+export interface DBCustomerPaymentMethod extends CustomerPaymentMethod {}
+export interface DBDeliveryTimeSlot extends DeliveryTimeSlot {}
+export interface DBCustomerFeedback extends CustomerFeedback {}
+
+// Count result type
+export interface CountResult {
+  count: number;
+}
+
+// Aggregation result types
+export interface AvgRatingResult {
+  avg_rating: number;
+}
+
+export interface TotalCountResult {
+  total: number;
+}
+
+// Request/Response types
+export interface CreateCustomerDto {
+  userId: string;
+  accountType?: 'personal' | 'business';
+  dateOfBirth?: string;
+  businessName?: string;
+  businessType?: string;
+  businessPhone?: string;
+  taxId?: string;
+}
+
+export interface UpdateCustomerDto {
+  accountType?: 'personal' | 'business';
+  dateOfBirth?: string;
+  businessName?: string;
+  businessType?: string;
+  businessPhone?: string;
+  taxId?: string;
+  profilePictureUrl?: string;
+}
+
+export interface AddressDto {
+  label: string;
+  address: string;
+  city: string;
+  state: string;
+  country?: string;
+  postalCode: string;
+  latitude?: number;
+  longitude?: number;
+  isDefault?: boolean;
+  notes?: string;
+}
+
+export interface PaymentMethodDto {
+  type: 'card' | 'paypal' | 'apple_pay' | 'google_pay' | 'bank_transfer';
+  provider: string;
+  last4?: string;
+  expiryMonth?: number;
+  expiryYear?: number;
+  nameOnCard?: string;
+  paypalEmail?: string;
+  bankName?: string;
+  accountNumberMasked?: string;
+  isDefault?: boolean;
+  token?: string;
+}
+
+export interface PreferencesDto {
+  defaultPickupType?: 'home' | 'business' | 'other';
+  defaultPaymentId?: string;
+  notificationEmail?: boolean;
+  notificationSMS?: boolean;
+  notificationPush?: boolean;
+  shareLocationData?: boolean;
+  shareUsageAnalytics?: boolean;
+  marketingEmails?: boolean;
+  language?: string;
+  timezone?: string;
+}
+
+export interface TimeSlotDto {
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isActive?: boolean;
+}
+
+export interface FeedbackDto {
+  orderId?: string;
+  rating: number;
+  comment?: string;
+  category?: 'delivery' | 'driver' | 'packaging' | 'app' | 'other';
+}
+
+export interface CustomerStats {
+  totalOrders: number;
+  totalSpent: number;
+  averageRating: number;
+  loyaltyPoints: number;
+  membershipLevel: string;
+  addressesCount: number;
+  paymentMethodsCount: number;
+  feedbackCount: number;
+  memberSince: Date;
+  accountAgeDays: number;
+}
+
+// API Response types
+export interface ApiResponse<T = any> {
+  success: boolean;
+  message?: string;
+  data?: T;
+  error?: string;
+}
+
+export interface AuthUser {
+  userId: string;
+  userType: string;
+  email: string;
+}
+
+// Database query generic type
+export type QueryResult<T> = T[];
+```
+
+`utils\httpClient.ts`:
+
+```ts
+import axios, { AxiosInstance } from 'axios';
+import logger from './logger';
+
+class HttpClient {
+  private static instance: HttpClient;
+  private client: AxiosInstance;
+
+  private constructor() {
+    this.client = axios.create({
+      timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-service-secret': process.env.SERVICE_SECRET
+      }
+    });
+
+    // Add request interceptor
+    this.client.interceptors.request.use(
+      (config) => {
+        logger.debug(`HTTP Request: ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        logger.error('HTTP Request Error:', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Add response interceptor
+    this.client.interceptors.response.use(
+      (response) => {
+        logger.debug(`HTTP Response: ${response.status} ${response.config.url}`);
+        return response;
+      },
+      (error) => {
+        if (error.response) {
+          logger.error(`HTTP Error: ${error.response.status} - ${error.config.url}`);
+        } else if (error.request) {
+          logger.error('HTTP No Response:', error.request);
+        } else {
+          logger.error('HTTP Error:', error.message);
+        }
+        return Promise.reject(error);
+      }
+    );
+  }
+
+  public static getInstance(): HttpClient {
+    if (!HttpClient.instance) {
+      HttpClient.instance = new HttpClient();
+    }
+    return HttpClient.instance;
+  }
+
+  public async get(url: string, config?: any) {
+    return this.client.get(url, config);
+  }
+
+  public async post(url: string, data?: any, config?: any) {
+    return this.client.post(url, data, config);
+  }
+
+  public async put(url: string, data?: any, config?: any) {
+    return this.client.put(url, data, config);
+  }
+
+  public async patch(url: string, data?: any, config?: any) {
+    return this.client.patch(url, data, config);
+  }
+
+  public async delete(url: string, config?: any) {
+    return this.client.delete(url, config);
+  }
+}
+
+export const httpClient = HttpClient.getInstance();
+export default httpClient;
+```
+
+`utils\logger.ts`:
+
+```ts
+import winston from 'winston';
+import path from 'path';
+
+const logDir = process.env.LOG_DIR || 'logs';
+
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({
+      format: 'YYYY-MM-DD HH:mm:ss'
+    }),
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'customer-service' },
+  transports: [
+    // Write all logs with level 'error' and below to error.log
+    new winston.transports.File({
+      filename: path.join(logDir, 'error.log'),
+      level: 'error'
+    }),
+    // Write all logs to combined.log
+    new winston.transports.File({
+      filename: path.join(logDir, 'combined.log')
+    })
+  ]
+});
+
+// If we're not in production, also log to console
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      )
+    })
+  );
+}
+
+export default logger;
+```
+
+`utils\response.util.ts`:
+
+```ts
+import { Response } from 'express';
+import { ApiResponse } from '../types';
+
+export class ResponseUtil {
+  static success<T>(
+    res: Response,
+    data?: T,
+    message: string = 'Success',
+    statusCode: number = 200
+  ): Response {
+    const response: ApiResponse<T> = {
+      success: true,
+      message,
+      data
+    };
+    return res.status(statusCode).json(response);
+  }
+
+  static error(
+    res: Response,
+    message: string = 'Internal server error',
+    statusCode: number = 500,
+    error?: any
+  ): Response {
+    const response: ApiResponse = {
+      success: false,
+      message,
+      error: error?.message || error
+    };
+    return res.status(statusCode).json(response);
+  }
+
+  static notFound(res: Response, message: string = 'Resource not found'): Response {
+    return this.error(res, message, 404);
+  }
+
+  static badRequest(res: Response, message: string = 'Bad request', error?: any): Response {
+    return this.error(res, message, 400, error);
+  }
+
+  static unauthorized(res: Response, message: string = 'Unauthorized'): Response {
+    return this.error(res, message, 401);
+  }
+
+  static forbidden(res: Response, message: string = 'Forbidden'): Response {
+    return this.error(res, message, 403);
+  }
+}
+```

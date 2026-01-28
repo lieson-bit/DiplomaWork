@@ -137,4 +137,8 @@ router.get('/health', (req, res) => {
   });
 });
 
+router.post('/addresses', customerController.addAddress);
+router.put('/addresses/:id', customerController.updateAddress);
+router.delete('/addresses/:id', customerController.deleteAddress);
+
 export default router;

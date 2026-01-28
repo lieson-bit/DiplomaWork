@@ -71,6 +71,13 @@ async function makeRequest<T = any>(
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
+    
+    if (service === 'customer' && body && method !== 'GET' && method !== 'DELETE') {
+      const currentUser = getCurrentUser();
+      if (currentUser?.id && !body.userId) {
+        body = { ...body, userId: currentUser.id };
+      }
+    }
 
     const url = `${baseUrl}${endpoint}`;
     const config: RequestInit = {
@@ -287,6 +294,10 @@ export const authApi = {
   getCurrentUser: async () => {
     return makeRequest('/api/auth/profile', 'GET', undefined, 'user');
   },
+
+   getUserById: async (userId: string) => {
+    return makeRequest(`/api/users/${userId}`, 'GET', undefined, 'user');
+  },
 };
 
 // ==========================================
@@ -417,13 +428,39 @@ export const customerApi = {
   getProfile: async () => {
     return makeRequest('/api/customers/profile', 'GET', undefined, 'customer');
   },
-
   createProfile: async (data: any) => {
     return makeRequest('/api/customers/profile', 'POST', data, 'customer');
   },
-
   updateProfile: async (data: any) => {
     return makeRequest('/api/customers/profile', 'PUT', data, 'customer');
+  },
+  uploadProfilePicture: async (formData: FormData) => {
+    return makeUploadRequest('/api/customers/profile-picture', formData, 'customer');
+  },
+  addAddress: async (data: any) => {
+    return makeRequest('/api/customers/addresses', 'POST', data, 'customer');
+  },
+  updateAddress: async (id: string, data: any) => {
+    return makeRequest(`/api/customers/addresses/${id}`, 'PUT', data, 'customer');
+  },
+  // Get all addresses
+  getAddresses: async () => {
+    return makeRequest('/api/customers/addresses', 'GET', undefined, 'customer');
+  },
+
+  // Delete address
+  deleteAddress: async (id: string) => {
+    return makeRequest(`/api/customers/addresses/${id}`, 'DELETE', undefined, 'customer');
+  },
+
+  // Update preferences (optional but useful)
+  updatePreferences: async (data: any) => {
+    return makeRequest('/api/customers/preferences', 'PUT', data, 'customer');
+  },
+
+  // Get stats (member since, order count, etc.)
+  getStats: async () => {
+    return makeRequest('/api/customers/stats', 'GET', undefined, 'customer');
   },
 };
 

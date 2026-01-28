@@ -21,7 +21,12 @@ app.use(morgan('combined', { stream: { write: (message) => logger.http(message.t
 
 // Serve uploaded files
 const uploadPath = process.env.UPLOAD_PATH || './src/uploads';
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+//app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || 'http://localhost:3000');
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  express.static(path.join(process.cwd(), 'uploads'))(req, res, next);
+});
 
 // Routes
 app.use('/api/customers', customerRoutes);

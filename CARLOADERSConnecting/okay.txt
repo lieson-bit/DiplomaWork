@@ -1799,7 +1799,7 @@ export function CustomerBooking() {
 `components\CustomerOnboarding.tsx`:
 
 ```tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -1809,65 +1809,87 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Checkbox } from "./ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
 import { Progress } from "./ui/progress";
-import { Package, Building, User, MapPin, Bell, CreditCard, CheckCircle } from 'lucide-react';
+import { Package, Building, User, MapPin, Bell, CreditCard, CheckCircle, Calendar } from 'lucide-react';
+import { toast } from "sonner";
+import { customerApi }  from '../src/lib/api'; 
 
 interface CustomerOnboardingProps {
   onComplete: () => void;
+  userInfo?: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string;
+  };
 }
 
-interface CustomerProfile {
-  // Account Type
-  accountType: 'personal' | 'business';
-  
-  // Personal/Business Info
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  
-  // Business Info (if applicable)
-  businessName: string;
-  businessType: string;
-  businessAddress: string;
-  businessPhone: string;
-  
-  // Shipping Preferences
-  defaultPickupAddress: string;
-  preferredDeliveryAreas: string[];
-  frequentlyShippedItems: string[];
-  
-  // Notification Preferences
-  emailNotifications: boolean;
-  smsNotifications: boolean;
-  pushNotifications: boolean;
-  
-  // Billing Preferences
-  billingAddress: string;
-  paymentMethod: string;
-  invoiceEmails: boolean;
+interface AddressData {
+  label: string;
+  address: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+  isDefault: boolean;
+  notes?: string;
 }
 
-export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
+export function CustomerOnboarding({ onComplete, userInfo }: CustomerOnboardingProps) {
   const [currentStep, setCurrentStep] = useState(1);
+  const [loading, setLoading] = useState(false);
   const [profile, setProfile] = useState({
-    accountType: 'personal',
-    firstName: '',
-    lastName: '',
-    email: '',
-    phone: '',
+    // Personal Info (from user service)
+    firstName: userInfo?.firstName || '',
+    lastName: userInfo?.lastName || '',
+    email: userInfo?.email || '',
+    phone: userInfo?.phone || '',
+    
+    // Customer-specific fields
+    accountType: 'personal' as 'personal' | 'business',
+    dateOfBirth: '',
+    
+    // Business Info
     businessName: '',
     businessType: '',
-    businessAddress: '',
     businessPhone: '',
-    defaultPickupAddress: '',
-    preferredDeliveryAreas: [],
-    frequentlyShippedItems: [],
-    emailNotifications: true,
-    smsNotifications: true,
-    pushNotifications: true,
-    billingAddress: '',
-    paymentMethod: '',
-    invoiceEmails: true
+    taxId: '',
+    
+    // Addresses
+    addresses: [
+      {
+        id: 'home',
+        label: 'Home',
+        address: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: 'US',
+        isDefault: true,
+        notes: ''
+      },
+      {
+        label: 'Office',
+        address: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: 'US',
+        isDefault: false,
+        notes: ''
+      }
+    ] as AddressData[],
+    
+    // Preferences
+    preferences: {
+      notificationEmail: true,
+      notificationSMS: true,
+      notificationPush: true,
+      shareLocationData: false,
+      shareUsageAnalytics: false,
+      marketingEmails: false,
+      language: 'en',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    }
   });
 
   const totalSteps = 4;
@@ -1885,24 +1907,28 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
     'Other'
   ];
 
-  const commonItems = [
-    'Documents',
-    'Small Packages',
-    'Electronics',
-    'Clothing',
-    'Food & Beverages',
-    'Furniture',
-    'Medical Supplies',
-    'Books & Media',
-    'Automotive Parts',
-    'Office Supplies'
-  ];
+  useEffect(() => {
+    if (userInfo) {
+      setProfile(prev => ({
+        ...prev,
+        firstName: userInfo.firstName,
+        lastName: userInfo.lastName,
+        email: userInfo.email,
+        phone: userInfo.phone || ''
+      }));
+    }
+  }, [userInfo]);
 
   const nextStep = () => {
+    // Validate current step before proceeding
+    if (currentStep === 1 && !validateStep1()) return;
+    if (currentStep === 2 && !validateStep2()) return;
+    if (currentStep === 3 && !validateStep3()) return;
+    
     if (currentStep < totalSteps) {
       setCurrentStep(currentStep + 1);
     } else {
-      onComplete();
+      handleComplete();
     }
   };
 
@@ -1912,13 +1938,103 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
     }
   };
 
-  const handleItemToggle = (item: string) => {
-    setProfile(prev => ({
-      ...prev,
-      frequentlyShippedItems: prev.frequentlyShippedItems.includes(item)
-        ? prev.frequentlyShippedItems.filter(i => i !== item)
-        : [...prev.frequentlyShippedItems, item]
-    }));
+  const validateStep1 = () => {
+    if (!profile.firstName.trim() || !profile.lastName.trim() || !profile.email.trim()) {
+      toast.error('Please fill in all required personal information');
+      return false;
+    }
+    if (profile.accountType === 'business' && !profile.businessName.trim()) {
+      toast.error('Business name is required for business accounts');
+      return false;
+    }
+    return true;
+  };
+
+  const validateStep2 = () => {
+    // Check if at least one address is provided
+    const hasAddress = profile.addresses.some(addr => 
+      addr.address.trim() && addr.city.trim() && addr.state.trim() && addr.postalCode.trim()
+    );
+    if (!hasAddress) {
+      toast.error('Please provide at least one complete address');
+      return false;
+    }
+    return true;
+  };
+
+  const validateStep3 = () => {
+    // Preferences are optional, but validate date if provided
+    if (profile.dateOfBirth) {
+      const dob = new Date(profile.dateOfBirth);
+      const today = new Date();
+      if (dob > today) {
+        toast.error('Date of birth cannot be in the future');
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleComplete = async () => {
+    setLoading(true);
+    try {
+      // 1. Create customer profile
+      const profileData = {
+        accountType: profile.accountType,
+        dateOfBirth: profile.dateOfBirth || undefined,
+        ...(profile.accountType === 'business' && {
+          businessName: profile.businessName,
+          businessType: profile.businessType,
+          businessPhone: profile.businessPhone,
+          taxId: profile.taxId || undefined
+        })
+      };
+
+      const profileResponse = await customerApi.createProfile(profileData);
+      if (!profileResponse.success) {
+        throw new Error(profileResponse.error || 'Failed to create profile');
+      }
+
+      // 2. Add addresses
+      const validAddresses = profile.addresses.filter(addr => 
+        addr.address.trim() && addr.city.trim() && addr.state.trim() && addr.postalCode.trim()
+      );
+
+      for (const address of validAddresses) {
+        await customerApi.addAddress(address);
+      }
+
+      // 3. Update preferences
+      await customerApi.updatePreferences(profile.preferences);
+
+      toast.success('Profile created successfully!');
+      onComplete();
+    } catch (error: any) {
+      console.error('Onboarding failed:', error);
+      toast.error(error.message || 'Failed to create profile');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateAddress = (index: number, field: keyof AddressData, value: string | boolean) => {
+    setProfile(prev => {
+      const newAddresses = [...prev.addresses];
+      
+      if (field === 'isDefault' && value === true) {
+        // Set all other addresses to non-default
+        newAddresses.forEach(addr => {
+          addr.isDefault = false;
+        });
+      }
+      
+      newAddresses[index] = {
+        ...newAddresses[index],
+        [field]: value
+      };
+      
+      return { ...prev, addresses: newAddresses };
+    });
   };
 
   const renderStep = () => {
@@ -1937,7 +2053,9 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
               <Label>Account Type</Label>
               <RadioGroup
                 value={profile.accountType}
-                onValueChange={(value: 'personal' | 'business') => setProfile({...profile, accountType: value})}
+                onValueChange={(value: 'personal' | 'business') => 
+                  setProfile({...profile, accountType: value})
+                }
               >
                 <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-gray-50">
                   <RadioGroupItem value="personal" id="personal" />
@@ -1966,45 +2084,64 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
+                  <Label htmlFor="firstName">First Name *</Label>
                   <Input
                     id="firstName"
                     value={profile.firstName}
                     onChange={(e) => setProfile({...profile, firstName: e.target.value})}
                     placeholder="John"
+                    required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
+                  <Label htmlFor="lastName">Last Name *</Label>
                   <Input
                     id="lastName"
                     value={profile.lastName}
                     onChange={(e) => setProfile({...profile, lastName: e.target.value})}
                     placeholder="Doe"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email *</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={profile.email}
+                    onChange={(e) => setProfile({...profile, email: e.target.value})}
+                    placeholder="john@example.com"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone Number</Label>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    value={profile.phone}
+                    onChange={(e) => setProfile({...profile, phone: e.target.value})}
+                    placeholder="+1 (555) 123-4567"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={profile.email}
-                  onChange={(e) => setProfile({...profile, email: e.target.value})}
-                  placeholder="john@example.com"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  value={profile.phone}
-                  onChange={(e) => setProfile({...profile, phone: e.target.value})}
-                  placeholder="+1 (555) 123-4567"
-                />
+                <Label htmlFor="dateOfBirth">Date of Birth</Label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                  <Input
+                    id="dateOfBirth"
+                    type="date"
+                    value={profile.dateOfBirth}
+                    onChange={(e) => setProfile({...profile, dateOfBirth: e.target.value})}
+                    className="pl-10"
+                  />
+                </div>
               </div>
             </div>
 
@@ -2014,40 +2151,45 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
                 <h4 className="font-medium text-blue-900">Business Information</h4>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="businessName">Business Name</Label>
+                  <Label htmlFor="businessName">Business Name *</Label>
                   <Input
                     id="businessName"
                     value={profile.businessName}
                     onChange={(e) => setProfile({...profile, businessName: e.target.value})}
                     placeholder="Acme Corporation"
+                    required
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="businessType">Business Type</Label>
-                  <Select value={profile.businessType} onValueChange={(value) => setProfile({...profile, businessType: value})}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select business type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {businessTypes.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="businessType">Business Type</Label>
+                    <Select 
+                      value={profile.businessType} 
+                      onValueChange={(value) => setProfile({...profile, businessType: value})}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select business type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {businessTypes.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="businessAddress">Business Address</Label>
-                  <Textarea
-                    id="businessAddress"
-                    value={profile.businessAddress}
-                    onChange={(e) => setProfile({...profile, businessAddress: e.target.value})}
-                    placeholder="123 Business St, City, State, ZIP"
-                    rows={2}
-                  />
+                  <div className="space-y-2">
+                    <Label htmlFor="taxId">Tax ID</Label>
+                    <Input
+                      id="taxId"
+                      value={profile.taxId}
+                      onChange={(e) => setProfile({...profile, taxId: e.target.value})}
+                      placeholder="XX-XXXXXXX"
+                    />
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -2070,57 +2212,86 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
           <div className="space-y-6">
             <div className="text-center">
               <MapPin className="mx-auto h-12 w-12 text-blue-600 mb-4" />
-              <h3 className="text-xl mb-2">Shipping Preferences</h3>
-              <p className="text-gray-600">Set up your default shipping preferences</p>
+              <h3 className="text-xl mb-2">Addresses</h3>
+              <p className="text-gray-600">Add your shipping addresses</p>
             </div>
 
             <div className="space-y-6">
-              <div className="space-y-2">
-                <Label htmlFor="defaultPickup">Default Pickup Address</Label>
-                <Textarea
-                  id="defaultPickup"
-                  value={profile.defaultPickupAddress}
-                  onChange={(e) => setProfile({...profile, defaultPickupAddress: e.target.value})}
-                  placeholder="Enter your most common pickup location"
-                  rows={2}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="deliveryAreas">Preferred Delivery Areas</Label>
-                <Textarea
-                  id="deliveryAreas"
-                  value={profile.preferredDeliveryAreas.join(', ')}
-                  onChange={(e) => setProfile({...profile, preferredDeliveryAreas: e.target.value.split(', ').filter(Boolean)})}
-                  placeholder="Enter areas where you frequently send deliveries (e.g., Downtown, Uptown, Westside)"
-                  rows={2}
-                />
-              </div>
-
-              <div className="space-y-3">
-                <Label>Items You Frequently Ship</Label>
-                <div className="grid grid-cols-2 gap-3">
-                  {commonItems.map((item) => (
-                    <div
-                      key={item}
-                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
-                        profile.frequentlyShippedItems.includes(item)
-                          ? 'bg-blue-50 border-blue-200'
-                          : 'hover:bg-gray-50'
-                      }`}
-                      onClick={() => handleItemToggle(item)}
-                    >
+              {profile.addresses.map((address, index) => (
+                <Card key={address.id}>
+                  <CardHeader>
+                    <CardTitle className="text-base flex justify-between items-center">
+                      <span>{address.label} Address</span>
                       <div className="flex items-center space-x-2">
                         <Checkbox
-                          checked={profile.frequentlyShippedItems.includes(item)}
-                          readOnly
+                          checked={address.isDefault}
+                          onCheckedChange={(checked) => 
+                            updateAddress(index, 'isDefault', checked === true)
+                          }
+                          id={`default-${address.id}`}
                         />
-                        <span className="text-sm">{item}</span>
+                        <Label htmlFor={`default-${address.id}`} className="text-sm">
+                          Set as default
+                        </Label>
+                      </div>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="space-y-2">
+                      <Label htmlFor={`address-${address.id}`}>Street Address</Label>
+                      <Input
+                        id={`address-${address.id}`}
+                        value={address.address}
+                        onChange={(e) => updateAddress(index, 'address', e.target.value)}
+                        placeholder="123 Main St"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor={`city-${address.id}`}>City</Label>
+                        <Input
+                          id={`city-${address.id}`}
+                          value={address.city}
+                          onChange={(e) => updateAddress(index, 'city', e.target.value)}
+                          placeholder="New York"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`state-${address.id}`}>State</Label>
+                        <Input
+                          id={`state-${address.id}`}
+                          value={address.state}
+                          onChange={(e) => updateAddress(index, 'state', e.target.value)}
+                          placeholder="NY"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor={`postalCode-${address.id}`}>ZIP Code</Label>
+                        <Input
+                          id={`postalCode-${address.id}`}
+                          value={address.postalCode}
+                          onChange={(e) => updateAddress(index, 'postalCode', e.target.value)}
+                          placeholder="10001"
+                        />
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`notes-${address.id}`}>Notes (Optional)</Label>
+                      <Textarea
+                        id={`notes-${address.id}`}
+                        value={address.notes || ''}
+                        onChange={(e) => updateAddress(index, 'notes', e.target.value)}
+                        placeholder="e.g., Leave at front desk, Ring bell twice"
+                        rows={2}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           </div>
         );
@@ -2130,8 +2301,8 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
           <div className="space-y-6">
             <div className="text-center">
               <Bell className="mx-auto h-12 w-12 text-blue-600 mb-4" />
-              <h3 className="text-xl mb-2">Notification Preferences</h3>
-              <p className="text-gray-600">Choose how you want to receive updates</p>
+              <h3 className="text-xl mb-2">Preferences</h3>
+              <p className="text-gray-600">Set your notification and privacy preferences</p>
             </div>
 
             <div className="space-y-6">
@@ -2145,8 +2316,14 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
                       <div className="text-sm text-gray-600">Order confirmations, delivery updates</div>
                     </div>
                     <Checkbox
-                      checked={profile.emailNotifications}
-                      onCheckedChange={(checked) => setProfile({...profile, emailNotifications: checked === true})}
+                      checked={profile.preferences.notificationEmail}
+                      onCheckedChange={(checked) => setProfile({
+                        ...profile,
+                        preferences: {
+                          ...profile.preferences,
+                          notificationEmail: checked === true
+                        }
+                      })}
                     />
                   </div>
 
@@ -2156,8 +2333,14 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
                       <div className="text-sm text-gray-600">Real-time delivery updates</div>
                     </div>
                     <Checkbox
-                      checked={profile.smsNotifications}
-                      onCheckedChange={(checked) => setProfile({...profile, smsNotifications: checked === true})}
+                      checked={profile.preferences.notificationSMS}
+                      onCheckedChange={(checked) => setProfile({
+                        ...profile,
+                        preferences: {
+                          ...profile.preferences,
+                          notificationSMS: checked === true
+                        }
+                      })}
                     />
                   </div>
 
@@ -2167,29 +2350,75 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
                       <div className="text-sm text-gray-600">App notifications on your device</div>
                     </div>
                     <Checkbox
-                      checked={profile.pushNotifications}
-                      onCheckedChange={(checked) => setProfile({...profile, pushNotifications: checked === true})}
+                      checked={profile.preferences.notificationPush}
+                      onCheckedChange={(checked) => setProfile({
+                        ...profile,
+                        preferences: {
+                          ...profile.preferences,
+                          notificationPush: checked === true
+                        }
+                      })}
                     />
                   </div>
                 </div>
               </div>
 
-              {profile.accountType === 'business' && (
-                <div className="space-y-4 p-4 bg-green-50 rounded-lg">
-                  <h4 className="font-medium text-green-900">Business Features</h4>
-                  
+              <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
+                <h4 className="font-medium">Privacy Settings</h4>
+                
+                <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="font-medium">Invoice Emails</div>
-                      <div className="text-sm text-gray-600">Monthly billing statements</div>
+                      <div className="font-medium">Share Location Data</div>
+                      <div className="text-sm text-gray-600">Allow us to use your location for better delivery estimates</div>
                     </div>
                     <Checkbox
-                      checked={profile.invoiceEmails}
-                      onCheckedChange={(checked) => setProfile({...profile, invoiceEmails: checked === true})}
+                      checked={profile.preferences.shareLocationData}
+                      onCheckedChange={(checked) => setProfile({
+                        ...profile,
+                        preferences: {
+                          ...profile.preferences,
+                          shareLocationData: checked === true
+                        }
+                      })}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">Share Usage Analytics</div>
+                      <div className="text-sm text-gray-600">Help us improve our service by sharing anonymous usage data</div>
+                    </div>
+                    <Checkbox
+                      checked={profile.preferences.shareUsageAnalytics}
+                      onCheckedChange={(checked) => setProfile({
+                        ...profile,
+                        preferences: {
+                          ...profile.preferences,
+                          shareUsageAnalytics: checked === true
+                        }
+                      })}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-medium">Marketing Emails</div>
+                      <div className="text-sm text-gray-600">Receive promotions, tips, and news about our service</div>
+                    </div>
+                    <Checkbox
+                      checked={profile.preferences.marketingEmails}
+                      onCheckedChange={(checked) => setProfile({
+                        ...profile,
+                        preferences: {
+                          ...profile.preferences,
+                          marketingEmails: checked === true
+                        }
+                      })}
                     />
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
         );
@@ -2206,19 +2435,25 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
             <div className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Account Information</CardTitle>
+                  <CardTitle className="text-base">Personal Information</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2 text-sm">
                   <div className="grid grid-cols-2 gap-4">
                     <div><span className="text-gray-600">Name:</span> {profile.firstName} {profile.lastName}</div>
                     <div><span className="text-gray-600">Account Type:</span> {profile.accountType}</div>
                     <div><span className="text-gray-600">Email:</span> {profile.email}</div>
-                    <div><span className="text-gray-600">Phone:</span> {profile.phone}</div>
+                    <div><span className="text-gray-600">Phone:</span> {profile.phone || 'Not provided'}</div>
+                    {profile.dateOfBirth && (
+                      <div><span className="text-gray-600">Date of Birth:</span> {new Date(profile.dateOfBirth).toLocaleDateString()}</div>
+                    )}
                   </div>
                   {profile.accountType === 'business' && profile.businessName && (
                     <div className="pt-2 border-t">
                       <div><span className="text-gray-600">Business:</span> {profile.businessName}</div>
-                      <div><span className="text-gray-600">Type:</span> {profile.businessType}</div>
+                      <div><span className="text-gray-600">Type:</span> {profile.businessType || 'Not specified'}</div>
+                      {profile.taxId && (
+                        <div><span className="text-gray-600">Tax ID:</span> {profile.taxId}</div>
+                      )}
                     </div>
                   )}
                 </CardContent>
@@ -2226,31 +2461,49 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Shipping Preferences</CardTitle>
+                  <CardTitle className="text-base">Addresses</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <div><span className="text-gray-600">Default Pickup:</span> {profile.defaultPickupAddress || 'Not set'}</div>
-                  <div><span className="text-gray-600">Preferred Areas:</span> {profile.preferredDeliveryAreas.join(', ') || 'Not set'}</div>
-                  <div><span className="text-gray-600">Common Items:</span> {profile.frequentlyShippedItems.slice(0, 3).join(', ')}{profile.frequentlyShippedItems.length > 3 ? '...' : ''}</div>
+                <CardContent className="space-y-4 text-sm">
+                  {profile.addresses.map((address, index) => (
+                    <div key={address.id} className={`p-3 rounded ${address.isDefault ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-medium">{address.label} {address.isDefault && '(Default)'}</div>
+                          {address.address && (
+                            <>
+                              <div>{address.address}</div>
+                              <div>{address.city}, {address.state} {address.postalCode}</div>
+                            </>
+                          )}
+                          {!address.address && (
+                            <div className="text-gray-500 italic">Not provided</div>
+                          )}
+                          {address.notes && (
+                            <div className="text-gray-600 mt-1">Note: {address.notes}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Notifications</CardTitle>
+                  <CardTitle className="text-base">Notification Preferences</CardTitle>
                 </CardHeader>
                 <CardContent className="text-sm">
                   <div className="grid grid-cols-3 gap-4">
                     <div className="flex items-center space-x-2">
-                      <CheckCircle className={`h-4 w-4 ${profile.emailNotifications ? 'text-green-600' : 'text-gray-400'}`} />
+                      <CheckCircle className={`h-4 w-4 ${profile.preferences.notificationEmail ? 'text-green-600' : 'text-gray-400'}`} />
                       <span>Email</span>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <CheckCircle className={`h-4 w-4 ${profile.smsNotifications ? 'text-green-600' : 'text-gray-400'}`} />
+                      <CheckCircle className={`h-4 w-4 ${profile.preferences.notificationSMS ? 'text-green-600' : 'text-gray-400'}`} />
                       <span>SMS</span>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <CheckCircle className={`h-4 w-4 ${profile.pushNotifications ? 'text-green-600' : 'text-gray-400'}`} />
+                      <CheckCircle className={`h-4 w-4 ${profile.preferences.notificationPush ? 'text-green-600' : 'text-gray-400'}`} />
                       <span>Push</span>
                     </div>
                   </div>
@@ -2265,7 +2518,11 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
                   <li>• Track your deliveries in real-time</li>
                   <li>• Rate and review drivers</li>
                   {profile.accountType === 'business' && (
-                    <li>• Access business analytics and reporting</li>
+                    <>
+                      <li>• Access business analytics and reporting</li>
+                      <li>• Set up team members and permissions</li>
+                      <li>• Generate monthly invoices</li>
+                    </>
                   )}
                 </ul>
               </div>
@@ -2302,16 +2559,33 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
           <Button
             variant="outline"
             onClick={prevStep}
-            disabled={currentStep === 1}
+            disabled={currentStep === 1 || loading}
           >
             Previous
           </Button>
           <Button
             onClick={nextStep}
+            disabled={loading}
             className="bg-blue-600 hover:bg-blue-700"
           >
-            {currentStep === totalSteps ? 'Complete Setup' : 'Next Step'}
+            {loading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-3 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Processing...
+              </>
+            ) : currentStep === totalSteps ? (
+              'Complete Setup'
+            ) : (
+              'Next Step'
+            )}
           </Button>
+        </div>
+
+        <div className="mt-4 text-center text-sm text-gray-500">
+          Step {currentStep} of {totalSteps} • Fields marked with * are required
         </div>
       </div>
     </div>
@@ -2322,7 +2596,7 @@ export function CustomerOnboarding({ onComplete }: CustomerOnboardingProps) {
 `components\CustomerProfile.tsx`:
 
 ```tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -2332,221 +2606,398 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Badge } from "./ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Switch } from "./ui/switch";
-import { Avatar, AvatarContent, AvatarFallback } from "./ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
-import { User, Building, CreditCard, MapPin, Phone, Mail, Calendar, Settings, Bell, Star, Package, DollarSign, Trash2, Plus } from 'lucide-react';
+import { User, Building, CreditCard, MapPin, Phone, Mail, Calendar, Settings, Bell, Star, Package, DollarSign, Trash2, Plus, Edit2, Camera, Save, X, Loader2 } from 'lucide-react';
+import { toast } from "sonner";
+import { useCustomerProfile } from '../src/hooks/useCustomerProfile';
+import { customerApi } from '../src/lib/api';
 
 interface Address {
   id: string;
   label: string;
   address: string;
+  city: string;
+  state: string;
+  country: string;
+  postalCode: string;
   isDefault: boolean;
+  isActive: boolean;
+  notes?: string;
 }
 
 interface PaymentMethod {
   id: string;
-  type: 'card' | 'paypal' | 'bank';
+  type: string;
+  provider: string;
   last4?: string;
-  brand?: string;
-  email?: string;
   isDefault: boolean;
+  isActive: boolean;
 }
 
-interface CustomerData {
+interface Preferences {
+  notificationEmail: boolean;
+  notificationSMS: boolean;
+  notificationPush: boolean;
+  shareLocationData: boolean;
+  shareUsageAnalytics: boolean;
+  marketingEmails: boolean;
+}
+
+interface CustomerProfileData {
   personalInfo: {
     firstName: string;
     lastName: string;
     email: string;
-    phone: string;
-    dateOfBirth: string;
-    joinDate: string;
+    phone?: string;
+    dateOfBirth?: string;
   };
   businessInfo?: {
-    businessName: string;
-    businessType: string;
-    businessAddress: string;
-    businessPhone: string;
-    taxId: string;
+    businessName?: string;
+    businessType?: string;
+    businessPhone?: string;
+    taxId?: string;
   };
-  addresses: Address[];
-  paymentMethods: PaymentMethod[];
-  preferences: {
-    defaultPickupType: 'home' | 'business' | 'other';
-    notifications: {
-      email: boolean;
-      sms: boolean;
-      push: boolean;
-    };
-    privacy: {
-      shareLocationData: boolean;
-      shareUsageAnalytics: boolean;
-      marketingEmails: boolean;
-    };
-  };
-  stats: {
+  accountInfo: {
+    accountType: 'personal' | 'business';
+    joinDate: string;
     totalOrders: number;
     totalSpent: number;
     averageRating: number;
-    memberSince: string;
+    loyaltyPoints: number;
+    membershipLevel: string;
+    status: string;
+    profilePictureUrl?: string;
   };
-  accountType: 'personal' | 'business';
+  addresses: Address[];
+  paymentMethods: PaymentMethod[];
+  preferences: Preferences;
 }
 
 export function CustomerProfile() {
   const [activeTab, setActiveTab] = useState('personal');
-  const [isEditing, setIsEditing] = useState(false);
-  const [customerData, setCustomerData] = useState<CustomerData>({
-    personalInfo: {
-      firstName: 'Sarah',
-      lastName: 'Johnson',
-      email: 'sarah.johnson@email.com',
-      phone: '+1 (555) 987-6543',
-      dateOfBirth: '1990-07-22',
-      joinDate: '2023-06-15'
-    },
-    businessInfo: {
-      businessName: 'Johnson Consulting LLC',
-      businessType: 'Professional Services',
-      businessAddress: '456 Business Ave, Suite 200, City 10002',
-      businessPhone: '+1 (555) 987-6544',
-      taxId: 'XX-XXXXXXX'
-    },
-    addresses: [
-      {
-        id: 'ADDR1',
-        label: 'Home',
-        address: '789 Residential St, Apt 4B, City 10003',
-        isDefault: true
-      },
-      {
-        id: 'ADDR2',
-        label: 'Office',
-        address: '456 Business Ave, Suite 200, City 10002',
-        isDefault: false
-      }
-    ],
-    paymentMethods: [
-      {
-        id: 'PM1',
-        type: 'card',
-        last4: '4242',
-        brand: 'Visa',
-        isDefault: true
-      },
-      {
-        id: 'PM2',
-        type: 'paypal',
-        email: 'sarah.johnson@email.com',
-        isDefault: false
-      }
-    ],
-    preferences: {
-      defaultPickupType: 'home',
-      notifications: {
-        email: true,
-        sms: true,
-        push: true
-      },
-      privacy: {
-        shareLocationData: true,
-        shareUsageAnalytics: false,
-        marketingEmails: false
-      }
-    },
-    stats: {
-      totalOrders: 45,
-      totalSpent: 2350,
-      averageRating: 4.8,
-      memberSince: '2023-06-15'
-    },
-    accountType: 'business'
+  const [isEditingPersonal, setIsEditingPersonal] = useState(false);
+  const [isEditingBusiness, setIsEditingBusiness] = useState(false);
+  const [editingAddressId, setEditingAddressId] = useState<string | null>(null);
+  const [showAddAddress, setShowAddAddress] = useState(false);
+  const [newAddress, setNewAddress] = useState<Partial<Address>>({
+    label: 'Home',
+    address: '',
+    city: '',
+    state: '',
+    country: 'US',
+    postalCode: '',
+    isDefault: false,
+    isActive: true
   });
+  const [isUploadingPicture, setIsUploadingPicture] = useState(false);
+  
+  const {
+    customerData,
+    loading,
+    loadProfile,
+    updateProfile,
+    uploadProfilePicture,
+    addAddress,
+    updateAddress,
+    deleteAddress
+  } = useCustomerProfile();
 
-  const addAddress = () => {
-    const newAddress: Address = {
-      id: `ADDR${customerData.addresses.length + 1}`,
-      label: 'New Address',
-      address: '',
-      isDefault: false
+  // Transform API data to UI format
+  const [uiData, setUiData] = useState<CustomerProfileData | null>(null);
+  const [tempPersonalData, setTempPersonalData] = useState<any>(null);
+  const [tempBusinessData, setTempBusinessData] = useState<any>(null);
+
+  useEffect(() => {
+    if (customerData) {
+      const formattedData: CustomerProfileData = {
+        personalInfo: {
+          firstName: customerData.userInfo?.firstName || customerData.customer?.firstName || '',
+          lastName: customerData.userInfo?.lastName || customerData.customer?.lastName || '',
+          email: customerData.userInfo?.email || customerData.customer?.email || '',
+          phone: customerData.userInfo?.phone || customerData.customer?.phoneNumber || '',
+          dateOfBirth: customerData.customer?.dateOfBirth 
+            ? new Date(customerData.customer.dateOfBirth).toISOString().split('T')[0]
+            : ''
+        },
+        businessInfo: customerData.customer?.accountType === 'business' ? {
+          businessName: customerData.customer.businessName || '',
+          businessType: customerData.customer.businessType || '',
+          businessPhone: customerData.customer.businessPhone || '',
+          taxId: customerData.customer.taxId || ''
+        } : undefined,
+        accountInfo: {
+          accountType: customerData.customer?.accountType || 'personal',
+          joinDate: customerData.customer?.joinDate 
+            ? new Date(customerData.customer.joinDate).toLocaleDateString()
+            : new Date().toLocaleDateString(),
+          totalOrders: customerData.customer?.totalOrders || 0,
+          totalSpent: customerData.customer?.totalSpent || 0,
+          averageRating: customerData.customer?.averageRating || 0,
+          loyaltyPoints: customerData.customer?.loyaltyPoints || 0,
+          membershipLevel: customerData.customer?.membershipLevel || 'standard',
+          status: customerData.customer?.status || 'active',
+          profilePictureUrl: customerData.customer?.profilePictureUrl
+        },
+        addresses: (customerData.addresses || []).map(addr => ({
+          id: addr.id,
+          label: addr.label,
+          address: addr.address,
+          city: addr.city,
+          state: addr.state,
+          country: addr.country,
+          postalCode: addr.postalCode,
+          isDefault: addr.isDefault,
+          isActive: addr.isActive,
+          notes: addr.notes
+        })),
+        paymentMethods: (customerData.paymentMethods || []).map(pm => ({
+          id: pm.id,
+          type: pm.type,
+          provider: pm.provider,
+          last4: pm.last4,
+          isDefault: pm.isDefault,
+          isActive: pm.isActive
+        })),
+        preferences: {
+          notificationEmail: customerData.preferences?.notificationEmail !== false,
+          notificationSMS: customerData.preferences?.notificationSMS !== false,
+          notificationPush: customerData.preferences?.notificationPush !== false,
+          shareLocationData: customerData.preferences?.shareLocationData || false,
+          shareUsageAnalytics: customerData.preferences?.shareUsageAnalytics || false,
+          marketingEmails: customerData.preferences?.marketingEmails || false
+        }
+      };
+      
+      setUiData(formattedData);
+      setTempPersonalData(formattedData.personalInfo);
+      setTempBusinessData(formattedData.businessInfo);
+    }
+  }, [customerData]);
+
+  // Handle profile picture upload
+  const handleProfilePictureChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+
+    setIsUploadingPicture(true);
+    try {
+      const success = await uploadProfilePicture(file);
+      if (success) {
+        toast.success('Profile picture updated successfully');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to upload profile picture');
+    } finally {
+      setIsUploadingPicture(false);
+    }
+  };
+
+  // Handle personal info update
+  const handleSavePersonalInfo = async () => {
+    if (!uiData || !tempPersonalData) return;
+
+    const updateData = {
+      dateOfBirth: tempPersonalData.dateOfBirth || undefined
     };
-    setCustomerData({
-      ...customerData,
-      addresses: [...customerData.addresses, newAddress]
-    });
+
+    const success = await updateProfile(updateData);
+    if (success) {
+      setIsEditingPersonal(false);
+      toast.success('Personal information updated successfully');
+    }
   };
 
-  const removeAddress = (id: string) => {
-    setCustomerData({
-      ...customerData,
-      addresses: customerData.addresses.filter(addr => addr.id !== id)
-    });
+  // Handle business info update
+  const handleSaveBusinessInfo = async () => {
+    if (!uiData || !tempBusinessData) return;
+
+    const updateData = {
+      accountType: uiData.accountInfo.accountType,
+      businessName: tempBusinessData.businessName || undefined,
+      businessType: tempBusinessData.businessType || undefined,
+      businessPhone: tempBusinessData.businessPhone || undefined,
+      taxId: tempBusinessData.taxId || undefined
+    };
+
+    const success = await updateProfile(updateData);
+    if (success) {
+      setIsEditingBusiness(false);
+      toast.success('Business information updated successfully');
+    }
   };
 
-  const setDefaultAddress = (id: string) => {
-    setCustomerData({
-      ...customerData,
-      addresses: customerData.addresses.map(addr => ({
-        ...addr,
-        isDefault: addr.id === id
-      }))
-    });
+  // Handle address operations
+  const handleAddAddress = async () => {
+    if (!newAddress.label || !newAddress.address || !newAddress.city || !newAddress.state || !newAddress.postalCode) {
+      toast.error('Please fill all required address fields');
+      return;
+    }
+
+    const addressData = {
+      label: newAddress.label,
+      address: newAddress.address,
+      city: newAddress.city,
+      state: newAddress.state,
+      country: newAddress.country || 'US',
+      postalCode: newAddress.postalCode,
+      isDefault: newAddress.isDefault || false,
+      notes: newAddress.notes
+    };
+
+    const success = await addAddress(addressData);
+    if (success) {
+      setShowAddAddress(false);
+      setNewAddress({
+        label: 'Home',
+        address: '',
+        city: '',
+        state: '',
+        country: 'US',
+        postalCode: '',
+        isDefault: false,
+        isActive: true
+      });
+      toast.success('Address added successfully');
+    }
   };
 
-  const addPaymentMethod = () => {
-    // This would open a payment method setup dialog
-    alert('Payment method setup would open here');
+  const handleUpdateAddress = async (address: Address) => {
+    const success = await updateAddress(address.id, {
+      label: address.label,
+      address: address.address,
+      city: address.city,
+      state: address.state,
+      country: address.country,
+      postalCode: address.postalCode,
+      isDefault: address.isDefault,
+      notes: address.notes
+    });
+
+    if (success) {
+      setEditingAddressId(null);
+      toast.success('Address updated successfully');
+    }
   };
 
-  const removePaymentMethod = (id: string) => {
-    setCustomerData({
-      ...customerData,
-      paymentMethods: customerData.paymentMethods.filter(pm => pm.id !== id)
-    });
+  const handleDeleteAddress = async (id: string) => {
+    if (!uiData || uiData.addresses.length <= 1) {
+      toast.error('Cannot delete the only address');
+      return;
+    }
+
+    try {
+      await customerApi.deleteAddress(id);
+      await loadProfile();
+      toast.success('Address deleted successfully');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to delete address');
+    }
   };
 
-  const setDefaultPaymentMethod = (id: string) => {
-    setCustomerData({
-      ...customerData,
-      paymentMethods: customerData.paymentMethods.map(pm => ({
-        ...pm,
-        isDefault: pm.id === id
-      }))
-    });
+  const handleSetDefaultAddress = async (id: string) => {
+    const address = uiData?.addresses.find(addr => addr.id === id);
+    if (!address) return;
+
+    const success = await updateAddress(id, { isDefault: true });
+    if (success) {
+      toast.success('Default address updated');
+    }
   };
+
+  // Handle preferences update
+  const handleUpdatePreferences = async (updates: Partial<Preferences>) => {
+    try {
+      await customerApi.updatePreferences(updates);
+      await loadProfile();
+      toast.success('Preferences updated');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update preferences');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  if (!uiData) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-600">No profile data found</p>
+        <Button onClick={() => loadProfile()} className="mt-4">
+          Retry
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-start">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center space-x-4">
-          <Avatar className="h-20 w-20">
-            <AvatarFallback className="text-lg">
-              {customerData.personalInfo.firstName[0]}{customerData.personalInfo.lastName[0]}
-            </AvatarFallback>
-          </Avatar>
+          <div className="relative">
+            <Avatar className="h-20 w-20 border-2 border-gray-200">
+              {uiData.accountInfo.profilePictureUrl ? (
+                <AvatarImage 
+                  src={uiData.accountInfo.profilePictureUrl} 
+                  alt={`${uiData.personalInfo.firstName} ${uiData.personalInfo.lastName}`}
+                  className="object-cover"
+                />
+              ) : null}
+              <AvatarFallback className="text-lg bg-gray-100">
+                {uiData.personalInfo.firstName?.[0]}{uiData.personalInfo.lastName?.[0]}
+              </AvatarFallback>
+            </Avatar>
+            <label className="absolute bottom-0 right-0 p-1 bg-white rounded-full shadow-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              {isUploadingPicture ? (
+                <Loader2 className="h-4 w-4 animate-spin text-gray-600" />
+              ) : (
+                <>
+                  <Camera className="h-4 w-4 text-gray-600" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleProfilePictureChange}
+                    disabled={isUploadingPicture}
+                  />
+                </>
+              )}
+            </label>
+          </div>
           <div>
             <h2 className="text-2xl text-gray-900">
-              {customerData.personalInfo.firstName} {customerData.personalInfo.lastName}
+              {uiData.personalInfo.firstName} {uiData.personalInfo.lastName}
             </h2>
             <p className="text-gray-600">
-              {customerData.accountType === 'business' ? 'Business Account' : 'Personal Account'}
+              {uiData.accountInfo.accountType === 'business' ? 'Business Account' : 'Personal Account'}
             </p>
-            {customerData.businessInfo && (
-              <p className="text-sm text-gray-500">{customerData.businessInfo.businessName}</p>
+            {uiData.businessInfo?.businessName && (
+              <p className="text-sm text-gray-500">{uiData.businessInfo.businessName}</p>
             )}
             <div className="flex items-center space-x-4 mt-2">
               <div className="flex items-center space-x-1">
                 <Star className="h-4 w-4 text-yellow-500" />
-                <span className="text-sm">{customerData.stats.averageRating} rating</span>
+                <span className="text-sm">{uiData.accountInfo.averageRating.toFixed(1)} rating</span>
               </div>
               <div className="text-sm text-gray-600">
-                {customerData.stats.totalOrders} orders
+                {uiData.accountInfo.totalOrders} orders
               </div>
             </div>
           </div>
         </div>
         <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-          Member since {new Date(customerData.stats.memberSince).getFullYear()}
+          Member since {uiData.accountInfo.joinDate}
         </Badge>
       </div>
 
@@ -2559,84 +3010,112 @@ export function CustomerProfile() {
           <TabsTrigger value="stats">Statistics</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="personal">
-          <div className="space-y-6">
-            <Card>
-              <CardHeader>
-                <div className="flex justify-between items-center">
-                  <CardTitle className="flex items-center gap-2">
-                    <User className="h-5 w-5" />
-                    Personal Information
-                  </CardTitle>
-                  <Button
-                    variant="outline"
-                    onClick={() => setIsEditing(!isEditing)}
-                  >
-                    {isEditing ? 'Save Changes' : 'Edit Profile'}
-                  </Button>
+        <TabsContent value="personal" className="space-y-6">
+          {/* Personal Information Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex justify-between items-center">
+                <CardTitle className="flex items-center gap-2">
+                  <User className="h-5 w-5" />
+                  Personal Information
+                </CardTitle>
+                <div className="flex items-center space-x-2">
+                  {isEditingPersonal ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setIsEditingPersonal(false);
+                          setTempPersonalData(uiData.personalInfo);
+                        }}
+                      >
+                        <X className="h-4 w-4 mr-2" />
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={handleSavePersonalInfo}
+                      >
+                        <Save className="h-4 w-4 mr-2" />
+                        Save
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsEditingPersonal(true);
+                        setTempPersonalData(uiData.personalInfo);
+                      }}
+                    >
+                      <Edit2 className="h-4 w-4 mr-2" />
+                      Edit
+                    </Button>
+                  )}
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="firstName">First Name</Label>
-                    <Input
-                      id="firstName"
-                      value={customerData.personalInfo.firstName}
-                      disabled={!isEditing}
-                      onChange={(e) => setCustomerData({
-                        ...customerData,
-                        personalInfo: { ...customerData.personalInfo, firstName: e.target.value }
-                      })}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName">Last Name</Label>
-                    <Input
-                      id="lastName"
-                      value={customerData.personalInfo.lastName}
-                      disabled={!isEditing}
-                      onChange={(e) => setCustomerData({
-                        ...customerData,
-                        personalInfo: { ...customerData.personalInfo, lastName: e.target.value }
-                      })}
-                    />
-                  </div>
-                </div>
-
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-                    <Input
-                      id="email"
-                      type="email"
-                      value={customerData.personalInfo.email}
-                      disabled={!isEditing}
-                      className="pl-10"
-                      onChange={(e) => setCustomerData({
-                        ...customerData,
-                        personalInfo: { ...customerData.personalInfo, email: e.target.value }
-                      })}
-                    />
-                  </div>
+                  <Label htmlFor="firstName">First Name</Label>
+                  <Input
+                    id="firstName"
+                    value={tempPersonalData?.firstName || ''}
+                    disabled={!isEditingPersonal}
+                    onChange={(e) => setTempPersonalData({
+                      ...tempPersonalData,
+                      firstName: e.target.value
+                    })}
+                  />
+                  <p className="text-xs text-gray-500">Managed by user service</p>
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="lastName">Last Name</Label>
+                  <Input
+                    id="lastName"
+                    value={tempPersonalData?.lastName || ''}
+                    disabled={!isEditingPersonal}
+                    onChange={(e) => setTempPersonalData({
+                      ...tempPersonalData,
+                      lastName: e.target.value
+                    })}
+                  />
+                  <p className="text-xs text-gray-500">Managed by user service</p>
+                </div>
+              </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                  <Input
+                    id="email"
+                    type="email"
+                    value={tempPersonalData?.email || ''}
+                    disabled
+                    className="pl-10 bg-gray-50"
+                  />
+                </div>
+                <p className="text-xs text-gray-500">Managed by user service</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="phone">Phone Number</Label>
                   <div className="relative">
                     <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                     <Input
                       id="phone"
-                      value={customerData.personalInfo.phone}
-                      disabled={!isEditing}
+                      value={tempPersonalData?.phone || ''}
+                      disabled={!isEditingPersonal}
                       className="pl-10"
-                      onChange={(e) => setCustomerData({
-                        ...customerData,
-                        personalInfo: { ...customerData.personalInfo, phone: e.target.value }
+                      onChange={(e) => setTempPersonalData({
+                        ...tempPersonalData,
+                        phone: e.target.value
                       })}
                     />
                   </div>
+                  <p className="text-xs text-gray-500">Managed by user service</p>
                 </div>
 
                 <div className="space-y-2">
@@ -2646,86 +3125,135 @@ export function CustomerProfile() {
                     <Input
                       id="dateOfBirth"
                       type="date"
-                      value={customerData.personalInfo.dateOfBirth}
-                      disabled={!isEditing}
+                      value={tempPersonalData?.dateOfBirth || ''}
+                      disabled={!isEditingPersonal}
                       className="pl-10"
-                      onChange={(e) => setCustomerData({
-                        ...customerData,
-                        personalInfo: { ...customerData.personalInfo, dateOfBirth: e.target.value }
+                      onChange={(e) => setTempPersonalData({
+                        ...tempPersonalData,
+                        dateOfBirth: e.target.value
                       })}
                     />
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </CardContent>
+          </Card>
 
-            {customerData.businessInfo && (
-              <Card>
-                <CardHeader>
+          {/* Business Information Card (only for business accounts) */}
+          {uiData.accountInfo.accountType === 'business' && (
+            <Card>
+              <CardHeader>
+                <div className="flex justify-between items-center">
                   <CardTitle className="flex items-center gap-2">
                     <Building className="h-5 w-5" />
                     Business Information
                   </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
+                  <div className="flex items-center space-x-2">
+                    {isEditingBusiness ? (
+                      <>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setIsEditingBusiness(false);
+                            setTempBusinessData(uiData.businessInfo);
+                          }}
+                        >
+                          <X className="h-4 w-4 mr-2" />
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleSaveBusinessInfo}
+                        >
+                          <Save className="h-4 w-4 mr-2" />
+                          Save
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setIsEditingBusiness(true);
+                          setTempBusinessData(uiData.businessInfo);
+                        }}
+                      >
+                        <Edit2 className="h-4 w-4 mr-2" />
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="businessName">Business Name</Label>
+                  <Input
+                    id="businessName"
+                    value={tempBusinessData?.businessName || ''}
+                    disabled={!isEditingBusiness}
+                    onChange={(e) => setTempBusinessData({
+                      ...tempBusinessData,
+                      businessName: e.target.value
+                    })}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="businessName">Business Name</Label>
+                    <Label htmlFor="businessType">Business Type</Label>
+                    <Select 
+                      value={tempBusinessData?.businessType || ''}
+                      disabled={!isEditingBusiness}
+                      onValueChange={(value) => setTempBusinessData({
+                        ...tempBusinessData,
+                        businessType: value
+                      })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select business type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Retail Store">Retail Store</SelectItem>
+                        <SelectItem value="Restaurant/Food Service">Restaurant/Food Service</SelectItem>
+                        <SelectItem value="E-commerce">E-commerce</SelectItem>
+                        <SelectItem value="Manufacturing">Manufacturing</SelectItem>
+                        <SelectItem value="Healthcare">Healthcare</SelectItem>
+                        <SelectItem value="Education">Education</SelectItem>
+                        <SelectItem value="Construction">Construction</SelectItem>
+                        <SelectItem value="Professional Services">Professional Services</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="taxId">Tax ID</Label>
                     <Input
-                      id="businessName"
-                      value={customerData.businessInfo.businessName}
-                      disabled={!isEditing}
+                      id="taxId"
+                      value={tempBusinessData?.taxId || ''}
+                      disabled={!isEditingBusiness}
+                      onChange={(e) => setTempBusinessData({
+                        ...tempBusinessData,
+                        taxId: e.target.value
+                      })}
                     />
                   </div>
+                </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="businessType">Business Type</Label>
-                      <Select value={customerData.businessInfo.businessType} disabled={!isEditing}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Professional Services">Professional Services</SelectItem>
-                          <SelectItem value="Retail">Retail</SelectItem>
-                          <SelectItem value="Manufacturing">Manufacturing</SelectItem>
-                          <SelectItem value="Healthcare">Healthcare</SelectItem>
-                          <SelectItem value="Education">Education</SelectItem>
-                          <SelectItem value="Other">Other</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="taxId">Tax ID</Label>
-                      <Input
-                        id="taxId"
-                        value={customerData.businessInfo.taxId}
-                        disabled={!isEditing}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="businessAddress">Business Address</Label>
-                    <Textarea
-                      id="businessAddress"
-                      value={customerData.businessInfo.businessAddress}
-                      disabled={!isEditing}
-                      rows={2}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="businessPhone">Business Phone</Label>
-                    <Input
-                      id="businessPhone"
-                      value={customerData.businessInfo.businessPhone}
-                      disabled={!isEditing}
-                    />
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+                <div className="space-y-2">
+                  <Label htmlFor="businessPhone">Business Phone</Label>
+                  <Input
+                    id="businessPhone"
+                    value={tempBusinessData?.businessPhone || ''}
+                    disabled={!isEditingBusiness}
+                    onChange={(e) => setTempBusinessData({
+                      ...tempBusinessData,
+                      businessPhone: e.target.value
+                    })}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="addresses">
@@ -2736,77 +3264,299 @@ export function CustomerProfile() {
                   <MapPin className="h-5 w-5" />
                   Saved Addresses
                 </CardTitle>
-                <Button onClick={addAddress}>
+                <Button onClick={() => setShowAddAddress(true)}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Address
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {customerData.addresses.map((address) => (
-                  <div key={address.id} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <Input
-                          value={address.label}
-                          className="font-medium w-32"
-                          onChange={(e) => {
-                            const updatedAddresses = customerData.addresses.map(addr =>
-                              addr.id === address.id ? { ...addr, label: e.target.value } : addr
-                            );
-                            setCustomerData({ ...customerData, addresses: updatedAddresses });
-                          }}
-                        />
-                        {address.isDefault && (
-                          <Badge variant="secondary">Default</Badge>
-                        )}
-                      </div>
-                      <Textarea
-                        value={address.address}
-                        rows={2}
-                        onChange={(e) => {
-                          const updatedAddresses = customerData.addresses.map(addr =>
-                            addr.id === address.id ? { ...addr, address: e.target.value } : addr
-                          );
-                          setCustomerData({ ...customerData, addresses: updatedAddresses });
-                        }}
-                      />
-                    </div>
-                    <div className="flex items-center space-x-2 ml-4">
-                      {!address.isDefault && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setDefaultAddress(address.id)}
-                        >
-                          Set Default
-                        </Button>
-                      )}
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button size="sm" variant="outline" className="text-red-600">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Delete Address</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure you want to delete this address? This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => removeAddress(address.id)}>
-                              Delete
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+              {/* Add New Address Form */}
+              {showAddAddress && (
+                <div className="p-4 border-2 border-dashed border-blue-300 rounded-lg bg-blue-50 mb-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="font-medium text-blue-900">Add New Address</h4>
+                    <div className="flex space-x-2">
+                      <Button
+                        size="sm"
+                        onClick={handleAddAddress}
+                      >
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowAddAddress(false)}
+                      >
+                        Cancel
+                      </Button>
                     </div>
                   </div>
-                ))}
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label>Label (e.g., Home, Office, Business)</Label>
+                        <Select
+                          value={newAddress.label}
+                          onValueChange={(value) => setNewAddress({...newAddress, label: value})}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Home">Home</SelectItem>
+                            <SelectItem value="Office">Office</SelectItem>
+                            <SelectItem value="Business">Business</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Street Address *</Label>
+                        <Input
+                          value={newAddress.address}
+                          onChange={(e) => setNewAddress({...newAddress, address: e.target.value})}
+                          placeholder="123 Main St"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="space-y-2">
+                        <Label>City *</Label>
+                        <Input
+                          value={newAddress.city}
+                          onChange={(e) => setNewAddress({...newAddress, city: e.target.value})}
+                          placeholder="New York"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>State *</Label>
+                        <Input
+                          value={newAddress.state}
+                          onChange={(e) => setNewAddress({...newAddress, state: e.target.value})}
+                          placeholder="NY"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>ZIP Code *</Label>
+                        <Input
+                          value={newAddress.postalCode}
+                          onChange={(e) => setNewAddress({...newAddress, postalCode: e.target.value})}
+                          placeholder="10001"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        id="isDefault"
+                        checked={newAddress.isDefault || false}
+                        onChange={(e) => setNewAddress({...newAddress, isDefault: e.target.checked})}
+                        className="rounded"
+                      />
+                      <Label htmlFor="isDefault" className="cursor-pointer">
+                        Set as default address
+                      </Label>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Address List */}
+              <div className="space-y-4">
+                {uiData.addresses.length === 0 ? (
+                  <div className="text-center py-8">
+                    <MapPin className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                    <p className="text-gray-600">No addresses saved yet</p>
+                    <Button 
+                      variant="outline" 
+                      className="mt-4"
+                      onClick={() => setShowAddAddress(true)}
+                    >
+                      Add Your First Address
+                    </Button>
+                  </div>
+                ) : (
+                  uiData.addresses.map((address) => (
+                    <div key={address.id} className="flex flex-col md:flex-row items-start justify-between p-4 border rounded-lg hover:bg-gray-50">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2 mb-2">
+                          <span className="font-medium">{address.label}</span>
+                          {address.isDefault && (
+                            <Badge variant="secondary">Default</Badge>
+                          )}
+                          {!address.isActive && (
+                            <Badge variant="outline" className="text-gray-500">Inactive</Badge>
+                          )}
+                        </div>
+                        
+                        {editingAddressId === address.id ? (
+                          <div className="space-y-3">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div>
+                                <Label>Label</Label>
+                                <Input
+                                  value={address.label}
+                                  onChange={(e) => {
+                                    const updated = {...address, label: e.target.value};
+                                    setUiData(prev => prev ? {
+                                      ...prev,
+                                      addresses: prev.addresses.map(a => 
+                                        a.id === address.id ? updated : a
+                                      )
+                                    } : null);
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <Label>Street Address</Label>
+                                <Input
+                                  value={address.address}
+                                  onChange={(e) => {
+                                    const updated = {...address, address: e.target.value};
+                                    setUiData(prev => prev ? {
+                                      ...prev,
+                                      addresses: prev.addresses.map(a => 
+                                        a.id === address.id ? updated : a
+                                      )
+                                    } : null);
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                              <div>
+                                <Label>City</Label>
+                                <Input
+                                  value={address.city}
+                                  onChange={(e) => {
+                                    const updated = {...address, city: e.target.value};
+                                    setUiData(prev => prev ? {
+                                      ...prev,
+                                      addresses: prev.addresses.map(a => 
+                                        a.id === address.id ? updated : a
+                                      )
+                                    } : null);
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <Label>State</Label>
+                                <Input
+                                  value={address.state}
+                                  onChange={(e) => {
+                                    const updated = {...address, state: e.target.value};
+                                    setUiData(prev => prev ? {
+                                      ...prev,
+                                      addresses: prev.addresses.map(a => 
+                                        a.id === address.id ? updated : a
+                                      )
+                                    } : null);
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <Label>ZIP Code</Label>
+                                <Input
+                                  value={address.postalCode}
+                                  onChange={(e) => {
+                                    const updated = {...address, postalCode: e.target.value};
+                                    setUiData(prev => prev ? {
+                                      ...prev,
+                                      addresses: prev.addresses.map(a => 
+                                        a.id === address.id ? updated : a
+                                      )
+                                    } : null);
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            
+                            <div className="flex space-x-2 pt-2">
+                              <Button
+                                size="sm"
+                                onClick={() => handleUpdateAddress(address)}
+                              >
+                                Save
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditingAddressId(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-gray-900">{address.address}</div>
+                            <div className="text-gray-600">
+                              {address.city}, {address.state} {address.postalCode}, {address.country}
+                            </div>
+                            {address.notes && (
+                              <div className="text-sm text-gray-500 mt-1">Note: {address.notes}</div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center space-x-2 mt-4 md:mt-0 md:ml-4">
+                        {!address.isDefault && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleSetDefaultAddress(address.id)}
+                          >
+                            Set Default
+                          </Button>
+                        )}
+                        {editingAddressId === address.id ? null : (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setEditingAddressId(address.id)}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button 
+                                  size="sm" 
+                                  variant="outline" 
+                                  className="text-red-600 border-red-200 hover:bg-red-50"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete Address</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Are you sure you want to delete this address? This action cannot be undone.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction 
+                                    onClick={() => handleDeleteAddress(address.id)}
+                                    className="bg-red-600 hover:bg-red-700"
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </CardContent>
           </Card>
@@ -2820,75 +3570,106 @@ export function CustomerProfile() {
                   <CreditCard className="h-5 w-5" />
                   Payment Methods
                 </CardTitle>
-                <Button onClick={addPaymentMethod}>
+                <Button onClick={() => toast.info('Payment method setup would open here')}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add Payment Method
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {customerData.paymentMethods.map((method) => (
-                  <div key={method.id} className="flex items-center justify-between p-4 border rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      <div className="p-2 bg-gray-100 rounded">
-                        <CreditCard className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          {method.type === 'card' ? (
-                            <span className="font-medium">
-                              {method.brand} •••• {method.last4}
-                            </span>
-                          ) : (
-                            <span className="font-medium">
-                              PayPal ({method.email})
-                            </span>
-                          )}
-                          {method.isDefault && (
-                            <Badge variant="secondary">Default</Badge>
-                          )}
+              {uiData.paymentMethods.length === 0 ? (
+                <div className="text-center py-8">
+                  <CreditCard className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                  <p className="text-gray-600">No payment methods added yet</p>
+                  <Button 
+                    variant="outline" 
+                    className="mt-4"
+                    onClick={() => toast.info('Payment method setup would open here')}
+                  >
+                    Add Your First Payment Method
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {uiData.paymentMethods.map((method) => (
+                    <div key={method.id} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-gray-100 rounded">
+                          <CreditCard className="h-5 w-5" />
                         </div>
-                        <p className="text-sm text-gray-600">
-                          {method.type === 'card' ? 'Credit/Debit Card' : 'PayPal Account'}
-                        </p>
+                        <div>
+                          <div className="flex items-center space-x-2">
+                            {method.type === 'card' ? (
+                              <span className="font-medium">
+                                {method.provider} •••• {method.last4}
+                              </span>
+                            ) : method.type === 'paypal' ? (
+                              <span className="font-medium">
+                                PayPal
+                              </span>
+                            ) : (
+                              <span className="font-medium">
+                                {method.type.replace('_', ' ').toUpperCase()}
+                              </span>
+                            )}
+                            {method.isDefault && (
+                              <Badge variant="secondary">Default</Badge>
+                            )}
+                            {!method.isActive && (
+                              <Badge variant="outline" className="text-gray-500">Inactive</Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-600">
+                            {method.type === 'card' ? 'Credit/Debit Card' : 
+                             method.type === 'paypal' ? 'PayPal Account' :
+                             method.type === 'apple_pay' ? 'Apple Pay' :
+                             method.type === 'google_pay' ? 'Google Pay' : 'Bank Transfer'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {!method.isDefault && method.isActive && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => toast.info('Set as default would be implemented')}
+                          >
+                            Set Default
+                          </Button>
+                        )}
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="text-red-600 border-red-200 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove Payment Method</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to remove this payment method? This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction 
+                                onClick={() => toast.info('Delete would be implemented')}
+                                className="bg-red-600 hover:bg-red-700"
+                              >
+                                Remove
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      {!method.isDefault && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setDefaultPaymentMethod(method.id)}
-                        >
-                          Set Default
-                        </Button>
-                      )}
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button size="sm" variant="outline" className="text-red-600">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Remove Payment Method</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Are you sure you want to remove this payment method? This action cannot be undone.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => removePaymentMethod(method.id)}>
-                              Remove
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -2905,55 +3686,37 @@ export function CustomerProfile() {
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="email-notifications">Email Notifications</Label>
+                    <Label htmlFor="email-notifications" className="cursor-pointer">Email Notifications</Label>
                     <p className="text-sm text-gray-600">Order updates, receipts, and newsletters</p>
                   </div>
                   <Switch
                     id="email-notifications"
-                    checked={customerData.preferences.notifications.email}
-                    onCheckedChange={(checked) => setCustomerData({
-                      ...customerData,
-                      preferences: {
-                        ...customerData.preferences,
-                        notifications: { ...customerData.preferences.notifications, email: checked }
-                      }
-                    })}
+                    checked={uiData.preferences.notificationEmail}
+                    onCheckedChange={(checked) => handleUpdatePreferences({ notificationEmail: checked })}
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="sms-notifications">SMS Notifications</Label>
+                    <Label htmlFor="sms-notifications" className="cursor-pointer">SMS Notifications</Label>
                     <p className="text-sm text-gray-600">Real-time delivery updates</p>
                   </div>
                   <Switch
                     id="sms-notifications"
-                    checked={customerData.preferences.notifications.sms}
-                    onCheckedChange={(checked) => setCustomerData({
-                      ...customerData,
-                      preferences: {
-                        ...customerData.preferences,
-                        notifications: { ...customerData.preferences.notifications, sms: checked }
-                      }
-                    })}
+                    checked={uiData.preferences.notificationSMS}
+                    onCheckedChange={(checked) => handleUpdatePreferences({ notificationSMS: checked })}
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="push-notifications">Push Notifications</Label>
+                    <Label htmlFor="push-notifications" className="cursor-pointer">Push Notifications</Label>
                     <p className="text-sm text-gray-600">In-app notifications</p>
                   </div>
                   <Switch
                     id="push-notifications"
-                    checked={customerData.preferences.notifications.push}
-                    onCheckedChange={(checked) => setCustomerData({
-                      ...customerData,
-                      preferences: {
-                        ...customerData.preferences,
-                        notifications: { ...customerData.preferences.notifications, push: checked }
-                      }
-                    })}
+                    checked={uiData.preferences.notificationPush}
+                    onCheckedChange={(checked) => handleUpdatePreferences({ notificationPush: checked })}
                   />
                 </div>
               </CardContent>
@@ -2969,55 +3732,37 @@ export function CustomerProfile() {
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="location-data">Share Location Data</Label>
+                    <Label htmlFor="location-data" className="cursor-pointer">Share Location Data</Label>
                     <p className="text-sm text-gray-600">Help improve route optimization</p>
                   </div>
                   <Switch
                     id="location-data"
-                    checked={customerData.preferences.privacy.shareLocationData}
-                    onCheckedChange={(checked) => setCustomerData({
-                      ...customerData,
-                      preferences: {
-                        ...customerData.preferences,
-                        privacy: { ...customerData.preferences.privacy, shareLocationData: checked }
-                      }
-                    })}
+                    checked={uiData.preferences.shareLocationData}
+                    onCheckedChange={(checked) => handleUpdatePreferences({ shareLocationData: checked })}
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="usage-analytics">Share Usage Analytics</Label>
+                    <Label htmlFor="usage-analytics" className="cursor-pointer">Share Usage Analytics</Label>
                     <p className="text-sm text-gray-600">Help improve the platform</p>
                   </div>
                   <Switch
                     id="usage-analytics"
-                    checked={customerData.preferences.privacy.shareUsageAnalytics}
-                    onCheckedChange={(checked) => setCustomerData({
-                      ...customerData,
-                      preferences: {
-                        ...customerData.preferences,
-                        privacy: { ...customerData.preferences.privacy, shareUsageAnalytics: checked }
-                      }
-                    })}
+                    checked={uiData.preferences.shareUsageAnalytics}
+                    onCheckedChange={(checked) => handleUpdatePreferences({ shareUsageAnalytics: checked })}
                   />
                 </div>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="marketing-emails">Marketing Emails</Label>
+                    <Label htmlFor="marketing-emails" className="cursor-pointer">Marketing Emails</Label>
                     <p className="text-sm text-gray-600">Promotional offers and tips</p>
                   </div>
                   <Switch
                     id="marketing-emails"
-                    checked={customerData.preferences.privacy.marketingEmails}
-                    onCheckedChange={(checked) => setCustomerData({
-                      ...customerData,
-                      preferences: {
-                        ...customerData.preferences,
-                        privacy: { ...customerData.preferences.privacy, marketingEmails: checked }
-                      }
-                    })}
+                    checked={uiData.preferences.marketingEmails}
+                    onCheckedChange={(checked) => handleUpdatePreferences({ marketingEmails: checked })}
                   />
                 </div>
               </CardContent>
@@ -3033,23 +3778,21 @@ export function CustomerProfile() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  <div className="text-center">
-                    <p className="text-3xl text-blue-600">{customerData.stats.totalOrders}</p>
+                  <div className="text-center p-4 bg-blue-50 rounded-lg">
+                    <p className="text-3xl text-blue-600 font-bold">{uiData.accountInfo.totalOrders}</p>
                     <p className="text-gray-600">Total Orders</p>
                   </div>
-                  <div className="text-center">
-                    <p className="text-3xl text-green-600">${customerData.stats.totalSpent.toLocaleString()}</p>
+                  <div className="text-center p-4 bg-green-50 rounded-lg">
+                    <p className="text-3xl text-green-600 font-bold">${uiData.accountInfo.totalSpent.toLocaleString()}</p>
                     <p className="text-gray-600">Total Spent</p>
                   </div>
-                  <div className="text-center">
-                    <p className="text-3xl text-yellow-600">{customerData.stats.averageRating}</p>
+                  <div className="text-center p-4 bg-yellow-50 rounded-lg">
+                    <p className="text-3xl text-yellow-600 font-bold">{uiData.accountInfo.averageRating.toFixed(1)}</p>
                     <p className="text-gray-600">Average Rating</p>
                   </div>
-                  <div className="text-center">
-                    <p className="text-3xl text-purple-600">
-                      {Math.round((new Date().getTime() - new Date(customerData.stats.memberSince).getTime()) / (1000 * 60 * 60 * 24))}
-                    </p>
-                    <p className="text-gray-600">Days Active</p>
+                  <div className="text-center p-4 bg-purple-50 rounded-lg">
+                    <p className="text-3xl text-purple-600 font-bold">{uiData.accountInfo.loyaltyPoints.toLocaleString()}</p>
+                    <p className="text-gray-600">Loyalty Points</p>
                   </div>
                 </div>
               </CardContent>
@@ -3061,26 +3804,51 @@ export function CustomerProfile() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
                     <div className="flex items-center space-x-3">
                       <Package className="h-5 w-5 text-blue-600" />
-                      <span>Free Delivery Credits</span>
+                      <div>
+                        <p className="font-medium">Membership Level</p>
+                        <p className="text-sm text-gray-600">{uiData.accountInfo.membershipLevel}</p>
+                      </div>
                     </div>
-                    <Badge className="bg-green-100 text-green-800">$50 Available</Badge>
+                    <Badge className={
+                      uiData.accountInfo.membershipLevel === 'business' ? 'bg-purple-100 text-purple-800' :
+                      uiData.accountInfo.membershipLevel === 'premium' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-green-100 text-green-800'
+                    }>
+                      {uiData.accountInfo.membershipLevel}
+                    </Badge>
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  
+                  <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
                     <div className="flex items-center space-x-3">
                       <Star className="h-5 w-5 text-yellow-600" />
-                      <span>Loyalty Points</span>
+                      <div>
+                        <p className="font-medium">Account Status</p>
+                        <p className="text-sm text-gray-600">Active since {uiData.accountInfo.joinDate}</p>
+                      </div>
                     </div>
-                    <Badge className="bg-yellow-100 text-yellow-800">2,340 Points</Badge>
+                    <Badge className={
+                      uiData.accountInfo.status === 'active' ? 'bg-green-100 text-green-800' :
+                      uiData.accountInfo.status === 'suspended' ? 'bg-red-100 text-red-800' :
+                      'bg-gray-100 text-gray-800'
+                    }>
+                      {uiData.accountInfo.status}
+                    </Badge>
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                  
+                  <div className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
                     <div className="flex items-center space-x-3">
                       <DollarSign className="h-5 w-5 text-green-600" />
-                      <span>Bulk Discount Rate</span>
+                      <div>
+                        <p className="font-medium">Address Management</p>
+                        <p className="text-sm text-gray-600">{uiData.addresses.length} saved addresses</p>
+                      </div>
                     </div>
-                    <Badge className="bg-purple-100 text-purple-800">15% Off</Badge>
+                    <Badge className="bg-blue-100 text-blue-800">
+                      {uiData.addresses.length} Addresses
+                    </Badge>
                   </div>
                 </div>
               </CardContent>
@@ -3907,8 +4675,8 @@ import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
-import { Avatar, AvatarFallback } from "./ui/avatar"; // Removed AvatarContent
-import { Truck, MapPin, Package, Clock, Star, Weight, Gauge, Upload } from 'lucide-react'; // Added Upload
+import { Avatar, AvatarFallback } from "./ui/avatar";
+import { Truck, MapPin, Package, Clock, Star, Weight, Gauge, Upload, Eye, AlertTriangle, RefreshCw, Navigation, Compass, User, Wifi, WifiOff } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { driverApi } from '../src/lib/api';
 import { useDriverProfile } from '../src/hooks/useDriverProfile';
@@ -3917,12 +4685,16 @@ import { toast } from 'sonner';
 interface Vehicle {
   id: string;
   type: string;
+  make: string;
   model: string;
   licensePlate: string;
   maxWeight: number;
   maxVolume: number;
   categories: string[];
   imageUrl?: string;
+  color?: string;
+  year?: number;
+  isActive?: boolean;
 }
 
 interface Order {
@@ -3944,47 +4716,74 @@ interface Stats {
   completionRate: number;
 }
 
+interface LocationCoords {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp?: number;
+}
+
 export function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState('');
-  const [vehicles, setVehicles] = useState([] as Vehicle[]);
-  const [pendingOrders, setPendingOrders] = useState([] as Order[]);
-  const [stats, setStats] = useState(null as Stats | null);
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [uploadingVehiclePic, setUploadingVehiclePic] = useState<string | null>(null);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
+  
+  // Location state
+  const [currentLocation, setCurrentLocation] = useState<string>('Downtown Area');
+  const [locationCoords, setLocationCoords] = useState<LocationCoords | null>(null);
+  const [gettingLocation, setGettingLocation] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
 
-  const { driverData, updateAvailability, getDriverStats } = useDriverProfile();
+  const { driverData } = useDriverProfile();
 
   useEffect(() => {
     loadDashboardData();
-  }, []);
+    // Initialize with current driver status
+    if (driverData?.isOnline !== undefined) {
+      setIsOnline(driverData.isOnline);
+    }
+    if (driverData?.currentLocation) {
+      setCurrentLocation(driverData.currentLocation);
+    }
+  }, [driverData]);
 
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-
-      // Use driverData from useDriverProfile hook instead of driverService
-      console.log('Driver profile loaded:', driverData);
+      console.log('🚗 Loading dashboard data...');
 
       // Load vehicles
       const vehiclesResponse = await driverApi.getVehicles();
-      console.log('Vehicles response:', vehiclesResponse);
+      console.log('🚗 Vehicles response:', vehiclesResponse);
 
       if (vehiclesResponse.success && vehiclesResponse.data) {
         const vehiclesData = Array.isArray(vehiclesResponse.data) 
           ? vehiclesResponse.data 
           : vehiclesResponse.data.vehicles || [];
 
+        console.log('🚗 Raw vehicles data:', vehiclesData);
+
         const mappedVehicles: Vehicle[] = vehiclesData.map((v: any) => ({
-          id: v.id,
-          type: v.type || v.vehicleType || '',
-          model: `${v.make || ''} ${v.model || ''}`.trim(),
+          id: v.id || v._id,
+          type: v.type || v.vehicleType || 'vehicle',
+          make: v.make || '',
+          model: v.model || '',
           licensePlate: v.licensePlate || v.license_plate || '',
           maxWeight: v.maxWeight || v.maxWeightKg || 0,
           maxVolume: v.maxVolume || v.maxVolumeM3 || 0,
           imageUrl: v.imageUrl || v.image_url,
+          color: v.color || '',
+          year: v.year || 0,
+          isActive: v.isActive || false,
           categories: v.categories || []
         }));
 
+        console.log('🚗 Mapped vehicles:', mappedVehicles);
         setVehicles(mappedVehicles);
 
         if (mappedVehicles.length > 0) {
@@ -3999,26 +4798,34 @@ export function DriverDashboard() {
       } else {
         // Use fallback stats
         setStats({
-          totalDeliveries: 0,
-          rating: 0,
-          totalEarnings: 0,
-          completionRate: 0
+          totalDeliveries: driverData?.totalDeliveries || 0,
+          rating: driverData?.rating || 0,
+          totalEarnings: driverData?.totalEarnings || 0,
+          completionRate: driverData?.completionRate || 0
         });
       }
 
+      // Load pending orders (you'll need to implement this API endpoint)
+      // For now, we'll set empty array
+      setPendingOrders([]);
+
     } catch (error: any) {
-      console.error('Error loading dashboard data:', error);
+      console.error('❌ Error loading dashboard data:', error);
       toast.error('Failed to load dashboard data. Using sample data.');
 
       // Fallback to sample data
       const sampleVehicle: Vehicle = {
         id: 'sample-1',
         type: 'Medium Truck',
-        model: 'Sample Vehicle',
+        make: 'Ford',
+        model: 'Transit',
         licensePlate: 'ABC-123',
         maxWeight: 1000,
         maxVolume: 10,
         imageUrl: 'https://images.unsplash.com/photo-1558618047-3c8c76ca7d13',
+        color: 'White',
+        year: 2023,
+        isActive: true,
         categories: ['General']
       };
       
@@ -4035,38 +4842,241 @@ export function DriverDashboard() {
     }
   };
 
-  const handleToggleOnline = async (value: boolean) => {
+  const getCurrentLocation = async (): Promise<string> => {
     try {
-      const success = await updateAvailability(value);
-      if (success) {
-        setIsOnline(value);
+      setGettingLocation(true);
+      setLocationError(null);
+
+      // Try to get precise location from browser
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        if (!navigator.geolocation) {
+          reject(new Error('Geolocation not supported'));
+          return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+          resolve,
+          (error) => {
+            reject(error);
+          },
+          {
+            timeout: 10000,
+            enableHighAccuracy: true,
+            maximumAge: 0
+          }
+        );
+      });
+
+      const { latitude, longitude, accuracy } = position.coords;
+      setLocationCoords({
+        latitude,
+        longitude,
+        accuracy,
+        timestamp: position.timestamp
+      });
+
+      // Try to get human-readable address using reverse geocoding
+      try {
+        const address = await reverseGeocode(latitude, longitude);
+        return address;
+      } catch (geocodeError) {
+        console.warn('Reverse geocoding failed:', geocodeError);
+        // Return coordinates if reverse geocoding fails
+        return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
       }
+
     } catch (error: any) {
-      console.error('Error updating availability:', error);
-      toast.error('Failed to update availability');
+      console.warn('Could not get precise location:', error);
+      
+      let errorMessage = 'Unable to get location';
+      if (error.code === error.PERMISSION_DENIED) {
+        errorMessage = 'Location permission denied. Please enable location services in your browser settings.';
+      } else if (error.code === error.TIMEOUT) {
+        errorMessage = 'Location request timed out.';
+      } else if (error.code === error.POSITION_UNAVAILABLE) {
+        errorMessage = 'Location information is unavailable.';
+      }
+      
+      setLocationError(errorMessage);
+      return "Downtown Area"; // Fallback location
+    } finally {
+      setGettingLocation(false);
     }
   };
 
+  const reverseGeocode = async (latitude: number, longitude: number): Promise<string> => {
+    try {
+      // Using OpenStreetMap Nominatim API (free, no API key required)
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`
+      );
+      
+      if (!response.ok) {
+        throw new Error('Reverse geocoding failed');
+      }
+      
+      const data = await response.json();
+      
+      if (data.display_name) {
+        const addressParts = data.display_name.split(',');
+        // Extract area/suburb from address (usually 2nd or 3rd from end)
+        if (addressParts.length >= 3) {
+          return addressParts[addressParts.length - 3]?.trim() || data.display_name;
+        }
+        return data.display_name;
+      }
+      
+      return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+    } catch (error) {
+      console.error('Reverse geocoding error:', error);
+      throw error;
+    }
+  };
+
+  const handleToggleOnline = async (value: boolean) => {
+    try {
+      setGettingLocation(true);
+      
+      // Get current location for the API call
+      const location = await getCurrentLocation();
+      
+      // Update location state
+      setCurrentLocation(location);
+      
+      // Make API call with both isOnline and location
+      const response = await driverApi.updateStatus({ 
+        isOnline: value, 
+        location: location 
+      });
+
+      if (response.success) {
+        setIsOnline(value);
+        toast.success(`You are now ${value ? 'online and available for orders' : 'offline'}`);
+        
+        // Update driver data if needed
+        if (driverData) {
+          driverData.isOnline = value;
+          driverData.currentLocation = location;
+        }
+      } else {
+        toast.error(response.error || 'Failed to update status');
+      }
+    } catch (error: any) {
+      console.error('Error updating status:', error);
+      
+      // Even if location failed, try to update status with fallback location
+      try {
+        const fallbackResponse = await driverApi.updateStatus({ 
+          isOnline: value, 
+          location: "Downtown Area" 
+        });
+        
+        if (fallbackResponse.success) {
+          setIsOnline(value);
+          toast.warning(`You are now ${value ? 'online' : 'offline'} (using approximate location)`);
+          setCurrentLocation("Downtown Area");
+        } else {
+          toast.error('Failed to update status');
+        }
+      } catch (fallbackError) {
+        toast.error('Network error. Please check your connection.');
+      }
+    } finally {
+      setGettingLocation(false);
+    }
+  };
+
+  const refreshLocation = async () => {
+    try {
+      setGettingLocation(true);
+      const newLocation = await getCurrentLocation();
+      
+      if (isOnline) {
+        // Update location in backend
+        const response = await driverApi.updateStatus({ 
+          isOnline: true, 
+          location: newLocation 
+        });
+        
+        if (response.success) {
+          setCurrentLocation(newLocation);
+          toast.success('Location updated');
+        }
+      } else {
+        setCurrentLocation(newLocation);
+        toast.success('Location refreshed');
+      }
+    } catch (error) {
+      console.error('Error refreshing location:', error);
+      toast.error('Failed to refresh location');
+    } finally {
+      setGettingLocation(false);
+    }
+  };
+
+  const openInMaps = () => {
+    if (!locationCoords) {
+      toast.error('No location coordinates available');
+      return;
+    }
+    
+    const url = `https://www.google.com/maps?q=${locationCoords.latitude},${locationCoords.longitude}`;
+    window.open(url, '_blank');
+  };
+
+  const getVehicleImageUrl = (vehicle: Vehicle): string | null => {
+    if (!vehicle?.imageUrl) return null;
+    // Clean URL by removing query parameters if present
+    return vehicle.imageUrl.split('?')[0];
+  };
+
   const handleVehicleImageUpload = async (vehicleId: string, file: File) => {
+    setUploadingVehiclePic(vehicleId);
     try {
       const formData = new FormData();
       formData.append('image', file);
       
+      console.log('📤 Uploading vehicle image for vehicle:', vehicleId);
+      
       const response = await driverApi.uploadVehicleImage(vehicleId, formData);
+      
       if (response.success) {
         toast.success('Vehicle image uploaded successfully');
-        // Refresh vehicles list
-        loadDashboardData();
+        console.log('✅ Vehicle image upload response:', response.data);
+        
+        // Clear image error for this vehicle
+        setImageErrors(prev => ({ ...prev, [vehicleId]: false }));
+        
+        // Reload data with delay to ensure backend has processed
+        setTimeout(async () => {
+          await loadDashboardData();
+        }, 1000);
       } else {
-        toast.error('Failed to upload vehicle image');
+        toast.error(`Failed to upload image: ${response.error}`);
       }
     } catch (error: any) {
       console.error('Error uploading vehicle image:', error);
-      toast.error('Error uploading vehicle image');
+      toast.error(`Error: ${error.message}`);
+    } finally {
+      setUploadingVehiclePic(null);
     }
   };
 
+  const handleImageError = (vehicleId: string) => {
+    console.error(`❌ Vehicle image load error:`, vehicleId);
+    setImageErrors(prev => ({ ...prev, [vehicleId]: true }));
+  };
+
+  const handleRetryImage = (vehicleId: string) => {
+    setImageErrors(prev => ({ ...prev, [vehicleId]: false }));
+    
+    // Force re-render by updating state
+    setVehicles(prev => [...prev]);
+  };
+
   const currentVehicle = vehicles.find((v: Vehicle) => v.id === selectedVehicle);
+  const currentVehicleImageUrl = currentVehicle ? getVehicleImageUrl(currentVehicle) : null;
+  const hasVehiclePicError = currentVehicle ? imageErrors[currentVehicle.id] : false;
 
   if (loading) {
     return (
@@ -4086,36 +5096,131 @@ export function DriverDashboard() {
         <CardHeader>
           <div className="flex justify-between items-center">
             <CardTitle>Driver Status</CardTitle>
-            <div className="flex items-center space-x-2">
-              <Label htmlFor="online-status">
-                {isOnline ? 'Online' : 'Offline'}
-              </Label>
-              <Switch
-                id="online-status"
-                checked={isOnline}
-                onCheckedChange={handleToggleOnline}
-              />
+            
+            <div className="flex items-center space-x-4">
+              {/* Location refresh button */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={refreshLocation}
+                disabled={gettingLocation}
+                className="flex items-center space-x-1"
+                title="Refresh location"
+              >
+                {gettingLocation ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Navigation className="h-4 w-4" />
+                )}
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+              
+              {/* Online/Offline button */}
+              <Button
+                variant={isOnline ? "default" : "outline"}
+                size="sm"
+                onClick={() => handleToggleOnline(!isOnline)}
+                disabled={gettingLocation}
+                className={`flex items-center space-x-2 transition-all ${
+                  isOnline 
+                    ? 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg' 
+                    : ''
+                }`}
+                aria-label={isOnline ? "Go offline" : "Go online"}
+              >
+                {isOnline ? (
+                  <>
+                    <Wifi className="h-4 w-4" />
+                    <span>Online</span>
+                    <div className="ml-1 w-2 h-2 rounded-full bg-white animate-pulse"></div>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="h-4 w-4" />
+                    <span>Offline</span>
+                  </>
+                )}
+              </Button>
             </div>
           </div>
         </CardHeader>
+        
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="flex items-center space-x-3">
-              <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-              <span className="text-sm">{isOnline ? 'Available for orders' : 'Unavailable'}</span>
+          <div className="space-y-4">
+            {/* Status indicators */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="flex items-center space-x-3">
+                <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                <span className="text-sm font-medium">
+                  {isOnline ? 'Available for orders' : 'Unavailable for orders'}
+                </span>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <MapPin className="h-4 w-4 text-gray-500 flex-shrink-0" />
+                <div className="min-w-0">
+                  <span className="text-sm font-medium block truncate" title={currentLocation}>
+                    {currentLocation}
+                  </span>
+                  {locationError && (
+                    <span className="text-xs text-red-500 block">{locationError}</span>
+                  )}
+                </div>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Star className="h-4 w-4 text-yellow-500 flex-shrink-0" />
+                <span className="text-sm">{stats?.rating?.toFixed(1) || 0} Rating</span>
+              </div>
+              
+              <div className="flex items-center space-x-2">
+                <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                <span className="text-sm">{stats?.totalDeliveries || 0} Deliveries</span>
+              </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <MapPin className="h-4 w-4 text-gray-500" />
-              <span className="text-sm">Downtown Area</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Star className="h-4 w-4 text-yellow-500" />
-              <span className="text-sm">{stats?.rating || 0} Rating</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-blue-500" />
-              <span className="text-sm">Active Today</span>
-            </div>
+            
+            {/* Location details and actions */}
+            {locationCoords && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="text-sm text-gray-600">
+                    <p>Coordinates: {locationCoords.latitude.toFixed(6)}, {locationCoords.longitude.toFixed(6)}</p>
+                    {locationCoords.accuracy && (
+                      <p className="text-xs">Accuracy: ±{Math.round(locationCoords.accuracy)} meters</p>
+                    )}
+                  </div>
+                  
+                  <div className="flex space-x-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={openInMaps}
+                      className="flex items-center space-x-1"
+                    >
+                      <Compass className="h-3 w-3" />
+                      <span>Open in Maps</span>
+                    </Button>
+                    
+                    {isOnline && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleToggleOnline(true)} // Refresh status with current location
+                        disabled={gettingLocation}
+                        className="flex items-center space-x-1"
+                      >
+                        {gettingLocation ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3" />
+                        )}
+                        <span>Update Status</span>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -4127,7 +5232,7 @@ export function DriverDashboard() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center space-x-4">
-            <Label htmlFor="vehicle-select">Select Vehicle:</Label>
+            <Label htmlFor="vehicle-select" className="font-medium">Select Vehicle:</Label>
             <Select value={selectedVehicle} onValueChange={setSelectedVehicle}>
               <SelectTrigger className="w-[250px]">
                 <SelectValue placeholder="Choose vehicle" />
@@ -4135,137 +5240,276 @@ export function DriverDashboard() {
               <SelectContent>
                 {vehicles.map((vehicle: Vehicle) => (
                   <SelectItem key={vehicle.id} value={vehicle.id}>
-                    {vehicle.type} - {vehicle.licensePlate}
+                    {vehicle.type} - {vehicle.licensePlate} {vehicle.make && `(${vehicle.make} ${vehicle.model})`}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
           
-          {currentVehicle && (
+          {currentVehicle ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                {currentVehicle.imageUrl ? (
-                  <img 
-                    src={currentVehicle.imageUrl}
-                    alt={currentVehicle.model}
-                    className="w-full h-40 object-cover rounded-lg"
-                    onError={(e: any) => {
-                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=400&h=250&fit=crop';
-                    }}
-                  />
-                ) : (
-                  <ImageWithFallback
-                    src="https://images.unsplash.com/photo-1558618047-3c8c76ca7d13?w=400&h=250&fit=crop"
-                    alt={currentVehicle.model}
-                    className="w-full h-40 object-cover rounded-lg"
-                  />
-                )}
+              <div className="space-y-2">
+                <div className="relative w-full h-48 bg-gray-100 rounded-lg overflow-hidden border">
+                  {currentVehicleImageUrl && !hasVehiclePicError ? (
+                    <>
+                      <img
+                        key={`vehicle-img-${currentVehicle.id}`}
+                        src={currentVehicleImageUrl}
+                        alt={`${currentVehicle.make} ${currentVehicle.model}`}
+                        className="w-full h-full object-cover"
+                        onError={() => {
+                          console.error('❌ Vehicle image failed to load:', {
+                            url: currentVehicleImageUrl,
+                            vehicleId: currentVehicle.id,
+                          });
+                          handleImageError(currentVehicle.id);
+                        }}
+                        onLoad={() => {
+                          console.log('✅ Vehicle image loaded successfully:', currentVehicleImageUrl);
+                          // Clear any previous errors
+                          handleRetryImage(currentVehicle.id);
+                        }}
+                        crossOrigin="anonymous"
+                      />
+                      
+                      <button
+                        onClick={() => window.open(currentVehicleImageUrl, '_blank')}
+                        className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
+                        title="Open image in new tab"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      
+                      {currentVehicleImageUrl && (
+                        <button
+                          onClick={() => handleRetryImage(currentVehicle.id)}
+                          className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
+                          title="Refresh image"
+                        >
+                          <RefreshCw className="h-4 w-4" />
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                      {hasVehiclePicError ? (
+                        <>
+                          <AlertTriangle className="h-12 w-12 mb-2 text-red-400" />
+                          <span>Image failed to load</span>
+                          <button
+                            onClick={() => handleRetryImage(currentVehicle.id)}
+                            className="mt-2 text-sm text-blue-600 hover:text-blue-800"
+                          >
+                            Retry
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <Truck className="h-12 w-12 mb-2" />
+                          <span>No vehicle image</span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
                 
                 <input
                   type="file"
                   accept="image/*"
                   className="hidden"
                   id="vehicle-image-upload"
-                  onChange={(e: any) => {
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                     const file = e.target.files?.[0];
-                    if (file) {
+                    if (file && currentVehicle) {
                       handleVehicleImageUpload(currentVehicle.id, file);
+                      e.target.value = ''; // Reset input
                     }
                   }}
                 />
                 <label htmlFor="vehicle-image-upload">
-                  <Button variant="outline" className="w-full mt-2 cursor-pointer">
-                    <Upload className="mr-2 h-4 w-4" />
-                    {currentVehicle.imageUrl ? 'Change Photo' : 'Upload Photo'}
+                  <Button 
+                    variant="outline" 
+                    className="w-full cursor-pointer"
+                    disabled={uploadingVehiclePic === currentVehicle.id}
+                  >
+                    {uploadingVehiclePic === currentVehicle.id ? (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="mr-2 h-4 w-4" />
+                        {currentVehicleImageUrl ? 'Update Vehicle Photo' : 'Upload Vehicle Photo'}
+                      </>
+                    )}
                   </Button>
                 </label>
               </div>
-              <div className="space-y-3">
+              
+              <div className="space-y-4">
                 <div>
-                  <h4 className="text-lg">{currentVehicle.model}</h4>
+                  <h3 className="text-xl font-semibold">
+                    {currentVehicle.make} {currentVehicle.model}
+                    {currentVehicle.year && ` (${currentVehicle.year})`}
+                  </h3>
                   <p className="text-gray-600">{currentVehicle.licensePlate}</p>
+                  {currentVehicle.color && (
+                    <p className="text-sm text-gray-500">
+                      Color: {currentVehicle.color}
+                    </p>
+                  )}
                 </div>
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center space-x-1">
-                    <Weight className="h-4 w-4 text-gray-500" />
-                    <span className="text-sm">{currentVehicle.maxWeight} kg</span>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Weight className="h-4 w-4 text-gray-500" />
+                      <span className="font-medium">Max Weight</span>
+                    </div>
+                    <p className="text-lg">{currentVehicle.maxWeight} kg</p>
                   </div>
-                  <div className="flex items-center space-x-1">
-                    <Package className="h-4 w-4 text-gray-500" />
-                    <span className="text-sm">{currentVehicle.maxVolume} m³</span>
+                  
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2">
+                      <Package className="h-4 w-4 text-gray-500" />
+                      <span className="font-medium">Max Volume</span>
+                    </div>
+                    <p className="text-lg">{currentVehicle.maxVolume} m³</p>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {currentVehicle.categories.map((category: string) => (
-                    <Badge key={category} variant="secondary">
-                      {category}
-                    </Badge>
-                  ))}
+                
+                <div>
+                  <h4 className="font-medium mb-2">Vehicle Type</h4>
+                  <Badge variant="secondary" className="text-sm px-3 py-1">
+                    {currentVehicle.type}
+                  </Badge>
+                </div>
+                
+                {currentVehicle.categories && currentVehicle.categories.length > 0 && (
+                  <div>
+                    <h4 className="font-medium mb-2">Capabilities</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {currentVehicle.categories.map((category: string) => (
+                        <Badge key={category} variant="outline">
+                          {category}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <div className="flex items-center">
+                  <div className={`w-3 h-3 rounded-full mr-2 ${currentVehicle.isActive ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                  <span className="text-sm">
+                    {currentVehicle.isActive ? 'Vehicle Active' : 'Vehicle Inactive'}
+                  </span>
                 </div>
               </div>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <Truck className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900">No Vehicles</h3>
+              <p className="text-gray-600 mt-1">Add a vehicle in your profile to get started</p>
+              <Button 
+                className="mt-4"
+                onClick={() => window.location.href = '/driver-profile?tab=vehicle'}
+              >
+                Go to Vehicle Setup
+              </Button>
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Pending Orders */}
+      {/* Stats Overview */}
       <Card>
         <CardHeader>
-          <CardTitle>Available Orders Near You</CardTitle>
+          <CardTitle>Driver Statistics</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-4">
-            {pendingOrders.map((order: Order) => (
-              <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h4 className="font-medium">{order.id}</h4>
-                    <p className="text-sm text-gray-600">Customer: {order.customer}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg text-green-600">{order.payment}</p>
-                    <p className="text-sm text-gray-600">{order.distance}</p>
-                  </div>
-                </div>
-                
-                <div className="space-y-2 mb-3">
-                  <div className="flex items-start space-x-2">
-                    <MapPin className="h-4 w-4 text-green-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Pickup:</p>
-                      <p className="text-sm text-gray-600">{order.pickup}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start space-x-2">
-                    <MapPin className="h-4 w-4 text-red-500 mt-0.5" />
-                    <div>
-                      <p className="text-sm font-medium">Delivery:</p>
-                      <p className="text-sm text-gray-600">{order.delivery}</p>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-4">
-                    <span className="text-sm text-gray-600">{order.weight}</span>
-                    <span className="text-sm text-gray-600">{order.volume}</span>
-                    <Badge variant={order.urgency === 'urgent' ? 'destructive' : 'secondary'}>
-                      {order.urgency}
-                    </Badge>
-                  </div>
-                  <div className="space-x-2">
-                    <Button variant="outline" size="sm">View Details</Button>
-                    <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-                      Accept Order
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            <div className="text-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
+              <p className="text-3xl font-bold text-blue-600">{stats?.totalDeliveries || 0}</p>
+              <p className="text-gray-600">Total Deliveries</p>
+            </div>
+            <div className="text-center p-4 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition">
+              <p className="text-3xl font-bold text-yellow-600">{stats?.rating?.toFixed(1) || 0}</p>
+              <p className="text-gray-600">Average Rating</p>
+            </div>
+            <div className="text-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition">
+              <p className="text-3xl font-bold text-green-600">${(stats?.totalEarnings || 0).toLocaleString()}</p>
+              <p className="text-gray-600">Total Earnings</p>
+            </div>
+            <div className="text-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
+              <p className="text-3xl font-bold text-purple-600">{stats?.completionRate || 0}%</p>
+              <p className="text-gray-600">Completion Rate</p>
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Pending Orders */}
+      {pendingOrders.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Available Orders Near You</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {pendingOrders.map((order: Order) => (
+                <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50 transition">
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <h4 className="font-medium">Order #{order.id}</h4>
+                      <p className="text-sm text-gray-600">Customer: {order.customer}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-semibold text-green-600">{order.payment}</p>
+                      <p className="text-sm text-gray-600">{order.distance}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2 mb-3">
+                    <div className="flex items-start space-x-2">
+                      <MapPin className="h-4 w-4 text-green-500 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium">Pickup:</p>
+                        <p className="text-sm text-gray-600">{order.pickup}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <MapPin className="h-4 w-4 text-red-500 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium">Delivery:</p>
+                        <p className="text-sm text-gray-600">{order.delivery}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center space-x-4">
+                      <span className="text-sm text-gray-600">{order.weight}</span>
+                      <span className="text-sm text-gray-600">{order.volume}</span>
+                      <Badge variant={order.urgency === 'urgent' ? 'destructive' : 'secondary'}>
+                        {order.urgency}
+                      </Badge>
+                    </div>
+                    <div className="space-x-2">
+                      <Button variant="outline" size="sm">View Details</Button>
+                      <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
+                        Accept Order
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
@@ -7372,72 +8616,6 @@ export function DriverProfile() {
         </CardContent>
       </Card>
 
-      {/* Debug Info - Remove in production */}
-      <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-        <div className="flex justify-between items-center">
-          <span className="text-blue-700 font-medium">Debug Info:</span>
-          <div className="flex gap-2">
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={async () => {
-                console.log('🔍 Testing all image URLs...');
-                
-                // Test profile picture
-                if (profilePictureUrl) {
-                  const result = await testImageExists(profilePictureUrl);
-                  console.log(`📸 Profile picture test:`, result);
-                  
-                  if (!result.exists) {
-                    console.log('🔄 Trying alternative profile picture URLs...');
-                    
-                    // Try all available profile picture URLs
-                    const profileUrls = [
-                      profileData?.profilePicture?.originalUrl,
-                      profileData?.profilePicture?.mediumUrl,
-                      profileData?.profilePicture?.smallUrl,
-                      profileData?.profilePicture?.thumbnailUrl
-                    ].filter(Boolean);
-                    
-                    for (const url of profileUrls) {
-                      if (url) {
-                        const test = await testImageExists(url);
-                        console.log(`  ${url}: ${test.exists ? '✅ Works' : '❌ Fails'}`);
-                      }
-                    }
-                  }
-                }
-                
-                // Test vehicle image
-                if (activeVehicleImageUrl) {
-                  const result = await testImageExists(activeVehicleImageUrl);
-                  console.log(`🚗 Vehicle image test:`, result);
-                }
-              }}
-              className="text-xs"
-            >
-              Test Image URLs
-            </Button>
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={loadProfileData}
-              className="text-xs"
-            >
-              <RefreshCw className="h-3 w-3 mr-1" />
-              Refresh
-            </Button>
-          </div>
-        </div>
-        <div className="mt-2 text-xs text-blue-600">
-          {profilePictureUrl && (
-            <p className="truncate">Profile Pic: {profilePictureUrl.substring(0, 60)}...</p>
-          )}
-          {activeVehicleImageUrl && (
-            <p className="truncate">Vehicle Pic: {activeVehicleImageUrl.substring(0, 60)}...</p>
-          )}
-        </div>
-      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-4">
@@ -7642,7 +8820,7 @@ export function DriverProfile() {
                                 handleImageError('vehicle', activeVehicleId || '');
 
                                 // Try to open the URL in console for debugging
-                                console.log('🔗 Try opening this URL directly:', activeVehicleImageUrl);
+                                
                               }}
                               onLoad={() => {
                                 console.log('✅ Vehicle image loaded successfully:', activeVehicleImageUrl);
@@ -7728,7 +8906,7 @@ export function DriverProfile() {
                       
                       {activeVehicleImageUrl && (
                         <div className="mt-2 text-xs text-gray-500 text-center truncate">
-                          URL: {activeVehicleImageUrl.substring(0, 40)}...
+                          
                         </div>
                       )}
                     </div>
@@ -19166,219 +20344,128 @@ export const APP_ENV = getEnvVar('VITE_MODE', 'development');
 `src\hooks\useCustomerProfile.ts`:
 
 ```ts
-import { useState, useEffect } from 'react';
-import { driverApi, userApi } from '../lib/api';
+import { useState, useEffect, useCallback } from 'react';
+import { customerApi } from '../lib/api';
 import { toast } from 'sonner';
-import { getCurrentUser, getCurrentUserId } from '../lib/auth-utils';
 
-export function useDriverProfile() {
-  const [driverData, setDriverData] = useState<any>(null);
+export const useCustomerProfile = () => {
+  const [customerData, setCustomerData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [error, setError] = useState(null);
 
-  const loadDriverProfile = async () => {
+  const loadProfile = useCallback(async () => {
     try {
       setLoading(true);
-      
-      // First load user profile from user service
-      const userResponse = await userApi.getProfile();
-      if (!userResponse.success) {
-        throw new Error(userResponse.error || 'Failed to load user profile');
+      const response = await customerApi.getProfile();
+      if (response.success) {
+        setCustomerData(response.data);
       }
-      setUserProfile(userResponse.data);
-      
-      // Then load driver profile from driver service
-      const driverResponse = await driverApi.getProfile();
-      
-      if (!driverResponse.success) {
-        // If no driver profile exists yet, create a basic structure
-        if (driverResponse.error?.includes('not found') || driverResponse.error?.includes('No profile')) {
-          console.log('No driver profile found, using user data');
-          const currentUser = getCurrentUser();
-          setDriverData({
-            personalInfo: {
-              firstName: currentUser?.firstName || userResponse.data.firstName || '',
-              lastName: currentUser?.lastName || userResponse.data.lastName || '',
-              email: currentUser?.email || userResponse.data.email || '',
-              phone: currentUser?.phone || userResponse.data.phone || '',
-              address: '',
-              dateOfBirth: '',
-              joinDate: new Date().toISOString().split('T')[0]
-            },
-            vehicleInfo: {
-              type: '',
-              make: '',
-              model: '',
-              year: '',
-              color: '',
-              licensePlate: '',
-              maxWeight: 0,
-              maxVolume: 0
-            },
-            documents: [],
-            stats: {
-              totalDeliveries: 0,
-              rating: 0,
-              totalEarnings: 0,
-              completionRate: 0
-            },
-            verification: {
-              backgroundCheck: 'pending',
-              profileCompletion: 30,
-              canDrive: false
-            }
-          });
-        } else {
-          throw new Error(driverResponse.error);
-        }
-      } else {
-        // Merge user data with driver data
-        setDriverData({
-          ...driverResponse.data,
-          personalInfo: {
-            firstName: userResponse.data.firstName || driverResponse.data.firstName || '',
-            lastName: userResponse.data.lastName || driverResponse.data.lastName || '',
-            email: userResponse.data.email || driverResponse.data.email || '',
-            phone: userResponse.data.phone || driverResponse.data.phone || '',
-            address: driverResponse.data.address || '',
-            dateOfBirth: driverResponse.data.dateOfBirth || '',
-            joinDate: driverResponse.data.joinDate || new Date().toISOString().split('T')[0]
-          }
-        });
-      }
-      
     } catch (err: any) {
-      console.error('Error loading driver profile:', err);
-      setError(err.message);
-      
-      // Create minimal driver data structure for UI
-      const currentUser = getCurrentUser();
-      setDriverData({
-        personalInfo: {
-          firstName: currentUser?.firstName || '',
-          lastName: currentUser?.lastName || '',
-          email: currentUser?.email || '',
-          phone: currentUser?.phone || '',
-          address: '',
-          dateOfBirth: '',
-          joinDate: new Date().toISOString().split('T')[0]
-        },
-        vehicleInfo: {
-          type: '',
-          make: '',
-          model: '',
-          year: '',
-          color: '',
-          licensePlate: '',
-          maxWeight: 0,
-          maxVolume: 0
-        },
-        documents: [],
-        stats: {
-          totalDeliveries: 0,
-          rating: 0,
-          totalEarnings: 0,
-          completionRate: 0
-        },
-        verification: {
-          backgroundCheck: 'pending',
-          profileCompletion: 30,
-          canDrive: false
-        }
-      });
-      
-      toast.error(`Failed to load driver profile: ${err.message}`);
+      console.error('Error loading customer profile:', err);
+      setError(err.message || 'Failed to load profile');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  const createProfile = async (data: any) => {
+    try {
+      const response = await customerApi.createProfile(data);
+      if (response.success) {
+        await loadProfile();
+        return true;
+      }
+      toast.error(response.error || 'Failed to create profile');
+      return false;
+    } catch (error: any) {
+      console.error('Error creating profile:', error);
+      toast.error(error.message || 'Network error');
+      return false;
     }
   };
 
   const updateProfile = async (data: any) => {
     try {
-      // Update driver profile
-      const driverResponse = await driverApi.updateProfile(data);
-      if (!driverResponse.success) {
-        throw new Error(driverResponse.error || 'Failed to update driver profile');
+      const response = await customerApi.updateProfile(data);
+      if (response.success) {
+        await loadProfile();
+        return true;
       }
-      
-      // Also update user profile if needed
-      if (data.firstName || data.lastName || data.phone) {
-        const userUpdateData: any = {};
-        if (data.firstName) userUpdateData.firstName = data.firstName;
-        if (data.lastName) userUpdateData.lastName = data.lastName;
-        if (data.phone) userUpdateData.phone = data.phone;
-        
-        await userApi.updateProfile(userUpdateData);
-      }
-      
-      toast.success('Profile updated successfully');
-      await loadDriverProfile(); // Refresh data
-      return true;
-    } catch (err: any) {
-      toast.error(`Failed to update profile: ${err.message}`);
+      toast.error(response.error || 'Failed to update profile');
+      return false;
+    } catch (error: any) {
+      console.error('Error updating profile:', error);
+      toast.error(error.message || 'Network error');
       return false;
     }
   };
 
-  const updateAvailability = async (isAvailable: boolean) => {
+  const uploadProfilePicture = async (file: File) => {
     try {
-      const response = await driverApi.updateAvailability(isAvailable);
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to update availability');
+      const formData = new FormData();
+      formData.append('profilePicture', file);
+      const response = await customerApi.uploadProfilePicture(formData);
+      if (response.success) {
+        await loadProfile();
+        return true;
       }
-      toast.success(`You are now ${isAvailable ? 'available' : 'unavailable'}`);
-      return true;
-    } catch (err: any) {
-      toast.error(`Failed to update availability: ${err.message}`);
+      toast.error(response.error || 'Failed to upload picture');
+      return false;
+    } catch (error: any) {
+      console.error('Error uploading picture:', error);
+      toast.error(error.message || 'Network error');
       return false;
     }
   };
 
-  const addVehicle = async (vehicleData: any) => {
+  const addAddress = async (data: any) => {
     try {
-      const response = await driverApi.addVehicle(vehicleData);
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to add vehicle');
+      const response = await customerApi.addAddress(data);
+      if (response.success) {
+        await loadProfile();
+        return true;
       }
-      toast.success('Vehicle added successfully');
-      await loadDriverProfile(); // Refresh data
-      return response.data;
-    } catch (err: any) {
-      toast.error(`Failed to add vehicle: ${err.message}`);
-      return null;
+      toast.error(response.error || 'Failed to add address');
+      return false;
+    } catch (error: any) {
+      console.error('Error adding address:', error);
+      toast.error(error.message || 'Network error');
+      return false;
     }
   };
 
-  const getDriverStats = async () => {
+  const updateAddress = async (id: string, data: any) => {
     try {
-      const response = await driverApi.getStats();
-      if (!response.success) {
-        throw new Error(response.error || 'Failed to load stats');
+      const response = await customerApi.updateAddress(id, data);
+      if (response.success) {
+        await loadProfile();
+        return true;
       }
-      return response.data;
-    } catch (err: any) {
-      console.error('Error loading driver stats:', err);
-      return null;
+      toast.error(response.error || 'Failed to update address');
+      return false;
+    } catch (error: any) {
+      console.error('Error updating address:', error);
+      toast.error(error.message || 'Network error');
+      return false;
     }
   };
-
-  useEffect(() => {
-    loadDriverProfile();
-  }, []);
 
   return {
-    driverData,
-    userProfile,
+    customerData,
     loading,
     error,
-    loadDriverProfile,
+    loadProfile,
+    createProfile,
     updateProfile,
-    updateAvailability,
-    addVehicle,
-    getDriverStats
+    uploadProfilePicture,
+    addAddress,
+    updateAddress,
   };
-}
+};
 ```
 
 `src\hooks\useDriverProfile.ts`:
@@ -19607,7 +20694,14 @@ async function makeRequest<T = any>(
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-
+    
+    if (service === 'customer' && body && method !== 'GET' && method !== 'DELETE') {
+      const currentUser = getCurrentUser();
+      if (currentUser?.id && !body.userId) {
+        body = { ...body, userId: currentUser.id };
+      }
+    }
+    
     const url = `${baseUrl}${endpoint}`;
     const config: RequestInit = {
       method,
@@ -19853,6 +20947,11 @@ export const driverApi = {
     return makeRequest('/api/drivers/profile', 'PUT', data, 'driver');
   },
 
+  // In driverApi object
+  updateStatus: async (data: { isOnline: boolean }) => {
+    return makeRequest('/api/drivers/status', 'PATCH', data, 'driver');
+  },
+
   // Vehicles
   getVehicles: async () => {
     return makeRequest('/api/drivers/vehicles', 'GET', undefined, 'driver');
@@ -19948,13 +21047,39 @@ export const customerApi = {
   getProfile: async () => {
     return makeRequest('/api/customers/profile', 'GET', undefined, 'customer');
   },
-
   createProfile: async (data: any) => {
     return makeRequest('/api/customers/profile', 'POST', data, 'customer');
   },
-
   updateProfile: async (data: any) => {
     return makeRequest('/api/customers/profile', 'PUT', data, 'customer');
+  },
+  uploadProfilePicture: async (formData: FormData) => {
+    return makeUploadRequest('/api/customers/profile-picture', formData, 'customer');
+  },
+  addAddress: async (data: any) => {
+    return makeRequest('/api/customers/addresses', 'POST', data, 'customer');
+  },
+  updateAddress: async (id: string, data: any) => {
+    return makeRequest(`/api/customers/addresses/${id}`, 'PUT', data, 'customer');
+  },
+  // Get all addresses
+  getAddresses: async () => {
+    return makeRequest('/api/customers/addresses', 'GET', undefined, 'customer');
+  },
+
+  // Delete address
+  deleteAddress: async (id: string) => {
+    return makeRequest(`/api/customers/addresses/${id}`, 'DELETE', undefined, 'customer');
+  },
+
+  // Update preferences (optional but useful)
+  updatePreferences: async (data: any) => {
+    return makeRequest('/api/customers/preferences', 'PUT', data, 'customer');
+  },
+
+  // Get stats (member since, order count, etc.)
+  getStats: async () => {
+    return makeRequest('/api/customers/stats', 'GET', undefined, 'customer');
   },
 };
 

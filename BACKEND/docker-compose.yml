@@ -132,7 +132,7 @@ services:
       - "3309:3306"
     volumes:
       - customer-mysql-data:/var/lib/mysql
-      - customer-init:/docker-entrypoint-initdb.d
+      - ./microservices/customer-service/src/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     networks:
       - app-network
     healthcheck:
@@ -163,7 +163,7 @@ services:
       USER_SERVICE_URL: http://user-service:3001
       APP_URL: http://localhost:3003
       CORS_ORIGIN: http://localhost:3000
-      UPLOAD_PATH: ./src/uploads
+      UPLOAD_PATH: /app/uploads
       MAX_FILE_SIZE: 5242880
       ALLOWED_FILE_TYPES: image/jpeg,image/png,image/jpg
     ports:
@@ -174,7 +174,7 @@ services:
       user-service:
         condition: service_started
     volumes:
-      - customer-uploads:/app/src/uploads
+      - customer-uploads:/app/uploads
       - customer-logs:/app/logs
     networks:
       - app-network
