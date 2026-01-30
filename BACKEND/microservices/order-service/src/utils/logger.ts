@@ -1,5 +1,5 @@
-// Updated logger.ts
-import winston from 'winston';
+// Updated logger.ts - Fix Winston type issue
+import winston, { Logger as WinstonLogger } from 'winston';
 import path from 'path';
 import fs from 'fs';
 
@@ -18,7 +18,7 @@ const logFormat = winston.format.combine(
 
 // Logger class for better OOP usage
 export class Logger {
-  private logger: winston.Logger;
+  private logger: WinstonLogger;
   private context: string;
 
   constructor(context: string = 'App') {
@@ -56,7 +56,8 @@ export class Logger {
   }
 
   error(message: string, error?: any) {
-    this.logger.error(message, { error });
+    const errorMessage = error instanceof Error ? error.message : error;
+    this.logger.error(message, { error: errorMessage });
   }
 
   warn(message: string, meta?: any) {
@@ -68,12 +69,17 @@ export class Logger {
   }
 
   http(message: string, meta?: any) {
-    this.logger.http(message, meta);
+    // Check if http method exists, fallback to info if not
+    if ((this.logger as any).http) {
+      (this.logger as any).http(message, meta);
+    } else {
+      this.logger.info(`[HTTP] ${message}`, meta);
+    }
   }
 }
 
 // Keep the default instance for backward compatibility
-export const defaultLogger = new Logger();
+export const defaultLogger = new Logger('App');
 
 // Export for direct use
 export default defaultLogger;

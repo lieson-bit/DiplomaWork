@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { ResponseUtil } from '../utils/response.util';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 
 declare global {
   namespace Express {
@@ -14,6 +14,9 @@ declare global {
     }
   }
 }
+
+// Create logger instance for this module
+const logger = new Logger('AuthMiddleware');
 
 export const authenticate = (
   req: Request,
