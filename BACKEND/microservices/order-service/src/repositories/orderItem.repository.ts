@@ -1,7 +1,8 @@
 import { db } from '../config/database';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
+import { RowDataPacket, OkPacket, ResultSetHeader } from 'mysql2';
 
-export interface OrderItem {
+export interface OrderItem extends RowDataPacket {
   id: string;
   order_id: string;
   item_name: string;
@@ -40,6 +41,12 @@ export interface CreateOrderItemData {
 }
 
 export class OrderItemRepository {
+  private logger: Logger;
+
+  constructor() {
+    this.logger = new Logger('OrderItemRepository');
+  }
+
   async create(data: CreateOrderItemData): Promise<OrderItem> {
     try {
       const sql = `
@@ -70,11 +77,13 @@ export class OrderItemRepository {
       ];
       
       const result = await db.execute(sql, params);
-      return await this.findById(result.insertId.toString()) as OrderItem;
+      const insertId = (result as unknown as ResultSetHeader).insertId;
+      return await this.findById(insertId.toString()) as OrderItem;
       
-    } catch (error: any) {
-      logger.error('Failed to create order item:', error);
-      throw new Error(`Order item creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create order item:', errorMessage);
+      throw new Error(`Order item creation failed: ${errorMessage}`);
     }
   }
 
@@ -114,15 +123,16 @@ export class OrderItemRepository {
             itemData.sku || null
           ];
           
-          const [result] = await connection.execute(sql, params);
-          const itemId = (result as any).insertId;
+          const result = await connection.execute(sql, params);
+          const insertId = (result as unknown as ResultSetHeader).insertId;
           
           // Fetch the created item
-          const [items] = await connection.query<OrderItem[]>(
+          const [rows] = await connection.execute<OrderItem[]>(
             'SELECT * FROM order_items WHERE id = ?',
-            [itemId]
+            [insertId]
           );
           
+          const items = rows as OrderItem[];
           if (items.length > 0) {
             createdItems.push(items[0]);
           }
@@ -131,9 +141,10 @@ export class OrderItemRepository {
         return createdItems;
       });
       
-    } catch (error: any) {
-      logger.error('Failed to create order items batch:', error);
-      throw new Error(`Batch order item creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create order items batch:', errorMessage);
+      throw new Error(`Batch order item creation failed: ${errorMessage}`);
     }
   }
 
@@ -142,8 +153,9 @@ export class OrderItemRepository {
       const sql = 'SELECT * FROM order_items WHERE id = ? LIMIT 1';
       const items = await db.query<OrderItem>(sql, [id]);
       return items.length > 0 ? items[0] : null;
-    } catch (error: any) {
-      logger.error('Failed to find order item by ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find order item by ID:', errorMessage);
       throw error;
     }
   }
@@ -152,8 +164,9 @@ export class OrderItemRepository {
     try {
       const sql = 'SELECT * FROM order_items WHERE order_id = ? ORDER BY created_at';
       return await db.query<OrderItem>(sql, [orderId]);
-    } catch (error: any) {
-      logger.error('Failed to find order items by order ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find order items by order ID:', errorMessage);
       throw error;
     }
   }
@@ -181,9 +194,10 @@ export class OrderItemRepository {
       await db.execute(sql, params);
       
       return await this.findById(id);
-    } catch (error: any) {
-      logger.error('Failed to update order item:', error);
-      throw new Error(`Order item update failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update order item:', errorMessage);
+      throw new Error(`Order item update failed: ${errorMessage}`);
     }
   }
 
@@ -191,9 +205,11 @@ export class OrderItemRepository {
     try {
       const sql = 'DELETE FROM order_items WHERE id = ?';
       const result = await db.execute(sql, [id]);
-      return result.affectedRows > 0;
-    } catch (error: any) {
-      logger.error('Failed to delete order item:', error);
+      const affectedRows = (result as unknown as ResultSetHeader).affectedRows;
+      return affectedRows > 0;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to delete order item:', errorMessage);
       throw error;
     }
   }
@@ -202,9 +218,11 @@ export class OrderItemRepository {
     try {
       const sql = 'DELETE FROM order_items WHERE order_id = ?';
       const result = await db.execute(sql, [orderId]);
-      return result.affectedRows > 0;
-    } catch (error: any) {
-      logger.error('Failed to delete order items by order ID:', error);
+      const affectedRows = (result as unknown as ResultSetHeader).affectedRows;
+      return affectedRows > 0;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to delete order items by order ID:', errorMessage);
       throw error;
     }
   }
@@ -249,8 +267,9 @@ export class OrderItemRepository {
         fragileCount: result?.fragile_count || 0,
         temperatureSensitiveCount: result?.temperature_sensitive_count || 0
       };
-    } catch (error: any) {
-      logger.error('Failed to calculate order totals:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to calculate order totals:', errorMessage);
       throw error;
     }
   }
@@ -290,7 +309,7 @@ export class OrderItemRepository {
       
       const items = await db.query<any>(sql, [orderId]);
       
-      return items.map(item => ({
+      return items.map((item: any) => ({
         id: item.id,
         name: item.name,
         weight: parseFloat(item.weight),
@@ -303,8 +322,9 @@ export class OrderItemRepository {
           height: parseFloat(item.height)
         } : undefined
       }));
-    } catch (error: any) {
-      logger.error('Failed to get items for packing:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get items for packing:', errorMessage);
       throw error;
     }
   }
@@ -353,8 +373,9 @@ export class OrderItemRepository {
         overweightItems,
         oversizedItems
       };
-    } catch (error: any) {
-      logger.error('Failed to validate items capacity:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to validate items capacity:', errorMessage);
       throw error;
     }
   }

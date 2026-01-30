@@ -276,6 +276,41 @@ CREATE TABLE payment_transactions (
     INDEX idx_payment_transactions_driver (driver_id)
 );
 
+-- Order Messages Table
+CREATE TABLE IF NOT EXISTS order_messages (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    order_id VARCHAR(36) NOT NULL,
+    sender_id VARCHAR(36) NOT NULL,
+    sender_type ENUM('customer', 'driver') NOT NULL,
+    receiver_id VARCHAR(36) NOT NULL,
+    content TEXT NOT NULL,
+    message_type ENUM('text', 'location', 'image', 'status_update') DEFAULT 'text',
+    metadata JSON,
+    read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    INDEX idx_order_messages_order (order_id),
+    INDEX idx_order_messages_sender (sender_id),
+    INDEX idx_order_messages_receiver (receiver_id),
+    INDEX idx_order_messages_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- User Notifications Table
+CREATE TABLE IF NOT EXISTS user_notifications (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id VARCHAR(36) NOT NULL,
+    type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    data JSON,
+    read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_user_notifications_user (user_id),
+    INDEX idx_user_notifications_read (read),
+    INDEX idx_user_notifications_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Create necessary indexes for performance
 CREATE INDEX idx_orders_customer ON orders(customer_id);

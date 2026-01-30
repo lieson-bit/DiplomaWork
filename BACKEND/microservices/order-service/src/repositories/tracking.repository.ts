@@ -1,5 +1,5 @@
 import { db } from '../config/database';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 
 export interface LocationTracking {
   id: string;
@@ -37,6 +37,12 @@ export interface TrackingSummary {
 }
 
 export class TrackingRepository {
+  private logger: Logger;
+
+  constructor() {
+    this.logger = new Logger('TrackingRepository');
+  }
+
   async create(data: CreateTrackingData): Promise<LocationTracking> {
     try {
       const sql = `
@@ -60,9 +66,10 @@ export class TrackingRepository {
       const result = await db.execute(sql, params);
       return await this.findById(result.insertId.toString()) as LocationTracking;
       
-    } catch (error: any) {
-      logger.error('Failed to create tracking point:', error);
-      throw new Error(`Tracking point creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create tracking point:', errorMessage);
+      throw new Error(`Tracking point creation failed: ${errorMessage}`);
     }
   }
 
@@ -91,9 +98,10 @@ export class TrackingRepository {
       const result = await db.execute(sql, [values]);
       return result.affectedRows;
       
-    } catch (error: any) {
-      logger.error('Failed to create tracking batch:', error);
-      throw new Error(`Tracking batch creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create tracking batch:', errorMessage);
+      throw new Error(`Tracking batch creation failed: ${errorMessage}`);
     }
   }
 
@@ -102,8 +110,9 @@ export class TrackingRepository {
       const sql = 'SELECT * FROM location_tracking WHERE id = ? LIMIT 1';
       const points = await db.query<LocationTracking>(sql, [id]);
       return points.length > 0 ? points[0] : null;
-    } catch (error: any) {
-      logger.error('Failed to find tracking point by ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find tracking point by ID:', errorMessage);
       throw error;
     }
   }
@@ -136,8 +145,9 @@ export class TrackingRepository {
       }
       
       return await db.query<LocationTracking>(sql, params);
-    } catch (error: any) {
-      logger.error('Failed to find tracking points by order ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find tracking points by order ID:', errorMessage);
       throw error;
     }
   }
@@ -162,8 +172,9 @@ export class TrackingRepository {
       }
       
       return await db.query<LocationTracking>(sql, params);
-    } catch (error: any) {
-      logger.error('Failed to find tracking points by driver ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find tracking points by driver ID:', errorMessage);
       throw error;
     }
   }
@@ -179,8 +190,9 @@ export class TrackingRepository {
       
       const points = await db.query<LocationTracking>(sql, [orderId]);
       return points.length > 0 ? points[0] : null;
-    } catch (error: any) {
-      logger.error('Failed to get latest location:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get latest location:', errorMessage);
       throw error;
     }
   }
@@ -196,8 +208,9 @@ export class TrackingRepository {
       
       const points = await db.query<LocationTracking>(sql, [driverId]);
       return points.length > 0 ? points[0] : null;
-    } catch (error: any) {
-      logger.error('Failed to get driver latest location:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get driver latest location:', errorMessage);
       throw error;
     }
   }
@@ -220,8 +233,9 @@ export class TrackingRepository {
       
       await db.execute(sql, [latitude, longitude, orderId]);
       return true;
-    } catch (error: any) {
-      logger.error('Failed to update order driver location:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update order driver location:', errorMessage);
       throw error;
     }
   }
@@ -280,8 +294,9 @@ export class TrackingRepository {
         averageSpeed: parseFloat(result?.averageSpeed?.toString() || '0'),
         durationMinutes
       };
-    } catch (error: any) {
-      logger.error('Failed to get tracking summary:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get tracking summary:', errorMessage);
       throw error;
     }
   }
@@ -333,8 +348,9 @@ export class TrackingRepository {
       // Return the simulated points
       return await this.findByOrderId(orderId, { limit: totalPoints + 1 });
       
-    } catch (error: any) {
-      logger.error('Failed to simulate route:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to simulate route:', errorMessage);
       throw error;
     }
   }
@@ -347,10 +363,11 @@ export class TrackingRepository {
       `;
       
       const result = await db.execute(sql, [days]);
-      logger.info(`Cleaned up ${result.affectedRows} old tracking records`);
+      this.logger.info(`Cleaned up ${result.affectedRows} old tracking records`);
       return result.affectedRows;
-    } catch (error: any) {
-      logger.error('Failed to cleanup old tracking:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to cleanup old tracking:', errorMessage);
       throw error;
     }
   }

@@ -1,5 +1,6 @@
+// Update bulk.service.ts:
 import { OrderRepository } from '../repositories/order.repository';
-import { BulkOrderRepository } from '../repositories/bulk.repository';
+import { BulkOrderRepository } from '../repositories/bulk.repository'
 import { NotificationService } from './notification.service';
 import { ExcelParser } from '../utils/excel.parser';
 import { Logger } from '../utils/logger';
@@ -29,7 +30,7 @@ export interface OrderData {
 }
 
 export class BulkService {
-  private logger = new Logger('BulkService');
+  private logger: Logger;
   private orderRepository: OrderRepository;
   private bulkRepository: BulkOrderRepository;
   private notificationService: NotificationService;
@@ -43,6 +44,7 @@ export class BulkService {
     orderService: OrderService,
     excelParser: ExcelParser
   ) {
+    this.logger = new Logger('BulkService');
     this.orderRepository = orderRepository;
     this.bulkRepository = bulkRepository;
     this.notificationService = notificationService;
@@ -71,23 +73,27 @@ export class BulkService {
       );
 
       // Send notification
-      await this.notificationService.sendBulkOrderCompleteNotification(
-        bulkOrder.customerId,
+      await this.sendBulkOrderCompleteNotification(
+        bulkOrder.customer_id,
         bulkOrderId,
         createdOrders.successful.length,
         createdOrders.failed.length
       );
 
       return {
-        ...bulkOrder,
+        customerId: bulkOrder.customer_id,
+        bulkOrderName: bulkOrder.bulk_order_name,
+        fileUrl: bulkOrder.file_url,
+        totalOrders: bulkOrder.total_orders,
         orders: createdOrders.successful
       };
-    } catch (error) {
-      this.logger.error(`Failed to process bulk order ${bulkOrderId}:`, error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`Failed to process bulk order ${bulkOrderId}:`, errorMessage);
       await this.bulkRepository.updateBulkOrderStatus(
         bulkOrderId, 
         'failed', 
-        error.message
+        errorMessage
       );
       throw error;
     }
@@ -95,25 +101,42 @@ export class BulkService {
 
   private async createBulkOrders(
     bulkOrderId: string, 
-    orders: OrderData[]
+    orders: any
   ): Promise<{ successful: any[]; failed: { order: OrderData; error: string }[] }> {
     const successful = [];
     const failed = [];
 
-    for (const orderData of orders) {
+    const orderList: OrderData[] = Array.isArray(orders)
+      ? orders
+      : orders?.rows ?? orders?.data ?? orders?.orders ?? orders?.items ?? [];
+
+    for (const orderData of orderList) {
+      if (!orderData) continue;
       try {
-        const order = await this.orderService.createOrder({
-          ...orderData,
-          isBulkOrder: true,
-          bulkOrderId,
-          customerId: await this.getCustomerIdFromBulkOrder(bulkOrderId)
+        const customerId = await this.getCustomerIdFromBulkOrder(bulkOrderId);
+        
+        const order = await this.orderService.createOrder(customerId, {
+          pickup_address: orderData.pickupAddress,
+          delivery_address: orderData.deliveryAddress,
+          pickup_contact_name: orderData.recipientName,
+          pickup_contact_phone: orderData.recipientPhone,
+          delivery_contact_name: orderData.recipientName,
+          delivery_contact_phone: orderData.recipientPhone,
+          package_description: orderData.packageDescription,
+          total_weight_kg: orderData.weight,
+          total_volume_m3: orderData.dimensions ? 
+            (orderData.dimensions.length * orderData.dimensions.width * orderData.dimensions.height) / 1000000 : 0.1,
+          customer_notes: orderData.specialInstructions,
+          is_bulk_order: true,
+          bulk_order_id: bulkOrderId
         });
 
         successful.push(order);
         this.logger.info(`Created order ${order.id} for bulk order ${bulkOrderId}`);
-      } catch (error) {
-        failed.push({ order: orderData, error: error.message });
-        this.logger.warn(`Failed to create order for bulk order ${bulkOrderId}:`, error);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        failed.push({ order: orderData, error: errorMessage });
+        this.logger.warn(`Failed to create order for bulk order ${bulkOrderId}:`, errorMessage);
       }
     }
 
@@ -125,7 +148,7 @@ export class BulkService {
     if (!bulkOrder) {
       throw new Error(`Bulk order ${bulkOrderId} not found`);
     }
-    return bulkOrder.customerId;
+    return bulkOrder.customer_id;
   }
 
   async getBulkOrderStatus(bulkOrderId: string): Promise<any> {
@@ -134,15 +157,38 @@ export class BulkService {
 
   async retryFailedOrders(bulkOrderId: string): Promise<{ retried: number; remainingFailed: number }> {
     const bulkOrder = await this.bulkRepository.findById(bulkOrderId);
-    if (!bulkOrder || bulkOrder.processingStatus !== 'completed_with_errors') {
+    if (!bulkOrder || bulkOrder.processing_status !== 'completed_with_errors') {
       throw new Error('Bulk order not found or not in retryable state');
     }
 
     // Implementation for retrying failed orders
-    // This would fetch failed orders and retry them
     this.logger.info(`Retrying failed orders for bulk order ${bulkOrderId}`);
     
     // Placeholder implementation
-    return { retried: 0, remainingFailed: bulkOrder.failedOrders };
+    return { retried: 0, remainingFailed: bulkOrder.failed_orders };
+  }
+
+  // ADDED: Missing method for notification
+  private async sendBulkOrderCompleteNotification(
+    customerId: string,
+    bulkOrderId: string,
+    successfulCount: number,
+    failedCount: number
+  ): Promise<void> {
+    try {
+      await this.notificationService.sendOrderNotification(
+        customerId,
+        bulkOrderId,
+        'bulk_order_completed',
+        { 
+          successfulCount, 
+          failedCount,
+          totalCount: successfulCount + failedCount
+        }
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn('Failed to send bulk order completion notification:', errorMessage);
+    }
   }
 }

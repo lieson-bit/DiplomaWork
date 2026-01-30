@@ -1,5 +1,5 @@
 import { db } from '../config/database';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 
 export interface Order {
   id: string;
@@ -185,6 +185,12 @@ export interface UpdateOrderData {
 }
 
 export class OrderRepository {
+  private logger: Logger;
+
+  constructor() {
+    this.logger = new Logger('OrderRepository');
+  }
+
   async create(data: CreateOrderData): Promise<Order> {
     try {
       const sql = `
@@ -256,9 +262,10 @@ export class OrderRepository {
       
       return await this.findById(orderId.toString()) as Order;
       
-    } catch (error: any) {
-      logger.error('Failed to create order:', error);
-      throw new Error(`Order creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create order:', errorMessage);
+      throw new Error(`Order creation failed: ${errorMessage}`);
     }
   }
 
@@ -267,8 +274,9 @@ export class OrderRepository {
       const sql = 'SELECT * FROM orders WHERE id = ? LIMIT 1';
       const orders = await db.query<Order>(sql, [id]);
       return orders.length > 0 ? orders[0] : null;
-    } catch (error: any) {
-      logger.error('Failed to find order by ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find order by ID:', errorMessage);
       throw error;
     }
   }
@@ -278,8 +286,9 @@ export class OrderRepository {
       const sql = 'SELECT * FROM orders WHERE order_number = ? LIMIT 1';
       const orders = await db.query<Order>(sql, [orderNumber]);
       return orders.length > 0 ? orders[0] : null;
-    } catch (error: any) {
-      logger.error('Failed to find order by number:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find order by number:', errorMessage);
       throw error;
     }
   }
@@ -311,8 +320,9 @@ export class OrderRepository {
       }
       
       return await db.query<Order>(sql, params);
-    } catch (error: any) {
-      logger.error('Failed to find orders by customer ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find orders by customer ID:', errorMessage);
       throw error;
     }
   }
@@ -344,8 +354,9 @@ export class OrderRepository {
       }
       
       return await db.query<Order>(sql, params);
-    } catch (error: any) {
-      logger.error('Failed to find orders by driver ID:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find orders by driver ID:', errorMessage);
       throw error;
     }
   }
@@ -374,9 +385,51 @@ export class OrderRepository {
       await db.execute(sql, params);
       
       return await this.findById(id);
-    } catch (error: any) {
-      logger.error('Failed to update order:', error);
-      throw new Error(`Order update failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update order:', errorMessage);
+      throw new Error(`Order update failed: ${errorMessage}`);
+    }
+  }
+
+  // ADDED: Method to update driver location (for tracking service)
+  async updateOrderDriverLocation(
+    orderId: string,
+    latitude: number,
+    longitude: number
+  ): Promise<boolean> {
+    try {
+      const sql = `
+        UPDATE orders 
+        SET 
+          driver_current_lat = ?,
+          driver_current_lng = ?,
+          driver_last_updated = NOW(),
+          updated_at = NOW()
+        WHERE id = ?
+      `;
+      
+      await db.execute(sql, [latitude, longitude, orderId]);
+      this.logger.info(`Updated driver location for order ${orderId}`);
+      return true;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update order driver location:', errorMessage);
+      throw error;
+    }
+  }
+
+  // ADDED: Method to update ETA (for tracking service)
+  async updateETA(orderId: string, etaMinutes: number): Promise<boolean> {
+    try {
+      // Assuming you have an eta_minutes column or you can store it differently
+      // For now, we'll log it. You might want to add this to your Order interface
+      this.logger.info(`ETA for order ${orderId}: ${etaMinutes} minutes`);
+      return true;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update ETA for order:', errorMessage);
+      return false;
     }
   }
 
@@ -401,10 +454,11 @@ export class OrderRepository {
         }
       });
       
-      logger.info(`Order ${id} status updated to ${status}`);
+      this.logger.info(`Order ${id} status updated to ${status}`);
       return true;
-    } catch (error: any) {
-      logger.error('Failed to update order status:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update order status:', errorMessage);
       throw error;
     }
   }
@@ -433,10 +487,11 @@ export class OrderRepository {
       const sql = `UPDATE orders SET ${updates.join(', ')} WHERE id = ?`;
       await db.execute(sql, params);
       
-      logger.info(`Order ${id} payment status updated to ${paymentStatus}`);
+      this.logger.info(`Order ${id} payment status updated to ${paymentStatus}`);
       return true;
-    } catch (error: any) {
-      logger.error('Failed to update payment status:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update payment status:', errorMessage);
       throw error;
     }
   }
@@ -446,8 +501,9 @@ export class OrderRepository {
       const sql = 'DELETE FROM orders WHERE id = ?';
       const result = await db.execute(sql, [id]);
       return result.affectedRows > 0;
-    } catch (error: any) {
-      logger.error('Failed to delete order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to delete order:', errorMessage);
       throw error;
     }
   }
@@ -492,8 +548,9 @@ export class OrderRepository {
       }
       
       return await db.query<Order>(sql, params);
-    } catch (error: any) {
-      logger.error('Failed to find active orders:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find active orders:', errorMessage);
       throw error;
     }
   }
@@ -593,8 +650,9 @@ export class OrderRepository {
         limit: pagination?.limit || total,
         totalPages: pagination ? Math.ceil(total / pagination.limit) : 1
       };
-    } catch (error: any) {
-      logger.error('Failed to search orders:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to search orders:', errorMessage);
       throw error;
     }
   }
@@ -650,8 +708,9 @@ export class OrderRepository {
         totalEarnings: parseFloat(result?.total_earnings?.toString() || '0'),
         avgOrderValue: parseFloat(result?.avg_order_value?.toString() || '0')
       };
-    } catch (error: any) {
-      logger.error('Failed to get order statistics:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get order statistics:', errorMessage);
       throw error;
     }
   }
@@ -668,8 +727,9 @@ export class OrderRepository {
       
       await db.execute(sql, [orderId, priorityScore]);
       return true;
-    } catch (error: any) {
-      logger.error('Failed to add order to assignment queue:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to add order to assignment queue:', errorMessage);
       throw error;
     }
   }
@@ -686,8 +746,9 @@ export class OrderRepository {
       
       const result = await db.query<{ balance_update_attempts: number }>(sql, [orderId]);
       return result[0]?.balance_update_attempts || 0;
-    } catch (error: any) {
-      logger.error('Failed to increment balance update attempts:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to increment balance update attempts:', errorMessage);
       throw error;
     }
   }

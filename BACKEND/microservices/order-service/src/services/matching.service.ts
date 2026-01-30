@@ -1,17 +1,24 @@
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 import { orderRepository } from '../repositories/order.repository';
 import { orderItemRepository } from '../repositories/orderItem.repository';
-import { KnapsackService } from './knapsack.service';
+import { KnapsackService, OrderPackage } from './knapsack.service';
 import { HttpClient } from '../utils/httpClient';
 import { distanceUtil } from '../utils/distance.util';
 
 export class MatchingService {
-  private knapsackService = new KnapsackService();
-  private httpClient = new HttpClient();
+  private logger: Logger;
+  private knapsackService: KnapsackService;
+  private httpClient: HttpClient;
+  
+  constructor() {
+    this.logger = new Logger('MatchingService');
+    this.knapsackService = new KnapsackService();
+    this.httpClient = new HttpClient();
+  }
   
   async queueOrderForMatching(orderId: string): Promise<boolean> {
     try {
-      logger.info(`Queuing order ${orderId} for matching`);
+      this.logger.info(`Queuing order ${orderId} for matching`);
       
       const order = await orderRepository.findById(orderId);
       if (!order) {
@@ -32,30 +39,42 @@ export class MatchingService {
       setTimeout(() => this.findDriverForOrder(orderId), 1000);
       
       return true;
-    } catch (error: any) {
-      logger.error('Failed to queue order for matching:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to queue order for matching:', errorMessage);
       throw error;
     }
   }
   
   async findDriverForOrder(orderId: string): Promise<any> {
     try {
-      logger.info(`Finding driver for order: ${orderId}`);
+      this.logger.info(`Finding driver for order: ${orderId}`);
       
       const order = await orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
       
-      // Get available drivers from driver service
-      const availableDrivers = await this.httpClient.getAvailableDrivers(
-        order.pickup_latitude,
-        order.pickup_longitude,
-        10 // 10km radius
+      // Get available drivers from driver service - FIXED: Using httpClient.get instead of custom method
+      const driversResponse = await this.httpClient.get<any>(
+        `${process.env.DRIVER_SERVICE_URL}/api/drivers/available`,
+        {
+          params: {
+            lat: order.pickup_latitude,
+            lng: order.pickup_longitude,
+            radius: 10, // 10km radius
+            serviceSecret: process.env.SERVICE_SECRET
+          },
+          headers: {
+            'x-service-secret': process.env.SERVICE_SECRET
+          }
+        }
       );
       
+      const availableDrivers = driversResponse.data?.drivers || [];
+      
       if (availableDrivers.length === 0) {
-        logger.warn(`No available drivers found for order ${orderId}`);
+        this.logger.warn(`No available drivers found for order ${orderId}`);
         
         await orderRepository.update(orderId, {
           status: 'pending',
@@ -80,7 +99,7 @@ export class MatchingService {
       );
       
       if (!matchedDriver) {
-        logger.warn(`No suitable driver found for order ${orderId}`);
+        this.logger.warn(`No suitable driver found for order ${orderId}`);
         return {
           success: false,
           message: 'No suitable driver found',
@@ -95,19 +114,28 @@ export class MatchingService {
         matched_at: new Date()
       });
       
-      // Notify driver via driver service
-      await this.httpClient.notifyDriverAssignment(
-        matchedDriver.driverId,
-        orderId,
+      // Notify driver via driver service - FIXED: Using httpClient.post
+      await this.httpClient.post(
+        `${process.env.DRIVER_SERVICE_URL}/api/drivers/${matchedDriver.driverId}/assign`,
         {
+          orderId: orderId,
           pickupAddress: order.pickup_address,
           deliveryAddress: order.delivery_address,
           estimatedEarnings: order.driver_earnings,
-          distance: order.estimated_distance_km
+          distance: order.estimated_distance_km,
+          pickupLat: order.pickup_latitude,
+          pickupLng: order.pickup_longitude,
+          deliveryLat: order.delivery_latitude,
+          deliveryLng: order.delivery_longitude
+        },
+        {
+          headers: {
+            'x-service-secret': process.env.SERVICE_SECRET
+          }
         }
       );
       
-      logger.info(`Order ${orderId} matched with driver ${matchedDriver.driverId}`);
+      this.logger.info(`Order ${orderId} matched with driver ${matchedDriver.driverId}`);
       
       return {
         success: true,
@@ -117,8 +145,9 @@ export class MatchingService {
         packing_efficiency: matchedDriver.packingEfficiency,
         estimated_arrival: matchedDriver.estimatedArrival
       };
-    } catch (error: any) {
-      logger.error('Failed to find driver for order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to find driver for order:', errorMessage);
       throw error;
     }
   }
@@ -133,26 +162,45 @@ export class MatchingService {
     
     for (const driver of drivers) {
       try {
-        // Get driver's vehicle from driver service
-        const driverVehicle = await this.httpClient.getDriverVehicle(driver.id);
+        // Get driver's vehicle from driver service - FIXED: Using httpClient.get
+        const vehicleResponse = await this.httpClient.get<any>(
+          `${process.env.DRIVER_SERVICE_URL}/api/drivers/${driver.id}/vehicle`,
+          {
+            headers: {
+              'x-service-secret': process.env.SERVICE_SECRET
+            }
+          }
+        );
+        
+        const driverVehicle = vehicleResponse.data;
         
         if (!driverVehicle || !this.isVehicleSuitable(driverVehicle, order)) {
           continue;
         }
         
-        // Calculate packing efficiency using knapsack algorithm
-        const itemsForPacking = orderItems.map(item => ({
+        // Calculate packing efficiency using knapsack algorithm - FIXED: Proper OrderPackage creation
+        const itemsForPacking: OrderPackage[] = orderItems.map(item => ({
           id: item.id,
           weight: item.weight_per_item_kg || 0.1,
           volume: this.calculateItemVolume(item),
-          fragile: item.fragile || false,
-          temperatureSensitive: item.temperature_sensitive || false
+          pickupLocation: {
+            lat: order.pickup_latitude,
+            lng: order.pickup_longitude
+          },
+          deliveryLocation: {
+            lat: order.delivery_latitude,
+            lng: order.delivery_longitude
+          },
+          priority: order.priority === 'urgent' ? 10 : 
+                   order.priority === 'high' ? 7 :
+                   order.priority === 'normal' ? 5 : 3,
+          value: 1 // Default value for optimization
         }));
         
         const packingResult = this.knapsackService.optimizeOrderAssignment(
           itemsForPacking,
           [{
-            id: driverVehicle.id,
+            id: driverVehicle.id || `vehicle_${driver.id}`,
             capacity: {
               weight: driverVehicle.maxWeight || 100,
               volume: driverVehicle.maxVolume || 2,
@@ -190,7 +238,7 @@ export class MatchingService {
           bestScore = score;
           bestDriver = {
             driverId: driver.id,
-            vehicleId: driverVehicle.id,
+            vehicleId: driverVehicle.id || `vehicle_${driver.id}`,
             packingEfficiency: {
               weight: (packingResult.assignments[0].totalWeight / driverVehicle.maxWeight) * 100,
               volume: (packingResult.assignments[0].totalVolume / driverVehicle.maxVolume) * 100
@@ -199,8 +247,9 @@ export class MatchingService {
             score
           };
         }
-      } catch (error) {
-        logger.warn(`Error evaluating driver ${driver.id}:`, error);
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.warn(`Error evaluating driver ${driver.id}:`, errorMessage);
         continue;
       }
     }
