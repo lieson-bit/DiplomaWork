@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
-import { Logger } from './utils/logger';
+import { logger } from './utils/logger';
 import { pool } from './config/database';
 import { WebSocketServer } from './utils/websocket.util';
 

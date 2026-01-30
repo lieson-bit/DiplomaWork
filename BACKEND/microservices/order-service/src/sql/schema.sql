@@ -233,6 +233,50 @@ CREATE TABLE IF NOT EXISTS order_cancellations (
     INDEX idx_cancellations_order (order_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- User balances (if moving from customer/driver services)
+CREATE TABLE user_balances (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id VARCHAR(36) NOT NULL UNIQUE,
+    balance DECIMAL(10,2) DEFAULT 0.00,
+    currency VARCHAR(3) DEFAULT 'USD',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_user_balances_user (user_id)
+);
+
+-- Notification preferences
+CREATE TABLE notification_preferences (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id VARCHAR(36) NOT NULL,
+    email_notifications BOOLEAN DEFAULT TRUE,
+    push_notifications BOOLEAN DEFAULT TRUE,
+    sms_notifications BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_notification_prefs_user (user_id)
+);
+
+-- Payment transactions (if handling payments internally)
+CREATE TABLE payment_transactions (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    order_id VARCHAR(36) NOT NULL,
+    customer_id VARCHAR(36) NOT NULL,
+    driver_id VARCHAR(36),
+    amount DECIMAL(10,2) NOT NULL,
+    fee DECIMAL(10,2) DEFAULT 0.00,
+    net_amount DECIMAL(10,2) NOT NULL,
+    payment_method VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'pending',
+    transaction_data JSON,
+    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_payment_transactions_order (order_id),
+    INDEX idx_payment_transactions_customer (customer_id),
+    INDEX idx_payment_transactions_driver (driver_id)
+);
+
+
 -- Create necessary indexes for performance
 CREATE INDEX idx_orders_customer ON orders(customer_id);
 CREATE INDEX idx_orders_driver ON orders(driver_id);

@@ -3,6 +3,7 @@ import { orderRepository } from '../repositories/order.repository';
 import { orderItemRepository } from '../repositories/orderItem.repository';
 import { KnapsackService } from './knapsack.service';
 import { HttpClient } from '../utils/httpClient';
+import { distanceUtil } from '../utils/distance.util';
 
 export class MatchingService {
   private knapsackService = new KnapsackService();
@@ -12,13 +13,12 @@ export class MatchingService {
     try {
       logger.info(`Queuing order ${orderId} for matching`);
       
-      // Calculate priority score based on order characteristics
       const order = await orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
       
-      let priorityScore = 100; // Base score
+      let priorityScore = 100;
       
       // Adjust priority based on order characteristics
       if (order.priority === 'urgent') priorityScore += 50;
@@ -26,10 +26,9 @@ export class MatchingService {
       if (order.fragile_items) priorityScore -= 10;
       if (order.temperature_controlled) priorityScore -= 15;
       
-      // Add to assignment queue
       await orderRepository.addToAssignmentQueue(orderId, priorityScore);
       
-      // Start matching process
+      // Start matching process asynchronously
       setTimeout(() => this.findDriverForOrder(orderId), 1000);
       
       return true;
@@ -48,7 +47,7 @@ export class MatchingService {
         throw new Error('Order not found');
       }
       
-      // Get available drivers near pickup location
+      // Get available drivers from driver service
       const availableDrivers = await this.httpClient.getAvailableDrivers(
         order.pickup_latitude,
         order.pickup_longitude,
@@ -58,7 +57,6 @@ export class MatchingService {
       if (availableDrivers.length === 0) {
         logger.warn(`No available drivers found for order ${orderId}`);
         
-        // Update order status and retry later
         await orderRepository.update(orderId, {
           status: 'pending',
           internal_notes: 'No drivers available, will retry'
@@ -97,11 +95,16 @@ export class MatchingService {
         matched_at: new Date()
       });
       
-      // Notify driver
+      // Notify driver via driver service
       await this.httpClient.notifyDriverAssignment(
         matchedDriver.driverId,
         orderId,
-        order
+        {
+          pickupAddress: order.pickup_address,
+          deliveryAddress: order.delivery_address,
+          estimatedEarnings: order.driver_earnings,
+          distance: order.estimated_distance_km
+        }
       );
       
       logger.info(`Order ${orderId} matched with driver ${matchedDriver.driverId}`);
@@ -130,53 +133,71 @@ export class MatchingService {
     
     for (const driver of drivers) {
       try {
-        // Get driver's vehicles
-        const driverVehicles = await this.httpClient.getDriverVehicles(driver.id);
+        // Get driver's vehicle from driver service
+        const driverVehicle = await this.httpClient.getDriverVehicle(driver.id);
         
-        for (const vehicle of driverVehicles) {
-          // Check if vehicle is available and suitable
-          if (!this.isVehicleSuitable(vehicle, order)) {
-            continue;
-          }
-          
-          // Calculate packing efficiency using knapsack algorithm
-          const packingResult = await this.knapsackService.optimizeLoading(
-            orderItems,
-            {
-              maxWeight: vehicle.maxWeight,
-              maxVolume: vehicle.maxVolume,
-              hasRefrigeration: vehicle.hasRefrigeration || false
+        if (!driverVehicle || !this.isVehicleSuitable(driverVehicle, order)) {
+          continue;
+        }
+        
+        // Calculate packing efficiency using knapsack algorithm
+        const itemsForPacking = orderItems.map(item => ({
+          id: item.id,
+          weight: item.weight_per_item_kg || 0.1,
+          volume: this.calculateItemVolume(item),
+          fragile: item.fragile || false,
+          temperatureSensitive: item.temperature_sensitive || false
+        }));
+        
+        const packingResult = this.knapsackService.optimizeOrderAssignment(
+          itemsForPacking,
+          [{
+            id: driverVehicle.id,
+            capacity: {
+              weight: driverVehicle.maxWeight || 100,
+              volume: driverVehicle.maxVolume || 2,
+              maxItems: 20
+            },
+            currentLoad: { weight: 0, volume: 0, itemCount: 0 },
+            location: {
+              lat: driver.currentLocation?.lat || order.pickup_latitude,
+              lng: driver.currentLocation?.lng || order.pickup_longitude
             }
-          );
-          
-          // Check if all items can be loaded
-          if (packingResult.selectedItems.length !== orderItems.length) {
-            continue; // Not all items can fit
-          }
-          
-          // Calculate driver score
-          const distance = this.calculateDistance(
-            vehicle.currentLocation,
-            { lat: order.pickup_latitude, lng: order.pickup_longitude }
-          );
-          
-          const score = this.calculateDriverScore(
-            driver,
-            vehicle,
-            distance,
-            packingResult.utilization
-          );
-          
-          if (score > bestScore) {
-            bestScore = score;
-            bestDriver = {
-              driverId: driver.id,
-              vehicleId: vehicle.id,
-              packingEfficiency: packingResult.utilization,
-              estimatedArrival: this.calculateETA(distance, vehicle.avgSpeed),
-              score
-            };
-          }
+          }]
+        );
+        
+        // Check if all items can be loaded
+        if (packingResult.assignments.length === 0 || 
+            packingResult.assignments[0].orders.length !== itemsForPacking.length) {
+          continue;
+        }
+        
+        // Calculate driver score
+        const distance = distanceUtil.calculateHaversineDistance(
+          { lat: driver.currentLocation?.lat || order.pickup_latitude, 
+            lng: driver.currentLocation?.lng || order.pickup_longitude },
+          { lat: order.pickup_latitude, lng: order.pickup_longitude }
+        );
+        
+        const score = this.calculateDriverScore(
+          driver,
+          driverVehicle,
+          distance,
+          packingResult.assignments[0]
+        );
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestDriver = {
+            driverId: driver.id,
+            vehicleId: driverVehicle.id,
+            packingEfficiency: {
+              weight: (packingResult.assignments[0].totalWeight / driverVehicle.maxWeight) * 100,
+              volume: (packingResult.assignments[0].totalVolume / driverVehicle.maxVolume) * 100
+            },
+            estimatedArrival: this.calculateETA(distance),
+            score
+          };
         }
       } catch (error) {
         logger.warn(`Error evaluating driver ${driver.id}:`, error);
@@ -188,45 +209,26 @@ export class MatchingService {
   }
   
   private isVehicleSuitable(vehicle: any, order: any): boolean {
-    // Check basic requirements
-    if (vehicle.currentStatus !== 'available') return false;
+    if (!vehicle.currentStatus || vehicle.currentStatus !== 'available') return false;
     if (order.temperature_controlled && !vehicle.hasRefrigeration) return false;
-    
-    // Check capacity (basic check, detailed check done by knapsack)
     if (vehicle.maxWeight < order.total_weight_kg) return false;
     if (vehicle.maxVolume < order.total_volume_m3) return false;
     
     return true;
   }
   
-  private calculateDistance(point1: any, point2: any): number {
-    // Haversine formula implementation
-    const R = 6371; // Earth's radius in km
-    const dLat = this.toRad(point2.lat - point1.lat);
-    const dLon = this.toRad(point2.lng - point1.lng);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(this.toRad(point1.lat)) * Math.cos(this.toRad(point2.lat)) *
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }
-  
   private calculateDriverScore(
     driver: any,
     vehicle: any,
     distance: number,
-    utilization: any
+    assignment: any
   ): number {
-    // Normalize factors
-    const maxDistance = 20; // 20km max for scoring
+    const maxDistance = 20;
     const normalizedDistance = Math.max(0, 1 - (distance / maxDistance));
+    const driverRating = (driver.rating || 3) / 5;
+    const utilizationScore = (assignment.totalWeight / vehicle.maxWeight + 
+                            assignment.totalVolume / vehicle.maxVolume) / 2;
     
-    const driverRating = driver.rating / 5; // Normalize to 0-1
-    
-    const utilizationScore = (utilization.weight + utilization.volume) / 200; // Convert percentage to 0-1
-    
-    // Weight factors
     const weights = {
       distance: 0.4,
       rating: 0.3,
@@ -234,7 +236,6 @@ export class MatchingService {
       vehicleSuitability: 0.1
     };
     
-    // Calculate vehicle suitability score
     const vehicleSuitability = this.calculateVehicleSuitability(vehicle);
     
     return (
@@ -246,22 +247,21 @@ export class MatchingService {
   }
   
   private calculateVehicleSuitability(vehicle: any): number {
-    let score = 0.5; // Base score
-    
+    let score = 0.5;
     if (vehicle.hasRefrigeration) score += 0.2;
     if (vehicle.fuelEfficiency > 15) score += 0.1;
     if (vehicle.maintenanceStatus === 'excellent') score += 0.2;
-    
     return Math.min(score, 1);
   }
   
   private calculateETA(distance: number, avgSpeed: number = 30): number {
-    // Calculate estimated time of arrival in minutes
-    const speed = avgSpeed || 30; // Default 30 km/h
-    return (distance / speed) * 60;
+    return Math.ceil((distance / avgSpeed) * 60);
   }
   
-  private toRad(degrees: number): number {
-    return degrees * (Math.PI / 180);
+  private calculateItemVolume(item: any): number {
+    if (item.dimensions_length_cm && item.dimensions_width_cm && item.dimensions_height_cm) {
+      return (item.dimensions_length_cm * item.dimensions_width_cm * item.dimensions_height_cm) / 1000000;
+    }
+    return 0.01;
   }
 }

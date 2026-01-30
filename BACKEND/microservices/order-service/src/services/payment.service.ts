@@ -1,330 +1,239 @@
-import { Logger } from '../utils/logger';
+import { Logger } from './logger';
 import { HttpClient } from '../utils/httpClient';
 
 export interface PaymentRequest {
   orderId: string;
   customerId: string;
+  driverId: string;
   amount: number;
-  currency: string;
-  paymentMethod: PaymentMethod;
-  paymentMethodId?: string;
-  metadata?: Record<string, any>;
+  paymentMethod: 'wallet' | 'cash';
 }
 
 export interface PaymentResponse {
-  transactionId: string;
-  status: PaymentStatus;
-  amount: number;
-  currency: string;
-  paymentMethod: string;
-  timestamp: Date;
-  error?: string;
+  success: boolean;
+  message: string;
+  customerBalanceUpdated: boolean;
+  driverBalanceUpdated: boolean;
+  transactionId?: string;
 }
-
-export interface RefundRequest {
-  paymentId: string;
-  orderId: string;
-  amount: number;
-  reason?: string;
-}
-
-export interface PaymentCard {
-  id: string;
-  last4: string;
-  brand: string;
-  expMonth: number;
-  expYear: number;
-  isDefault: boolean;
-}
-
-export type PaymentMethod = 'card' | 'wallet' | 'cash' | 'bank_transfer';
-export type PaymentStatus = 'pending' | 'authorized' | 'completed' | 'refunded' | 'failed';
 
 export class PaymentService {
   private logger = new Logger('PaymentService');
   private httpClient: HttpClient;
-  private paymentGatewayUrl: string;
-  private apiKey: string;
 
   constructor() {
     this.httpClient = new HttpClient();
-    this.paymentGatewayUrl = process.env.PAYMENT_GATEWAY_URL || 'https://api.payment-gateway.com';
-    this.apiKey = process.env.PAYMENT_GATEWAY_API_KEY || '';
   }
 
-  async processPayment(paymentRequest: PaymentRequest): Promise<PaymentResponse> {
+  async processPayment(request: PaymentRequest): Promise<PaymentResponse> {
     try {
-      this.logger.info(`Processing payment for order ${paymentRequest.orderId}`);
+      this.logger.info(`Processing payment for order ${request.orderId}, method: ${request.paymentMethod}`);
 
-      // Validate payment request
-      this.validatePaymentRequest(paymentRequest);
+      if (request.paymentMethod === 'cash') {
+        // Cash payment - no balance updates needed
+        return {
+          success: true,
+          message: 'Cash payment recorded. Driver will collect payment on delivery.',
+          customerBalanceUpdated: false,
+          driverBalanceUpdated: false
+        };
+      }
 
-      // Prepare payment payload for gateway
-      const payload = this.preparePaymentPayload(paymentRequest);
-
-      // Call payment gateway
-      const response = await this.callPaymentGateway('/v1/payments', payload);
-
-      // Parse and return response
-      const paymentResponse: PaymentResponse = {
-        transactionId: response.id,
-        status: this.mapPaymentStatus(response.status),
-        amount: paymentRequest.amount,
-        currency: paymentRequest.currency,
-        paymentMethod: paymentRequest.paymentMethod,
-        timestamp: new Date()
-      };
-
-      this.logger.info(`Payment processed for order ${paymentRequest.orderId}: ${paymentResponse.status}`);
-
-      return paymentResponse;
-    } catch (error) {
-      this.logger.error(`Payment processing failed for order ${paymentRequest.orderId}:`, error);
-      throw new Error(`Payment processing failed: ${error.message}`);
-    }
-  }
-
-  async authorizePayment(paymentRequest: PaymentRequest): Promise<PaymentResponse> {
-    try {
-      this.logger.info(`Authorizing payment for order ${paymentRequest.orderId}`);
-
-      const payload = {
-        ...this.preparePaymentPayload(paymentRequest),
-        capture: false // Only authorize, don't capture
-      };
-
-      const response = await this.callPaymentGateway('/v1/payments/authorize', payload);
-
-      return {
-        transactionId: response.id,
-        status: 'authorized',
-        amount: paymentRequest.amount,
-        currency: paymentRequest.currency,
-        paymentMethod: paymentRequest.paymentMethod,
-        timestamp: new Date()
-      };
-    } catch (error) {
-      this.logger.error(`Payment authorization failed for order ${paymentRequest.orderId}:`, error);
-      throw new Error(`Payment authorization failed: ${error.message}`);
-    }
-  }
-
-  async capturePayment(transactionId: string, amount: number): Promise<PaymentResponse> {
-    try {
-      this.logger.info(`Capturing payment ${transactionId}`);
-
-      const response = await this.callPaymentGateway(
-        `/v1/payments/${transactionId}/capture`,
-        { amount }
+      // Wallet payment - update balances in customer and driver services
+      const customerResponse = await this.updateCustomerBalance(
+        request.customerId,
+        -request.amount,
+        request.orderId
       );
 
+      if (!customerResponse.success) {
+        throw new Error(`Failed to update customer balance: ${customerResponse.message}`);
+      }
+
+      // Calculate driver earnings (amount - 15% platform fee)
+      const platformFee = request.amount * 0.15;
+      const driverEarnings = request.amount - platformFee;
+
+      const driverResponse = await this.updateDriverBalance(
+        request.driverId,
+        driverEarnings,
+        request.orderId
+      );
+
+      if (!driverResponse.success) {
+        // Refund customer if driver update fails
+        await this.updateCustomerBalance(
+          request.customerId,
+          request.amount,
+          `${request.orderId}_refund`
+        );
+        
+        throw new Error(`Failed to update driver balance: ${driverResponse.message}`);
+      }
+
       return {
-        transactionId: response.id,
-        status: 'completed',
-        amount: response.amount,
-        currency: response.currency,
-        paymentMethod: response.payment_method,
-        timestamp: new Date()
+        success: true,
+        message: 'Payment processed successfully',
+        customerBalanceUpdated: true,
+        driverBalanceUpdated: true,
+        transactionId: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
     } catch (error) {
-      this.logger.error(`Payment capture failed for transaction ${transactionId}:`, error);
-      throw new Error(`Payment capture failed: ${error.message}`);
+      this.logger.error('Payment processing failed:', error);
+      return {
+        success: false,
+        message: error.message || 'Payment processing failed',
+        customerBalanceUpdated: false,
+        driverBalanceUpdated: false
+      };
     }
   }
 
-  async refundPayment(refundRequest: RefundRequest): Promise<PaymentResponse> {
+  async refundPayment(
+    customerId: string,
+    driverId: string,
+    amount: number,
+    orderId: string,
+    reason: string = 'refund'
+  ): Promise<PaymentResponse> {
     try {
-      this.logger.info(`Processing refund for payment ${refundRequest.paymentId}`);
+      this.logger.info(`Processing refund for order ${orderId}`);
 
-      const response = await this.callPaymentGateway(
-        `/v1/payments/${refundRequest.paymentId}/refund`,
+      // Refund customer
+      const customerResponse = await this.updateCustomerBalance(
+        customerId,
+        amount,
+        `${orderId}_refund`
+      );
+
+      if (!customerResponse.success) {
+        return customerResponse;
+      }
+
+      // Deduct from driver (if driver was already paid)
+      let driverRefunded = false;
+      if (driverId) {
+        const driverResponse = await this.updateDriverBalance(
+          driverId,
+          -amount * 0.85, // Deduct driver earnings (excluding platform fee)
+          `${orderId}_refund`
+        );
+        driverRefunded = driverResponse.success;
+      }
+
+      return {
+        success: true,
+        message: `Refund processed: ${reason}`,
+        customerBalanceUpdated: true,
+        driverBalanceUpdated: driverRefunded,
+        transactionId: `refund_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      };
+    } catch (error) {
+      this.logger.error('Refund processing failed:', error);
+      return {
+        success: false,
+        message: error.message || 'Refund processing failed',
+        customerBalanceUpdated: false,
+        driverBalanceUpdated: false
+      };
+    }
+  }
+
+  private async updateCustomerBalance(
+    customerId: string,
+    amount: number,
+    referenceId: string
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await this.httpClient.post(
+        `${process.env.CUSTOMER_SERVICE_URL}/api/internal/balance/update`,
         {
-          amount: refundRequest.amount,
-          reason: refundRequest.reason
+          customerId,
+          amount,
+          referenceId,
+          type: 'order_transaction'
+        },
+        {
+          headers: {
+            'x-service-secret': process.env.SERVICE_SECRET
+          }
         }
       );
 
       return {
-        transactionId: response.id,
-        status: 'refunded',
-        amount: refundRequest.amount,
-        currency: response.currency,
-        paymentMethod: response.payment_method,
-        timestamp: new Date()
+        success: response.data.success || false,
+        message: response.data.message || 'Balance updated'
       };
-    } catch (error) {
-      this.logger.error(`Refund failed for payment ${refundRequest.paymentId}:`, error);
-      throw new Error(`Refund failed: ${error.message}`);
+    } catch (error: any) {
+      this.logger.error('Failed to update customer balance:', error);
+      return {
+        success: false,
+        message: error.response?.data?.message || error.message || 'Customer service error'
+      };
     }
   }
 
-  async getPaymentStatus(transactionId: string): Promise<PaymentResponse> {
+  private async updateDriverBalance(
+    driverId: string,
+    amount: number,
+    referenceId: string
+  ): Promise<{ success: boolean; message: string }> {
     try {
-      const response = await this.callPaymentGateway(`/v1/payments/${transactionId}`);
+      const response = await this.httpClient.post(
+        `${process.env.DRIVER_SERVICE_URL}/api/internal/balance/update`,
+        {
+          driverId,
+          amount,
+          referenceId,
+          type: 'order_earnings'
+        },
+        {
+          headers: {
+            'x-service-secret': process.env.SERVICE_SECRET
+          }
+        }
+      );
 
       return {
-        transactionId: response.id,
-        status: this.mapPaymentStatus(response.status),
-        amount: response.amount,
-        currency: response.currency,
-        paymentMethod: response.payment_method,
-        timestamp: new Date(response.created_at)
+        success: response.data.success || false,
+        message: response.data.message || 'Balance updated'
       };
-    } catch (error) {
-      this.logger.error(`Failed to get payment status for ${transactionId}:`, error);
-      throw new Error(`Failed to get payment status: ${error.message}`);
-    }
-  }
-
-  async savePaymentMethod(
-    customerId: string,
-    paymentMethod: PaymentMethod,
-    details: any
-  ): Promise<PaymentCard> {
-    try {
-      const response = await this.callPaymentGateway('/v1/payment-methods', {
-        customer_id: customerId,
-        type: paymentMethod,
-        details
-      });
-
+    } catch (error: any) {
+      this.logger.error('Failed to update driver balance:', error);
       return {
-        id: response.id,
-        last4: response.last4,
-        brand: response.brand,
-        expMonth: response.exp_month,
-        expYear: response.exp_year,
-        isDefault: response.is_default
+        success: false,
+        message: error.response?.data?.message || error.message || 'Driver service error'
       };
-    } catch (error) {
-      this.logger.error(`Failed to save payment method for customer ${customerId}:`, error);
-      throw new Error(`Failed to save payment method: ${error.message}`);
     }
   }
 
-  async getCustomerPaymentMethods(customerId: string): Promise<PaymentCard[]> {
+  async verifyCustomerBalance(customerId: string, requiredAmount: number): Promise<boolean> {
     try {
-      const response = await this.callPaymentGateway(`/v1/customers/${customerId}/payment-methods`);
-      return response.map((method: any) => ({
-        id: method.id,
-        last4: method.last4,
-        brand: method.brand,
-        expMonth: method.exp_month,
-        expYear: method.exp_year,
-        isDefault: method.is_default
-      }));
+      const response = await this.httpClient.get(
+        `${process.env.CUSTOMER_SERVICE_URL}/api/internal/balance/${customerId}`,
+        {
+          headers: {
+            'x-service-secret': process.env.SERVICE_SECRET
+          }
+        }
+      );
+
+      const balance = response.data.balance || 0;
+      return balance >= requiredAmount;
     } catch (error) {
-      this.logger.error(`Failed to get payment methods for customer ${customerId}:`, error);
-      return [];
+      this.logger.warn('Could not verify customer balance, assuming sufficient:', error);
+      return true; // Fail open for development
     }
   }
 
-  async deletePaymentMethod(paymentMethodId: string): Promise<boolean> {
-    try {
-      await this.callPaymentGateway(`/v1/payment-methods/${paymentMethodId}`, {}, 'DELETE');
-      return true;
-    } catch (error) {
-      this.logger.error(`Failed to delete payment method ${paymentMethodId}:`, error);
-      return false;
-    }
+  calculateDriverEarnings(totalAmount: number): number {
+    const platformFeePercent = 15; // 15% platform fee
+    const platformFee = totalAmount * (platformFeePercent / 100);
+    return totalAmount - platformFee;
   }
 
-  private validatePaymentRequest(request: PaymentRequest): void {
-    if (request.amount <= 0) {
-      throw new Error('Payment amount must be greater than 0');
-    }
-
-    if (!request.customerId) {
-      throw new Error('Customer ID is required');
-    }
-
-    if (!request.orderId) {
-      throw new Error('Order ID is required');
-    }
-
-    if (!request.paymentMethod) {
-      throw new Error('Payment method is required');
-    }
-  }
-
-  private preparePaymentPayload(request: PaymentRequest): any {
-    return {
-      amount: Math.round(request.amount * 100), // Convert to cents
-      currency: request.currency || 'USD',
-      customer: request.customerId,
-      order_id: request.orderId,
-      payment_method: request.paymentMethod,
-      payment_method_id: request.paymentMethodId,
-      metadata: {
-        ...request.metadata,
-        service: 'order-delivery',
-        timestamp: new Date().toISOString()
-      }
-    };
-  }
-
-  private async callPaymentGateway(endpoint: string, data?: any, method: string = 'POST'): Promise<any> {
-    const url = `${this.paymentGatewayUrl}${endpoint}`;
-    
-    const headers = {
-      'Authorization': `Bearer ${this.apiKey}`,
-      'Content-Type': 'application/json'
-    };
-
-    try {
-      const response = await this.httpClient.request({
-        url,
-        method,
-        headers,
-        data,
-        timeout: 30000 // 30 seconds timeout
-      });
-
-      if (response.status >= 200 && response.status < 300) {
-        return response.data;
-      } else {
-        throw new Error(`Payment gateway error: ${response.status} - ${JSON.stringify(response.data)}`);
-      }
-    } catch (error) {
-      if (error.response) {
-        throw new Error(`Payment gateway error: ${error.response.status} - ${JSON.stringify(error.response.data)}`);
-      } else if (error.request) {
-        throw new Error('Payment gateway not responding');
-      } else {
-        throw error;
-      }
-    }
-  }
-
-  private mapPaymentStatus(gatewayStatus: string): PaymentStatus {
-    const statusMap: Record<string, PaymentStatus> = {
-      'pending': 'pending',
-      'requires_action': 'pending',
-      'requires_confirmation': 'pending',
-      'requires_payment_method': 'pending',
-      'requires_capture': 'authorized',
-      'succeeded': 'completed',
-      'canceled': 'failed',
-      'failed': 'failed',
-      'refunded': 'refunded'
-    };
-
-    return statusMap[gatewayStatus] || 'failed';
-  }
-
-  calculatePlatformFee(amount: number, feePercent: number = 15): number {
-    return (amount * feePercent) / 100;
-  }
-
-  calculateDriverEarnings(
-    totalAmount: number,
-    platformFee: number,
-    distanceFee?: number,
-    weightFee?: number
-  ): number {
-    const baseEarnings = totalAmount - platformFee;
-    // Driver gets 100% of distance and weight fees
-    const additionalEarnings = (distanceFee || 0) + (weightFee || 0);
-    return baseEarnings + additionalEarnings;
+  calculatePlatformFee(totalAmount: number): number {
+    const platformFeePercent = 15;
+    return totalAmount * (platformFeePercent / 100);
   }
 }
