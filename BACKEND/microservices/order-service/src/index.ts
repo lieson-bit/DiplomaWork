@@ -1,9 +1,9 @@
 import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
-import { logger } from './utils/logger';
-import { pool } from './config/database';
-import { WebSocketServer } from './utils/websocket.util';
+import { Logger } from './utils/logger';
+import pool from './config/database';
+import { WebSocketUtil } from './utils/websocket.util';
 
 const logger = new Logger('Server');
 
@@ -14,14 +14,14 @@ const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
 const server = createServer(app);
 
 // Initialize WebSocket server
-const wss = new WebSocketServer(server);
+const wss = new WebSocketUtil(server);
 
 // Test database connection on startup
 async function testDatabaseConnection() {
   try {
-    const connection = await pool.getConnection();
+    // Use the Database implementation's testConnection method instead of getConnection
+    await pool.testConnection();
     logger.info('✅ Database connection established successfully');
-    connection.release();
   } catch (error) {
     logger.error('❌ Failed to connect to database:', error);
     process.exit(1);
@@ -41,7 +41,8 @@ async function testServiceConnections() {
       // We'll test connections later in the route handlers
       logger.info(`✅ ${service.name} configured at ${service.url}`);
     } catch (error) {
-      logger.warn(`⚠️  ${service.name} may not be available: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`⚠️  ${service.name} may not be available: ${message}`);
     }
   }
 }
@@ -51,13 +52,30 @@ function setupGracefulShutdown() {
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}. Starting graceful shutdown...`);
     
-    // Close WebSocket connections
-    wss.close();
-    logger.info('WebSocket server closed');
+    // Close WebSocket connections (guarded because WebSocketUtil may not expose .close)
+    if (typeof (wss as any)?.close === 'function') {
+      (wss as any).close();
+      logger.info('WebSocket server closed');
+    } else if ((wss as any)?.server && typeof (wss as any).server.close === 'function') {
+      (wss as any).server.close();
+      logger.info('Underlying WebSocket server closed');
+    } else {
+      logger.info('No WebSocket server to close');
+    }
     
     // Close database connections
-    await pool.end();
-    logger.info('Database connections closed');
+    if (typeof (pool as any)?.end === 'function') {
+      await (pool as any).end();
+      logger.info('Database connections closed');
+    } else if (typeof (pool as any)?.close === 'function') {
+      await (pool as any).close();
+      logger.info('Database connections closed');
+    } else if (typeof (pool as any)?.destroy === 'function') {
+      await (pool as any).destroy();
+      logger.info('Database connections destroyed');
+    } else {
+      logger.info('No database close method found on pool; skipping close');
+    }
     
     // Close HTTP server
     server.close(() => {
@@ -138,7 +156,7 @@ process.on('uncaughtException', (error) => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('Unhandled Rejection at', { promise, reason });
   process.exit(1);
 });
 

@@ -1,13 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import morgan from 'morgan';
+const morgan = require('morgan');
 import path from 'path';
-import swaggerJSDoc from 'swagger-jsdoc';
-import swaggerUi from 'swagger-ui-express';
+const swaggerJSDoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 import orderRoutes from './routes/order.routes';
 import { errorHandler } from './middleware/error.middleware';
-import { logger } from './utils/logger';
+import { Logger } from './utils/logger';
 
 const app = express();
 

@@ -207,16 +207,18 @@ export class WebSocketUtil {
     payload: any
   ): Promise<number> {
     try {
-      let successCount = 0;
+      const sendPromises: Promise<boolean>[] = [];
       let totalCount = 0;
 
       this.connections.forEach(connection => {
         if (connection.userType === userType) {
           totalCount++;
-          const success = this.sendToConnection(connection.connectionId, type, payload);
-          if (success) successCount++;
+          sendPromises.push(this.sendToConnection(connection.connectionId, type, payload));
         }
       });
+
+      const results = await Promise.all(sendPromises);
+      const successCount = results.filter(Boolean).length;
 
       this.logger.debug(`Sent message to ${successCount}/${totalCount} ${userType} users`);
       return successCount;
@@ -231,16 +233,18 @@ export class WebSocketUtil {
    */
   async broadcast(type: string, payload: any, excludeConnectionId?: string): Promise<number> {
     try {
-      let successCount = 0;
+      const sendPromises: Promise<boolean>[] = [];
       let totalCount = 0;
 
       this.connections.forEach(connection => {
         if (!excludeConnectionId || connection.connectionId !== excludeConnectionId) {
           totalCount++;
-          const success = this.sendToConnection(connection.connectionId, type, payload);
-          if (success) successCount++;
+          sendPromises.push(this.sendToConnection(connection.connectionId, type, payload));
         }
       });
+
+      const results = await Promise.all(sendPromises);
+      const successCount = results.filter(Boolean).length;
 
       this.logger.debug(`Broadcasted message to ${successCount}/${totalCount} connections`);
       return successCount;
@@ -518,11 +522,12 @@ export class WebSocketUtil {
       this.handleMessageType(connection, message);
 
       this.logger.debug(`Received message from ${connectionId}: ${message.type}`);
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error(`Error handling message from connection ${connectionId}:`, error);
+      const errMsg = error instanceof Error ? error.message : String(error);
       this.sendToConnection(connectionId, 'error', {
         message: 'Failed to process message',
-        error: error.message
+        error: errMsg
       });
     }
   }

@@ -244,10 +244,11 @@ export class HttpClient {
       
       let message = `HTTP ${status}`;
       if (data && typeof data === 'object') {
-        if (data.message) {
-          message = data.message;
-        } else if (data.error) {
-          message = data.error;
+        const anyData = data as any;
+        if (anyData.message) {
+          message = anyData.message;
+        } else if (anyData.error) {
+          message = anyData.error;
         }
       } else if (data && typeof data === 'string') {
         message = data;

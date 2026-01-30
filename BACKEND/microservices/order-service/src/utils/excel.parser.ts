@@ -89,7 +89,7 @@ export class ExcelParser {
       });
 
       // Parse data with options
-      const result = this.parseSheetData(jsonData, {
+      const result = this.parseSheetData(jsonData as any[][], {
         headerRow: 1,
         expectedColumns: [
           'pickupAddress',
@@ -136,12 +136,15 @@ export class ExcelParser {
       };
     } catch (error) {
       this.logger.error('Failed to parse Excel file:', error);
+      const errMsg = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         data: [],
         errors: [{
           row: 0,
-          message: `Failed to parse Excel file: ${error.message}`
+          column: undefined,
+          message: `Failed to parse Excel file: ${errMsg}`,
+          value: error instanceof Error ? { name: error.name, stack: error.stack } : errMsg
         }],
         warnings: [],
         metadata: {
@@ -241,7 +244,8 @@ export class ExcelParser {
       return buffer;
     } catch (error) {
       this.logger.error('Failed to generate template:', error);
-      throw new Error(`Failed to generate Excel template: ${error.message}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to generate Excel template: ${errMsg}`);
     }
   }
 
@@ -265,7 +269,7 @@ export class ExcelParser {
         defval: null
       });
 
-      const result = this.parseSheetData(jsonData, {
+      const result = this.parseSheetData(jsonData as any[][], {
         headerRow: 0,
         expectedColumns: [
           'orderNumber',
@@ -354,7 +358,8 @@ export class ExcelParser {
       return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
     } catch (error) {
       this.logger.error('Failed to generate order report:', error);
-      throw new Error(`Failed to generate order report: ${error.message}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to generate order report: ${errMsg}`);
     }
   }
 
