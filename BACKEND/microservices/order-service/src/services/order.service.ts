@@ -1,4 +1,4 @@
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 import { orderRepository, Order, CreateOrderData } from '../repositories/order.repository';
 import { orderItemRepository } from '../repositories/orderItem.repository';
 import { trackingRepository } from '../repositories/tracking.repository';
@@ -10,19 +10,43 @@ import { NotificationService } from './notification.service';
 import { BulkService } from './bulk.service';
 import { HttpClient } from '../utils/httpClient';
 import { distanceUtil } from '../utils/distance.util';
+import { bulkOrderRepository } from '../repositories/bulk.repository';
+
 
 export class OrderService {
-  private matchingService = new MatchingService();
-  private pricingService = new PricingService(distanceUtil);
-  private knapsackService = new KnapsackService();
-  private paymentService = new PaymentService();
-  private notificationService = new NotificationService();
-  private bulkService = new BulkService();
-  private httpClient = new HttpClient();
+  private logger: Logger;
+  private matchingService: MatchingService;
+  private pricingService: PricingService;
+  private knapsackService: KnapsackService;
+  private paymentService: PaymentService;
+  private notificationService: NotificationService;
+  private bulkService: BulkService;
+  private httpClient: HttpClient;
+  
+  constructor() {
+    this.logger = new Logger('OrderService');
+    this.matchingService = new MatchingService();
+    this.pricingService = new PricingService();
+    this.knapsackService = new KnapsackService();
+    this.paymentService = new PaymentService();
+    const WebSocketUtil = require('../utils/websocket.util').WebSocketUtil;
+    this.notificationService = new NotificationService(new WebSocketUtil());
+    // Initialize BulkService with all required dependencies
+    const ExcelParser = require('../utils/excel.parser').ExcelParser;
+    this.bulkService = new BulkService(
+      orderRepository,
+      bulkOrderRepository,
+      this.notificationService,
+      this, // Pass current OrderService instance
+      new ExcelParser()
+    );
+
+    this.httpClient = new HttpClient();
+  }
   
   async createOrder(customerId: string, orderData: any): Promise<Order> {
     try {
-      logger.info(`Creating order for customer: ${customerId}`);
+      this.logger.info(`Creating order for customer: ${customerId}`);
       
       // 1. Verify customer exists
       await this.httpClient.get(`${process.env.USER_SERVICE_URL}/api/auth/validate/${customerId}`, {
@@ -45,7 +69,8 @@ export class OrderService {
         volume: orderData.total_volume_m3,
         priority: orderData.priority || 'normal',
         isFragile: orderData.fragile_items || false,
-        isTemperatureControlled: orderData.temperature_controlled || false
+        isTemperatureControlled: orderData.temperature_controlled || false,
+         hasLiquid: false
       });
       
       // 4. Verify customer can afford the order
@@ -82,7 +107,7 @@ export class OrderService {
       };
       
       const order = await orderRepository.create(orderPayload);
-      logger.info(`Order created: ${order.order_number}`);
+      this.logger.info(`Order created: ${order.order_number}`);
       
       // 6. Create order items if provided
       if (orderData.order_items && Array.isArray(orderData.order_items)) {
@@ -114,9 +139,10 @@ export class OrderService {
       
       return order;
       
-    } catch (error: any) {
-      logger.error('Failed to create order:', error);
-      throw new Error(`Order creation failed: ${error.message}`);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create order:', errorMessage);
+      throw new Error(`Order creation failed: ${errorMessage}`);
     }
   }
   
@@ -148,30 +174,33 @@ export class OrderService {
           );
           
           if (vehicleResponse.data) {
-            const optimization = this.knapsackService.optimizeLoading(
+            const optimization = this.knapsackService.multiDimensionalKnapsack(
               orderItems.map(item => ({
                 id: item.id,
                 weight: item.weight_per_item_kg || 0.1,
                 volume: this.calculateVolume(item),
-                fragile: item.fragile,
-                temperatureSensitive: item.temperature_sensitive
+                priority: 1, // Default priority
+                pickupLocation: { lat: order.pickup_latitude, lng: order.pickup_longitude },
+                deliveryLocation: { lat: order.delivery_latitude, lng: order.delivery_longitude }
               })),
               {
-                maxWeight: vehicleResponse.data.maxWeight || 100,
-                maxVolume: vehicleResponse.data.maxVolume || 2,
-                hasRefrigeration: vehicleResponse.data.hasRefrigeration || false
+                weight: vehicleResponse.data.maxWeight || 100,
+                volume: vehicleResponse.data.maxVolume || 2,
+                maxItems: orderItems.length
               }
             );
             response.packing_optimization = optimization;
           }
-        } catch (error) {
-          logger.warn('Could not get vehicle info for optimization:', error);
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          this.logger.warn('Could not get vehicle info for optimization:', errorMessage);
         }
       }
       
       return response;
-    } catch (error: any) {
-      logger.error('Failed to get order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get order:', errorMessage);
       throw error;
     }
   }
@@ -210,8 +239,9 @@ export class OrderService {
       );
       
       return updatedOrder;
-    } catch (error: any) {
-      logger.error('Failed to accept order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to accept order:', errorMessage);
       throw error;
     }
   }
@@ -260,8 +290,9 @@ export class OrderService {
       );
       
       return updatedOrder as Order;
-    } catch (error: any) {
-      logger.error('Failed to start pickup:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to start pickup:', errorMessage);
       throw error;
     }
   }
@@ -300,11 +331,13 @@ export class OrderService {
       const etaMinutes = Math.ceil((remainingDistance / 30) * 60); // Assume 30 km/h average
       
       // Broadcast location update (for WebSocket/real-time)
-      await this.notificationService.broadcastLocationUpdate(orderId, {
-        location,
-        eta: etaMinutes,
-        remainingDistance
-      });
+      await this.notificationService.broadcastLocationUpdate(
+        orderId,
+        driverId,
+        { lat: location.latitude, lng: location.longitude },
+        etaMinutes,
+        location.speed
+      );
       
       return {
         success: true,
@@ -312,8 +345,9 @@ export class OrderService {
         remaining_distance_km: remainingDistance,
         order_id: orderId
       };
-    } catch (error: any) {
-      logger.error('Failed to update location:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update location:', errorMessage);
       throw error;
     }
   }
@@ -381,8 +415,9 @@ export class OrderService {
         order: await orderRepository.findById(orderId),
         payment: paymentResult
       };
-    } catch (error: any) {
-      logger.error('Failed to complete order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to complete order:', errorMessage);
       throw error;
     }
   }
@@ -444,8 +479,9 @@ export class OrderService {
       }
       
       return updatedOrder as Order;
-    } catch (error: any) {
-      logger.error('Failed to cancel order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to cancel order:', errorMessage);
       throw error;
     }
   }
@@ -453,8 +489,9 @@ export class OrderService {
   async matchOrder(orderId: string): Promise<any> {
     try {
       return await this.matchingService.findDriverForOrder(orderId);
-    } catch (error: any) {
-      logger.error('Failed to match order:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to match order:', errorMessage);
       throw error;
     }
   }
@@ -466,11 +503,14 @@ export class OrderService {
       const parseResult = await excelParser.parseBulkOrderFile(fileBuffer);
       
       if (!parseResult.success) {
-        throw new Error(`Failed to parse Excel file: ${parseResult.errors.map(e => e.message).join(', ')}`);
+        throw new Error(`Failed to parse Excel file: ${parseResult.errors.map((e: any) => e.message).join(', ')}`);
       }
       
       // Create orders from parsed data
-      const results = {
+      const results: {
+        successful: Order[];
+        failed: Array<{ data: any; error: string }>;
+      } = {
         successful: [],
         failed: []
       };
@@ -479,13 +519,14 @@ export class OrderService {
         try {
           const order = await this.createOrder(customerId, {
             ...orderData,
-            customerId // Ensure customerId is set
+            customer_id: customerId // Ensure customer_id is set
           });
           results.successful.push(order);
-        } catch (error: any) {
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           results.failed.push({
             data: orderData,
-            error: error.message
+            error: errorMessage
           });
         }
       }
@@ -495,8 +536,9 @@ export class OrderService {
         ...results,
         metadata: parseResult.metadata
       };
-    } catch (error: any) {
-      logger.error('Failed to process Excel upload:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to process Excel upload:', errorMessage);
       throw error;
     }
   }
@@ -532,4 +574,222 @@ export class OrderService {
     
     return Math.round((end - start) / (1000 * 60)); // minutes
   }
+
+  // Add these methods to your OrderService class in order.service.ts
+  
+  async createBulkOrder(customerId: string, orders: any[]): Promise<{
+    successful: Order[];
+    failed: Array<{ data: any; error: string }>;
+  }> {
+    try {
+      this.logger.info(`Creating bulk orders for customer: ${customerId}`);
+      
+      const results = {
+        successful: [] as Order[],
+        failed: [] as Array<{ data: any; error: string }>
+      };
+      
+      for (const orderData of orders) {
+        try {
+          const order = await this.createOrder(customerId, {
+            ...orderData,
+            customer_id: customerId
+          });
+          results.successful.push(order);
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          results.failed.push({
+            data: orderData,
+            error: errorMessage
+          });
+        }
+      }
+      
+      return results;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to create bulk order:', errorMessage);
+      throw error;
+    }
+  }
+  
+  async getDriverOrders(
+    driverId: string,
+    status?: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<{
+    orders: Order[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  }> {
+    try {
+      this.logger.info(`Getting orders for driver: ${driverId}`);
+      
+      const options: any = {};
+      if (status) options.status = status;
+      
+      const result = await orderRepository.searchOrders(
+        { driverId, status },
+        { page, limit }
+      );
+      
+      return {
+        orders: result.orders,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages
+        }
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get driver orders:', errorMessage);
+      throw error;
+    }
+  }
+  
+  async getCustomerOrders(
+    customerId: string,
+    status?: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<{
+    orders: Order[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  }> {
+    try {
+      this.logger.info(`Getting orders for customer: ${customerId}`);
+      
+      const result = await orderRepository.searchOrders(
+        { customerId, status },
+        { page, limit }
+      );
+      
+      return {
+        orders: result.orders,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages
+        }
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get customer orders:', errorMessage);
+      throw error;
+    }
+  }
+  
+  async getAllOrders(
+    status?: string,
+    page: number = 1,
+    limit: number = 20
+  ): Promise<{
+    orders: Order[];
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  }> {
+    try {
+      this.logger.info(`Getting all orders, status: ${status || 'all'}`);
+      
+      const filters: any = {};
+      if (status) filters.status = status;
+      
+      const result = await orderRepository.searchOrders(filters, { page, limit });
+      
+      return {
+        orders: result.orders,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages
+        }
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get all orders:', errorMessage);
+      throw error;
+    }
+  }
+  
+  async getOrderTracking(orderId: string): Promise<any> {
+    try {
+      this.logger.info(`Getting tracking for order: ${orderId}`);
+      
+      const order = await orderRepository.findById(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      const latestLocation = await trackingRepository.getLatestLocation(orderId);
+      const trackingPoints = await trackingRepository.findByOrderId(orderId, { limit: 50 });
+      const trackingSummary = await trackingRepository.getTrackingSummary(orderId);
+      
+      // Calculate ETA if driver is enroute
+      let etaMinutes = null;
+      if (latestLocation && order.status === 'in_transit') {
+        const remainingDistance = distanceUtil.calculateHaversineDistance(
+          { lat: latestLocation.latitude, lng: latestLocation.longitude },
+          { lat: order.delivery_latitude, lng: order.delivery_longitude }
+        );
+        etaMinutes = Math.ceil((remainingDistance / 30) * 60); // Assume 30 km/h average
+      }
+      
+      return {
+        order_id: orderId,
+        status: order.status,
+        driver_location: latestLocation ? {
+          latitude: latestLocation.latitude,
+          longitude: latestLocation.longitude,
+          speed: latestLocation.speed,
+          bearing: latestLocation.bearing,
+          accuracy: latestLocation.accuracy,
+          timestamp: latestLocation.timestamp
+        } : null,
+        tracking_summary: trackingSummary,
+        tracking_points: trackingPoints.map(point => ({
+          latitude: point.latitude,
+          longitude: point.longitude,
+          speed: point.speed,
+          bearing: point.bearing,
+          timestamp: point.timestamp
+        })),
+        eta_minutes: etaMinutes,
+        pickup_address: order.pickup_address,
+        delivery_address: order.delivery_address,
+        driver_id: order.driver_id,
+        customer_id: order.customer_id
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get order tracking:', errorMessage);
+      throw error;
+    }
+  }
+  
+  // Also add this method to handle bulk order creation from array
+  async createBulkOrderFromArray(customerId: string, ordersArray: any[]): Promise<any> {
+    return this.createBulkOrder(customerId, ordersArray);
+  }
+
 }
+
+// Export singleton instance
+export const orderService = new OrderService();

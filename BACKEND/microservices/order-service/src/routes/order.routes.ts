@@ -1,9 +1,11 @@
 import express from 'express';
 import { OrderController } from '../controllers/order.controller';
-import { authenticate, authorizeCustomer, authorizeDriver } from '../middleware/auth.middleware';
+import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer } from '../middleware/auth.middleware';
 import { validate, validationSchemas } from '../middleware/validation.middleware';
 import { validateOrderCapacity } from '../middleware/capacity.middleware';
+import { verifyCustomerBalance, validatePaymentMethod } from '../middleware/payment.middleware';
 import multer from 'multer';
+import Joi from 'joi';
 
 const router = express.Router();
 const orderController = new OrderController();
@@ -17,6 +19,27 @@ const upload = multer({
   }
 });
 
+// Extended validation schemas
+const extendedValidationSchemas = {
+  ...validationSchemas,
+  message: {
+    send: Joi.object({
+      content: Joi.string().required().max(1000),
+      messageType: Joi.string().valid('text', 'location', 'image', 'status_update').default('text'),
+      metadata: Joi.object()
+    })
+  },
+  location: {
+    update: Joi.object({
+      latitude: Joi.number().required().min(-90).max(90),
+      longitude: Joi.number().required().min(-180).max(180),
+      speed: Joi.number().optional().min(0),
+      bearing: Joi.number().optional().min(0).max(360),
+      accuracy: Joi.number().optional().min(0)
+    })
+  }
+};
+
 /**
  * @swagger
  * /orders:
@@ -25,64 +48,14 @@ const upload = multer({
  *     tags: [Orders]
  *     security:
  *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - pickup_address
- *               - delivery_address
- *               - total_weight_kg
- *               - total_volume_m3
- *             properties:
- *               pickup_address:
- *                 type: string
- *               pickup_latitude:
- *                 type: number
- *                 format: float
- *               pickup_longitude:
- *                 type: number
- *                 format: float
- *               delivery_address:
- *                 type: string
- *               delivery_latitude:
- *                 type: number
- *                 format: float
- *               delivery_longitude:
- *                 type: number
- *                 format: float
- *               total_weight_kg:
- *                 type: number
- *                 format: float
- *               total_volume_m3:
- *                 type: number
- *                 format: float
- *               package_description:
- *                 type: string
- *               fragile_items:
- *                 type: boolean
- *               temperature_controlled:
- *                 type: boolean
- *     responses:
- *       201:
- *         description: Order created successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       400:
- *         $ref: '#/components/responses/ValidationError'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
  */
 router.post('/orders',
   authenticate,
   authorizeCustomer,
   validateOrderCapacity,
+  verifyCustomerBalance,
   validate(validationSchemas.order.create),
-  orderController.createOrder
+  orderController.createOrder.bind(orderController)
 );
 
 /**
@@ -91,43 +64,12 @@ router.post('/orders',
  *   post:
  *     summary: Create multiple orders in bulk
  *     tags: [Bulk]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - orders
- *             properties:
- *               orders:
- *                 type: array
- *                 items:
- *                   $ref: '#/components/schemas/Order'
- *     responses:
- *       200:
- *         description: Bulk orders processed
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: number
- *                 failed:
- *                   type: number
- *                 orders:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Order'
  */
 router.post('/orders/bulk',
   authenticate,
   authorizeCustomer,
   validate(validationSchemas.order.bulk),
-  orderController.createBulkOrder
+  orderController.createBulkOrder.bind(orderController)
 );
 
 /**
@@ -135,28 +77,12 @@ router.post('/orders/bulk',
  * /orders/upload:
  *   post:
  *     summary: Upload Excel file for bulk orders
- *     tags: [Bulk]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
- *           schema:
- *             type: object
- *             properties:
- *               file:
- *                 type: string
- *                 format: binary
- *     responses:
- *       200:
- *         description: Excel file processed successfully
  */
 router.post('/orders/upload',
   authenticate,
   authorizeCustomer,
   upload.single('file'),
-  orderController.uploadExcel
+  orderController.uploadExcel.bind(orderController)
 );
 
 /**
@@ -164,52 +90,10 @@ router.post('/orders/upload',
  * /orders:
  *   get:
  *     summary: Get orders with filters
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *         description: Filter by order status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *     responses:
- *       200:
- *         description: List of orders
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 orders:
- *                   type: array
- *                   items:
- *                     $ref: '#/components/schemas/Order'
- *                 pagination:
- *                   type: object
- *                   properties:
- *                     page:
- *                       type: integer
- *                     limit:
- *                       type: integer
- *                     total:
- *                       type: integer
- *                     totalPages:
- *                       type: integer
  */
 router.get('/orders',
   authenticate,
-  orderController.getOrders
+  orderController.getOrders.bind(orderController)
 );
 
 /**
@@ -217,35 +101,10 @@ router.get('/orders',
  * /orders/{id}:
  *   get:
  *     summary: Get order details by ID
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *       - in: query
- *         name: optimize
- *         schema:
- *           type: boolean
- *           default: false
- *         description: Include knapsack optimization data
- *     responses:
- *       200:
- *         description: Order details
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       404:
- *         $ref: '#/components/responses/NotFound'
  */
 router.get('/orders/:id',
   authenticate,
-  orderController.getOrder
+  orderController.getOrder.bind(orderController)
 );
 
 /**
@@ -253,24 +112,11 @@ router.get('/orders/:id',
  * /orders/{id}/accept:
  *   post:
  *     summary: Driver accepts an order
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Order accepted successfully
  */
 router.post('/orders/:id/accept',
   authenticate,
   authorizeDriver,
-  orderController.acceptOrder
+  orderController.acceptOrder.bind(orderController)
 );
 
 /**
@@ -278,35 +124,12 @@ router.post('/orders/:id/accept',
  * /orders/{id}/start:
  *   post:
  *     summary: Start order pickup
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               latitude:
- *                 type: number
- *               longitude:
- *                 type: number
- *     responses:
- *       200:
- *         description: Pickup started successfully
  */
 router.post('/orders/:id/start',
   authenticate,
   authorizeDriver,
-  orderController.startPickup
+  validate(extendedValidationSchemas.location.update),
+  orderController.startPickup.bind(orderController)
 );
 
 /**
@@ -314,44 +137,12 @@ router.post('/orders/:id/start',
  * /orders/{id}/location:
  *   post:
  *     summary: Update driver location (real-time tracking)
- *     tags: [Tracking]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - latitude
- *               - longitude
- *             properties:
- *               latitude:
- *                 type: number
- *               longitude:
- *                 type: number
- *               speed:
- *                 type: number
- *               bearing:
- *                 type: number
- *               accuracy:
- *                 type: number
- *     responses:
- *       200:
- *         description: Location updated
  */
 router.post('/orders/:id/location',
   authenticate,
   authorizeDriver,
-  orderController.updateLocation
+  validate(extendedValidationSchemas.location.update),
+  orderController.updateLocation.bind(orderController)
 );
 
 /**
@@ -359,34 +150,12 @@ router.post('/orders/:id/location',
  * /orders/{id}/complete:
  *   post:
  *     summary: Mark order as delivered and process payment
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     requestBody:
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               proof_image:
- *                 type: string
- *               delivery_notes:
- *                 type: string
- *     responses:
- *       200:
- *         description: Order completed and payment processed
  */
 router.post('/orders/:id/complete',
   authenticate,
   authorizeDriver,
-  orderController.completeOrder
+  validatePaymentMethod,
+  orderController.completeOrder.bind(orderController)
 );
 
 /**
@@ -394,36 +163,10 @@ router.post('/orders/:id/complete',
  * /orders/{id}/cancel:
  *   post:
  *     summary: Cancel an order
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - reason
- *             properties:
- *               reason:
- *                 type: string
- *               detailed_reason:
- *                 type: string
- *     responses:
- *       200:
- *         description: Order cancelled successfully
  */
 router.post('/orders/:id/cancel',
   authenticate,
-  orderController.cancelOrder
+  orderController.cancelOrder.bind(orderController)
 );
 
 /**
@@ -431,33 +174,11 @@ router.post('/orders/:id/cancel',
  * /driver/orders:
  *   get:
  *     summary: Get driver's orders
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *         description: Filter by status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *     responses:
- *       200:
- *         description: List of driver's orders
  */
 router.get('/driver/orders',
   authenticate,
   authorizeDriver,
-  orderController.getDriverOrders
+  orderController.getDriverOrders.bind(orderController)
 );
 
 /**
@@ -465,33 +186,11 @@ router.get('/driver/orders',
  * /customer/orders:
  *   get:
  *     summary: Get customer's orders
- *     tags: [Customer]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *         description: Filter by status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           default: 1
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           default: 20
- *     responses:
- *       200:
- *         description: List of customer's orders
  */
 router.get('/customer/orders',
   authenticate,
   authorizeCustomer,
-  orderController.getCustomerOrders
+  orderController.getCustomerOrders.bind(orderController)
 );
 
 /**
@@ -499,45 +198,10 @@ router.get('/customer/orders',
  * /tracking/{id}:
  *   get:
  *     summary: Get real-time order tracking
- *     tags: [Tracking]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Tracking information
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 order_id:
- *                   type: string
- *                 driver_location:
- *                   type: object
- *                   properties:
- *                     latitude:
- *                       type: number
- *                     longitude:
- *                       type: number
- *                 eta_minutes:
- *                   type: number
- *                 route_polyline:
- *                   type: string
- *                 tracking_points:
- *                   type: array
- *                   items:
- *                     type: object
  */
 router.get('/tracking/:id',
   authenticate,
-  orderController.getTracking
+  orderController.getTracking.bind(orderController)
 );
 
 /**
@@ -545,29 +209,79 @@ router.get('/tracking/:id',
  * /internal/match/{id}:
  *   post:
  *     summary: Match order with driver (internal use)
- *     tags: [Internal]
- *     security:
- *       - ServiceSecret: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Order matched successfully
  */
 router.post('/internal/match/:id',
   (req, res, next) => {
     const secret = req.headers['x-service-secret'];
     if (secret !== process.env.SERVICE_SECRET) {
-      return res.status(403).json({ error: 'Forbidden' });
+      res.status(403).json({ error: 'Forbidden' });
+      return;
     }
     next();
+    return;
   },
-  orderController.matchOrder
+  orderController.matchOrder.bind(orderController)
+);
+
+// Add these routes (for future implementation)
+
+/**
+ * @swagger
+ * /orders/{id}/messages:
+ *   post:
+ *     summary: Send message to driver/customer
+ */
+router.post('/orders/:id/messages',
+  authenticate,
+  authorizeDriverOrCustomer,
+  validate(extendedValidationSchemas.message.send),
+  (req, res) => {
+    // Placeholder for messaging functionality
+    res.status(501).json({ error: 'Messaging not yet implemented' });
+  }
+);
+
+/**
+ * @swagger
+ * /orders/{id}/messages:
+ *   get:
+ *     summary: Get order messages
+ */
+router.get('/orders/:id/messages',
+  authenticate,
+  authorizeDriverOrCustomer,
+  (req, res) => {
+    // Placeholder for messaging functionality
+    res.status(501).json({ error: 'Messaging not yet implemented' });
+  }
+);
+
+/**
+ * @swagger
+ * /messages/unread:
+ *   get:
+ *     summary: Get unread message count
+ */
+router.get('/messages/unread',
+  authenticate,
+  (req, res) => {
+    // Placeholder for messaging functionality
+    res.status(501).json({ error: 'Messaging not yet implemented' });
+  }
+);
+
+/**
+ * @swagger
+ * /messages/{id}/read:
+ *   patch:
+ *     summary: Mark message as read
+ */
+router.patch('/messages/:id/read',
+  authenticate,
+  (req, res) => {
+    // Placeholder for messaging functionality
+    res.status(501).json({ error: 'Messaging not yet implemented' });
+  }
 );
 
 export default router;
