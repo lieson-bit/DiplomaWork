@@ -3,7 +3,7 @@ import { OrderController } from '../controllers/order.controller';
 import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer } from '../middleware/auth.middleware';
 import { validate, validationSchemas } from '../middleware/validation.middleware';
 import { validateOrderCapacity } from '../middleware/capacity.middleware';
-import { verifyCustomerBalance, validatePaymentMethod } from '../middleware/payment.middleware';
+import { verifyCustomerBalance, validatePaymentMethod, verifyServiceSecret } from '../middleware/payment.middleware';
 import multer from 'multer';
 import Joi from 'joi';
 
@@ -45,9 +45,27 @@ const extendedValidationSchemas = {
  * /orders:
  *   post:
  *     summary: Create a new order
+ *     description: Create a new delivery order with pickup and delivery details
  *     tags: [Orders]
  *     security:
  *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CreateOrderRequest'
+ *     responses:
+ *       201:
+ *         description: Order created successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Order'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  */
 router.post('/orders',
   authenticate,
@@ -63,7 +81,48 @@ router.post('/orders',
  * /orders/bulk:
  *   post:
  *     summary: Create multiple orders in bulk
+ *     description: Create multiple orders at once (max 100 orders per request)
  *     tags: [Bulk]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/BulkOrderRequest'
+ *     responses:
+ *       200:
+ *         description: Bulk orders processed
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     successful:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Order'
+ *                     failed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           data:
+ *                             type: object
+ *                           error:
+ *                             type: string
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  */
 router.post('/orders/bulk',
   authenticate,
@@ -77,6 +136,55 @@ router.post('/orders/bulk',
  * /orders/upload:
  *   post:
  *     summary: Upload Excel file for bulk orders
+ *     description: Upload an Excel file containing multiple orders for batch processing
+ *     tags: [Bulk]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *                 description: Excel file (.xlsx) with order data
+ *     responses:
+ *       200:
+ *         description: Excel file processed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     successful:
+ *                       type: array
+ *                       items:
+ *                         $ref: '#/components/schemas/Order'
+ *                     failed:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           data:
+ *                             type: object
+ *                           error:
+ *                             type: string
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       413:
+ *         description: File too large (max 10MB)
  */
 router.post('/orders/upload',
   authenticate,
@@ -90,6 +198,43 @@ router.post('/orders/upload',
  * /orders:
  *   get:
  *     summary: Get orders with filters
+ *     description: Retrieve orders based on user role and filters
+ *     tags: [Orders]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: Orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         description: Server error
  */
 router.get('/orders',
   authenticate,
@@ -101,6 +246,35 @@ router.get('/orders',
  * /orders/{id}:
  *   get:
  *     summary: Get order details by ID
+ *     description: Retrieve detailed information about a specific order
+ *     tags: [Orders]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *       - in: query
+ *         name: optimize
+ *         schema:
+ *           type: boolean
+ *           default: false
+ *         description: Include knapsack optimization data
+ *     responses:
+ *       200:
+ *         description: Order retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Order'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  */
 router.get('/orders/:id',
   authenticate,
@@ -112,6 +286,31 @@ router.get('/orders/:id',
  * /orders/{id}/accept:
  *   post:
  *     summary: Driver accepts an order
+ *     description: Driver accepts an assigned order
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order accepted successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Order'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         description: Driver not assigned to this order
  */
 router.post('/orders/:id/accept',
   authenticate,
@@ -124,6 +323,35 @@ router.post('/orders/:id/accept',
  * /orders/{id}/start:
  *   post:
  *     summary: Start order pickup
+ *     description: Driver starts the pickup process for an accepted order
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/LocationUpdateRequest'
+ *     responses:
+ *       200:
+ *         description: Pickup started successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Order'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  */
 router.post('/orders/:id/start',
   authenticate,
@@ -136,7 +364,46 @@ router.post('/orders/:id/start',
  * @swagger
  * /orders/{id}/location:
  *   post:
- *     summary: Update driver location (real-time tracking)
+ *     summary: Update driver location during order delivery
+ *     description: Update driver's current location during order delivery for real-time tracking
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/LocationUpdateRequest'
+ *     responses:
+ *       200:
+ *         description: Location updated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 eta:
+ *                   type: number
+ *                   description: Estimated time of arrival in minutes
+ *                 remaining_distance_km:
+ *                   type: number
+ *                 order_id:
+ *                   type: string
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  */
 router.post('/orders/:id/location',
   authenticate,
@@ -149,12 +416,54 @@ router.post('/orders/:id/location',
  * @swagger
  * /orders/{id}/complete:
  *   post:
- *     summary: Mark order as delivered and process payment
+ *     summary: Complete order
+ *     description: Mark order as delivered and process payment
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CompleteOrderRequest'
+ *     responses:
+ *       200:
+ *         description: Order completed successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 order:
+ *                   $ref: '#/components/schemas/Order'
+ *                 payment:
+ *                   type: object
+ *                   properties:
+ *                     success:
+ *                       type: boolean
+ *                     message:
+ *                       type: string
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
  */
 router.post('/orders/:id/complete',
   authenticate,
   authorizeDriver,
   validatePaymentMethod,
+  validate(validationSchemas.order.complete),
   orderController.completeOrder.bind(orderController)
 );
 
@@ -163,9 +472,41 @@ router.post('/orders/:id/complete',
  * /orders/{id}/cancel:
  *   post:
  *     summary: Cancel an order
+ *     description: Cancel an order (customer or driver can cancel based on permissions)
+ *     tags: [Orders]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/CancelOrderRequest'
+ *     responses:
+ *       200:
+ *         description: Order cancelled successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Order'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         description: Permission denied
  */
 router.post('/orders/:id/cancel',
   authenticate,
+  validate(validationSchemas.order.cancel),
   orderController.cancelOrder.bind(orderController)
 );
 
@@ -174,6 +515,43 @@ router.post('/orders/:id/cancel',
  * /driver/orders:
  *   get:
  *     summary: Get driver's orders
+ *     description: Retrieve orders assigned to the authenticated driver
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: Driver orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         description: Server error
  */
 router.get('/driver/orders',
   authenticate,
@@ -186,6 +564,43 @@ router.get('/driver/orders',
  * /customer/orders:
  *   get:
  *     summary: Get customer's orders
+ *     description: Retrieve orders belonging to the authenticated customer
+ *     tags: [Customer]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number for pagination
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Number of items per page
+ *     responses:
+ *       200:
+ *         description: Customer orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/PaginatedResponse'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       500:
+ *         description: Server error
  */
 router.get('/customer/orders',
   authenticate,
@@ -197,7 +612,32 @@ router.get('/customer/orders',
  * @swagger
  * /tracking/{id}:
  *   get:
- *     summary: Get real-time order tracking
+ *     summary: Get order tracking
+ *     description: Get real-time tracking information for an order
+ *     tags: [Tracking]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Tracking data retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/TrackingData'
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         description: Access denied to this order
  */
 router.get('/tracking/:id',
   authenticate,
@@ -208,18 +648,45 @@ router.get('/tracking/:id',
  * @swagger
  * /internal/match/{id}:
  *   post:
- *     summary: Match order with driver (internal use)
+ *     summary: Match order (internal use)
+ *     description: Internal endpoint to trigger order-driver matching
+ *     tags: [Orders]
+ *     security:
+ *       - ServiceSecret: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Order matching initiated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     order_id:
+ *                       type: string
+ *                     driver_id:
+ *                       type: string
+ *       403:
+ *         description: Invalid service secret
+ *       500:
+ *         description: Failed to match order
  */
 router.post('/internal/match/:id',
-  (req, res, next) => {
-    const secret = req.headers['x-service-secret'];
-    if (secret !== process.env.SERVICE_SECRET) {
-      res.status(403).json({ error: 'Forbidden' });
-      return;
-    }
-    next();
-    return;
-  },
+  verifyServiceSecret,
   orderController.matchOrder.bind(orderController)
 );
 
@@ -230,14 +697,33 @@ router.post('/internal/match/:id',
  * /orders/{id}/messages:
  *   post:
  *     summary: Send message to driver/customer
+ *     tags: [Orders]
+ *     security:
+ *       - BearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/MessageRequest'
+ *     responses:
+ *       200:
+ *         description: Message sent successfully
+ *       401:
+ *         description: Unauthorized
+ *       403:
+ *         description: Access denied to this order
  */
 router.post('/orders/:id/messages',
   authenticate,
   authorizeDriverOrCustomer,
   validate(extendedValidationSchemas.message.send),
   (req, res) => {
-    // Placeholder for messaging functionality
-    res.status(501).json({ error: 'Messaging not yet implemented' });
+    res.status(501).json({ 
+      success: false, 
+      error: 'Messaging not yet implemented',
+      message: 'This feature is currently under development'
+    });
   }
 );
 
@@ -246,13 +732,32 @@ router.post('/orders/:id/messages',
  * /orders/{id}/messages:
  *   get:
  *     summary: Get order messages
+ *     tags: [Orders]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
+ *     responses:
+ *       200:
+ *         description: Messages retrieved successfully
+ *       401:
+ *         description: Unauthorized
  */
 router.get('/orders/:id/messages',
   authenticate,
   authorizeDriverOrCustomer,
   (req, res) => {
-    // Placeholder for messaging functionality
-    res.status(501).json({ error: 'Messaging not yet implemented' });
+    res.status(501).json({ 
+      success: false, 
+      error: 'Messaging not yet implemented',
+      message: 'This feature is currently under development'
+    });
   }
 );
 
@@ -261,12 +766,23 @@ router.get('/orders/:id/messages',
  * /messages/unread:
  *   get:
  *     summary: Get unread message count
+ *     tags: [Messages]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Unread count retrieved
+ *       401:
+ *         description: Unauthorized
  */
 router.get('/messages/unread',
   authenticate,
   (req, res) => {
-    // Placeholder for messaging functionality
-    res.status(501).json({ error: 'Messaging not yet implemented' });
+    res.status(501).json({ 
+      success: false, 
+      error: 'Messaging not yet implemented',
+      message: 'This feature is currently under development'
+    });
   }
 );
 
@@ -275,12 +791,31 @@ router.get('/messages/unread',
  * /messages/{id}/read:
  *   patch:
  *     summary: Mark message as read
+ *     tags: [Messages]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Message ID
+ *     responses:
+ *       200:
+ *         description: Message marked as read
+ *       401:
+ *         description: Unauthorized
  */
 router.patch('/messages/:id/read',
   authenticate,
   (req, res) => {
-    // Placeholder for messaging functionality
-    res.status(501).json({ error: 'Messaging not yet implemented' });
+    res.status(501).json({ 
+      success: false, 
+      error: 'Messaging not yet implemented',
+      message: 'This feature is currently under development'
+    });
   }
 );
 

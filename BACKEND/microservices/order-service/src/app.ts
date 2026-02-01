@@ -14,7 +14,7 @@ const app = express();
 // Create a logger instance for this file
 const logger = defaultLogger;
 
-// Get absolute path for Swagger file resolution - FIXED: Use import.meta.url for ES modules
+// Get absolute path for Swagger file resolution
 const swaggerDirname = process.cwd();
 
 // Swagger configuration with comprehensive schemas
@@ -157,6 +157,20 @@ const swaggerOptions = {
             speed: { type: 'number', minimum: 0, maximum: 200, example: 45.5 },
             bearing: { type: 'number', minimum: 0, maximum: 360, example: 90 },
             accuracy: { type: 'number', minimum: 0, example: 10.5 }
+          }
+        },
+
+        MessageRequest: {
+          type: 'object',
+          required: ['content'],
+          properties: {
+            content: { type: 'string', maxLength: 1000, example: 'Hello, where are you?' },
+            messageType: { 
+              type: 'string', 
+              enum: ['text', 'location', 'image', 'status_update'],
+              default: 'text' 
+            },
+            metadata: { type: 'object' }
           }
         },
         
@@ -309,7 +323,8 @@ const swaggerOptions = {
       { name: 'Tracking', description: 'Real-time order tracking' },
       { name: 'Driver', description: 'Driver-specific operations' },
       { name: 'Customer', description: 'Customer-specific operations' },
-      { name: 'Bulk', description: 'Bulk order operations' }
+      { name: 'Bulk', description: 'Bulk order operations' },
+      { name: 'Messages', description: 'Order messaging operations' }
     ]
   },
   apis: [
@@ -321,7 +336,10 @@ const swaggerOptions = {
 
 console.log('Swagger scanning APIs from:', swaggerOptions.apis);
 
-const swaggerSpec = swaggerJSDoc(swaggerOptions);
+const swaggerSpec = swaggerJSDoc(swaggerOptions) as Record<string, any>;
+
+// Log Swagger spec generation
+console.log(`Swagger spec generated with ${Object.keys(swaggerSpec.paths || {}).length} paths`);
 
 // Security middleware
 app.use(helmet({
@@ -334,7 +352,8 @@ app.use(cors({
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:3002',
-    'http://localhost:3003'
+    'http://localhost:3003',
+    'http://localhost:3004'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -360,15 +379,18 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customSiteTitle: 'Order Service API Documentation',
   swaggerOptions: {
     persistAuthorization: true,
-    docExpansion: 'none',
+    docExpansion: 'list',
     filter: true,
-    deepLinking: true
+    deepLinking: true,
+    defaultModelsExpandDepth: 2,
+    defaultModelExpandDepth: 2
   }
 }));
 
 // Health check endpoint
 app.get('/health', (req: express.Request, res: express.Response) => {
   res.status(200).json({
+    success: true,
     status: 'healthy',
     service: 'order-service',
     timestamp: new Date().toISOString(),
@@ -389,6 +411,7 @@ app.use('/api', orderRoutes);
 // 404 handler
 app.use('*', (req: express.Request, res: express.Response) => {
   res.status(404).json({
+    success: false,
     error: 'Route not found',
     path: req.path,
     method: req.method,
