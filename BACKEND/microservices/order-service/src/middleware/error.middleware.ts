@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
+
+// Create logger instance for this module
+const logger = new Logger('ErrorMiddleware');
 
 export const errorHandler = (
   error: any,

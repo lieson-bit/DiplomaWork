@@ -1,282 +1,266 @@
 import { Logger } from '../utils/logger';
 import { WebSocketUtil } from '../utils/websocket.util';
-
-export interface Notification {
-  id: string;
-  userId: string;
-  type: NotificationType;
-  title: string;
-  message: string;
-  data?: any;
-  read: boolean;
-  createdAt: Date;
-  expiresAt?: Date;
-}
-
-export type NotificationType = 
-  | 'order_created'
-  | 'order_accepted'
-  | 'order_picked_up'
-  | 'order_delivered'
-  | 'order_cancelled'
-  | 'payment_received'
-  | 'payment_failed'
-  | 'driver_assigned'
-  | 'driver_enroute'
-  | 'driver_arrived'
-  | 'rating_received'
-  | 'bulk_order_complete'
-  | 'promotional'
-  | 'system_alert';
-
-export interface NotificationPreferences {
-  email: boolean;
-  push: boolean;
-  sms: boolean;
-  inApp: boolean;
-}
+import nodemailer from 'nodemailer';
 
 export class NotificationService {
   private logger = new Logger('NotificationService');
   private websocketUtil: WebSocketUtil;
-  private notifications: Map<string, Notification[]> = new Map();
-
+  private emailTransporter: any;
+  
   constructor(websocketUtil: WebSocketUtil) {
     this.websocketUtil = websocketUtil;
+    
+    // Setup email transporter if configured
+    if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      this.emailTransporter = nodemailer.createTransport({
+        host: process.env.EMAIL_HOST,
+        port: parseInt(process.env.EMAIL_PORT || '587'),
+        secure: process.env.EMAIL_PORT === '465',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS
+        }
+      });
+    }
   }
-
+  
+  // In-app notification via WebSocket (PREFERRED METHOD)
+  async sendInAppNotification(
+    userId: string,
+    type: string,
+    title: string,
+    body: string,
+    data?: any
+  ): Promise<void> {
+    try {
+      const notification = {
+        id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type,
+        title,
+        body,
+        data: {
+          ...data,
+          timestamp: new Date().toISOString(),
+          read: false
+        }
+      };
+      
+      // Send via WebSocket (real-time delivery)
+      await this.websocketUtil.sendToUser(userId, 'in_app_notification', notification);
+      
+      // Also store in database for offline users
+      await this.storeNotification(userId, notification);
+      
+      this.logger.debug(`In-app notification sent to ${userId}: ${type}`);
+    } catch (error) {
+      this.logger.warn(`Failed to send in-app notification to ${userId}:`, error);
+    }
+  }
+  
+  // Email notification (fallback, with in-app like formatting)
+  async sendEmailNotification(
+    userId: string,
+    type: string,
+    title: string,
+    body: string,
+    data?: any
+  ): Promise<void> {
+    if (!this.emailTransporter) return;
+    
+    try {
+      // Get user email from user service
+      const userEmail = await this.getUserEmail(userId);
+      if (!userEmail) return;
+      
+      // Format email to look like in-app message
+      const emailHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+            .notification { border-left: 4px solid #4CAF50; padding: 15px; background: #f9f9f9; margin: 20px 0; }
+            .title { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px; }
+            .body { font-size: 14px; color: #666; line-height: 1.6; }
+            .button { display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+            .footer { margin-top: 20px; font-size: 12px; color: #999; }
+          </style>
+        </head>
+        <body>
+          <div class="notification">
+            <div class="title">${title}</div>
+            <div class="body">${body}</div>
+            ${data?.orderId ? `
+              <a href="${process.env.APP_URL || 'https://app.example.com'}/orders/${data.orderId}" class="button">
+                View in App
+              </a>
+            ` : ''}
+          </div>
+          <div class="footer">
+            This notification was sent from ${process.env.APP_NAME || 'Order Service'}. 
+            You can disable email notifications in your app settings.
+          </div>
+        </body>
+        </html>
+      `;
+      
+      await this.emailTransporter.sendMail({
+        from: process.env.EMAIL_FROM || `"Order App" <${process.env.EMAIL_USER}>`,
+        to: userEmail,
+        subject: title,
+        html: emailHtml
+      });
+      
+      this.logger.debug(`Email sent to ${userEmail}`);
+    } catch (error) {
+      this.logger.warn(`Failed to send email to ${userId}:`, error);
+    }
+  }
+  
+  // Combined notification (in-app + email)
   async sendOrderNotification(
     userId: string,
     orderId: string,
-    type: NotificationType,
+    notificationType: string,
     data?: any
   ): Promise<void> {
-    try {
-      const notification = this.createNotification(userId, type, {
-        orderId,
-        ...data
-      });
-
-      // Store notification
-      await this.storeNotification(notification);
-
-      // Send via WebSocket (real-time)
-      await this.sendWebSocketNotification(userId, notification);
-
-      // Send email notification (async)
-      this.sendEmailNotification(userId, notification);
-
-      // Send push notification (async)
-      this.sendPushNotification(userId, notification);
-
-      this.logger.info(`Sent ${type} notification to user ${userId} for order ${orderId}`);
-    } catch (error) {
-      this.logger.error(`Failed to send notification to user ${userId}:`, error);
-      throw error;
-    }
-  }
-
-  async sendBulkOrderCompleteNotification(
-    userId: string,
-    bulkOrderId: string,
-    successfulCount: number,
-    failedCount: number
-  ): Promise<void> {
-    const notification = this.createNotification(
+    const notificationContent = this.getNotificationContent(notificationType, orderId, data);
+    
+    // 1. Send in-app notification (primary)
+    await this.sendInAppNotification(
       userId,
-      'bulk_order_complete',
-      {
-        bulkOrderId,
-        successfulCount,
-        failedCount,
-        message: `Bulk order processing complete. ${successfulCount} orders created successfully, ${failedCount} failed.`
-      }
+      notificationType,
+      notificationContent.title,
+      notificationContent.body,
+      { orderId, ...data }
     );
-
-    await this.sendNotification(userId, notification);
+    
+    // 2. Send email (secondary, formatted like in-app)
+    await this.sendEmailNotification(
+      userId,
+      notificationType,
+      notificationContent.title,
+      notificationContent.body,
+      { orderId, ...data }
+    );
   }
-
-  async sendDriverAssignmentNotification(
+  
+  // Broadcast location updates to customer
+  async broadcastLocationUpdate(
+    orderId: string,
     driverId: string,
-    orderId: string,
-    orderDetails: any
+    location: { lat: number; lng: number },
+    eta?: number,
+    speed?: number
   ): Promise<void> {
-    const notification = this.createNotification(
-      driverId,
-      'driver_assigned',
-      {
-        orderId,
-        pickupAddress: orderDetails.pickupAddress,
-        deliveryAddress: orderDetails.deliveryAddress,
-        estimatedEarnings: orderDetails.driverEarnings,
-        message: `New order assigned to you. Pickup: ${orderDetails.pickupAddress}`
-      }
-    );
-
-    await this.sendNotification(driverId, notification);
-  }
-
-  async sendPaymentNotification(
-    userId: string,
-    orderId: string,
-    amount: number,
-    status: 'completed' | 'failed' | 'refunded'
-  ): Promise<void> {
-    const type = status === 'completed' ? 'payment_received' : 'payment_failed';
-    const notification = this.createNotification(
-      userId,
-      type,
-      {
-        orderId,
-        amount,
-        status,
-        message: status === 'completed' 
-          ? `Payment of $${amount.toFixed(2)} received for order ${orderId}`
-          : `Payment of $${amount.toFixed(2)} failed for order ${orderId}`
-      }
-    );
-
-    await this.sendNotification(userId, notification);
-  }
-
-  async getUserNotifications(userId: string, limit: number = 50, offset: number = 0): Promise<Notification[]> {
-    const userNotifications = this.notifications.get(userId) || [];
-    return userNotifications
-      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .slice(offset, offset + limit);
-  }
-
-  async markAsRead(userId: string, notificationId: string): Promise<void> {
-    const userNotifications = this.notifications.get(userId);
-    if (userNotifications) {
-      const notification = userNotifications.find(n => n.id === notificationId);
-      if (notification) {
-        notification.read = true;
-      }
-    }
-  }
-
-  async markAllAsRead(userId: string): Promise<void> {
-    const userNotifications = this.notifications.get(userId);
-    if (userNotifications) {
-      userNotifications.forEach(notification => {
-        notification.read = true;
-      });
-    }
-  }
-
-  async deleteNotification(userId: string, notificationId: string): Promise<void> {
-    const userNotifications = this.notifications.get(userId);
-    if (userNotifications) {
-      const index = userNotifications.findIndex(n => n.id === notificationId);
-      if (index !== -1) {
-        userNotifications.splice(index, 1);
-      }
-    }
-  }
-
-  async deleteAllNotifications(userId: string): Promise<void> {
-    this.notifications.delete(userId);
-  }
-
-  private createNotification(
-    userId: string,
-    type: NotificationType,
-    data?: any
-  ): Notification {
-    const now = new Date();
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // Notifications expire after 30 days
-
-    return {
-      id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      userId,
-      type,
-      title: this.getNotificationTitle(type),
-      message: data?.message || this.getDefaultMessage(type),
-      data,
-      read: false,
-      createdAt: now,
-      expiresAt
-    };
-  }
-
-  private async sendNotification(userId: string, notification: Notification): Promise<void> {
-    // Store notification
-    await this.storeNotification(notification);
-
-    // Send via WebSocket
-    await this.sendWebSocketNotification(userId, notification);
-
-    // Send other notification types based on user preferences
-    // (This would check user preferences in a real implementation)
-    await this.sendEmailNotification(userId, notification);
-    await this.sendPushNotification(userId, notification);
-  }
-
-  private async storeNotification(notification: Notification): Promise<void> {
-    const userId = notification.userId;
-    if (!this.notifications.has(userId)) {
-      this.notifications.set(userId, []);
-    }
-    this.notifications.get(userId)!.push(notification);
-  }
-
-  private async sendWebSocketNotification(userId: string, notification: Notification): Promise<void> {
     try {
-      await this.websocketUtil.sendToUser(userId, 'notification', notification);
+      // Get customer ID from order
+      const order = await this.getOrderDetails(orderId);
+      if (!order?.customer_id) return;
+      
+      const notification = {
+        type: 'location_update',
+        orderId,
+        data: {
+          driverId,
+          location,
+          eta,
+          speed,
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+      // Send to customer
+      await this.websocketUtil.sendToUser(order.customer_id, 'driver_location', notification);
+      
+      // Also send in-app message
+      await this.sendInAppNotification(
+        order.customer_id,
+        'location_update',
+        'Driver Location Updated',
+        `Driver is on the way to you${eta ? `, ETA: ${eta} minutes` : ''}`,
+        { orderId, location, eta }
+      );
     } catch (error) {
-      this.logger.warn(`Failed to send WebSocket notification to user ${userId}:`, error);
+      this.logger.warn(`Failed to broadcast location for order ${orderId}:`, error);
     }
   }
-
-  private async sendEmailNotification(userId: string, notification: Notification): Promise<void> {
-    // In a real implementation, this would integrate with an email service
-    this.logger.info(`[EMAIL] To: ${userId}, Subject: ${notification.title}, Body: ${notification.message}`);
+  
+  private getNotificationContent(
+    type: string,
+    orderId: string,
+    data?: any
+  ): { title: string; body: string } {
+    const orderNumber = orderId.substring(0, 8).toUpperCase();
+    
+    switch (type) {
+      case 'order_created':
+        return {
+          title: 'Order Created',
+          body: `Your order #${orderNumber} has been created successfully. We're looking for a driver.`
+        };
+        
+      case 'driver_assigned':
+        return {
+          title: 'Driver Assigned',
+          body: `A driver has been assigned to your order #${orderNumber}. They will arrive soon.`
+        };
+        
+      case 'driver_enroute':
+        return {
+          title: 'Driver On The Way',
+          body: `Your driver is on the way to pick up your order #${orderNumber}.`
+        };
+        
+      case 'pickup_started':
+        return {
+          title: 'Pickup Started',
+          body: `Driver has picked up your order #${orderNumber} and is on the way to you.`
+        };
+        
+      case 'order_delivered':
+        return {
+          title: 'Order Delivered',
+          body: `Your order #${orderNumber} has been delivered successfully.`
+        };
+        
+      case 'payment_received':
+        return {
+          title: 'Payment Received',
+          body: `Payment of $${data?.amount?.toFixed(2) || '0.00'} for order #${orderNumber} has been processed.`
+        };
+        
+      case 'new_message':
+        return {
+          title: 'New Message',
+          body: `You have a new message for order #${orderNumber}.`
+        };
+        
+      default:
+        return {
+          title: 'Order Update',
+          body: `Your order #${orderNumber} has been updated.`
+        };
+    }
   }
-
-  private async sendPushNotification(userId: string, notification: Notification): Promise<void> {
-    // In a real implementation, this would integrate with a push notification service
-    this.logger.info(`[PUSH] To: ${userId}, Title: ${notification.title}, Body: ${notification.message}`);
+  
+  private async getUserEmail(userId: string): Promise<string | null> {
+    try {
+      // Call user service to get email
+      // For now, return mock
+      return `${userId}@example.com`;
+    } catch (error) {
+      return null;
+    }
   }
-
-  private getNotificationTitle(type: NotificationType): string {
-    const titles: Record<NotificationType, string> = {
-      order_created: 'Order Created',
-      order_accepted: 'Order Accepted by Driver',
-      order_picked_up: 'Order Picked Up',
-      order_delivered: 'Order Delivered',
-      order_cancelled: 'Order Cancelled',
-      payment_received: 'Payment Received',
-      payment_failed: 'Payment Failed',
-      driver_assigned: 'New Assignment',
-      driver_enroute: 'Driver Enroute',
-      driver_arrived: 'Driver Arrived',
-      rating_received: 'New Rating Received',
-      bulk_order_complete: 'Bulk Order Complete',
-      promotional: 'Special Offer',
-      system_alert: 'System Alert'
-    };
-    return titles[type] || 'Notification';
+  
+  private async getOrderDetails(orderId: string): Promise<any> {
+    // Call your order repository
+    return { customer_id: 'customer_' + orderId };
   }
-
-  private getDefaultMessage(type: NotificationType): string {
-    const messages: Record<NotificationType, string> = {
-      order_created: 'Your order has been created successfully.',
-      order_accepted: 'A driver has accepted your order.',
-      order_picked_up: 'Your order has been picked up.',
-      order_delivered: 'Your order has been delivered.',
-      order_cancelled: 'Your order has been cancelled.',
-      payment_received: 'Your payment has been processed successfully.',
-      payment_failed: 'There was an issue processing your payment.',
-      driver_assigned: 'You have been assigned a new delivery.',
-      driver_enroute: 'You are now enroute to the delivery location.',
-      driver_arrived: 'You have arrived at the delivery location.',
-      rating_received: 'You have received a new rating.',
-      bulk_order_complete: 'Your bulk order processing is complete.',
-      promotional: 'Check out our latest offers!',
-      system_alert: 'System notification.'
-    };
-    return messages[type] || 'You have a new notification.';
+  
+  private async storeNotification(userId: string, notification: any): Promise<void> {
+    // Store in database for offline access
+    // Implementation depends on your database setup
   }
 }

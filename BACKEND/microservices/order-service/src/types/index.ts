@@ -455,39 +455,3 @@ export interface DriverEvent {
   data: any;
   timestamp: Date;
 }
-
-// Export all types
-export type {
-  Order,
-  OrderItem,
-  OrderStatusHistory,
-  OrderPayment,
-  BulkOrder,
-  OrderCancellation,
-  CreateOrderRequest,
-  UpdateOrderRequest,
-  OrderFilter,
-  PaginationParams,
-  PaginatedResponse,
-  Driver,
-  MatchingCriteria,
-  PaymentCard,
-  PaymentMethod,
-  PaymentStatus,
-  Notification,
-  NotificationType,
-  LocationUpdate,
-  TrackingData,
-  DatabaseConfig,
-  RedisConfig,
-  ExternalServiceConfig,
-  ApiResponse,
-  WebSocketMessage,
-  WebSocketConnection,
-  Coordinates,
-  DistanceMatrix,
-  ValidationError,
-  OrderEvent,
-  PaymentEvent,
-  DriverEvent
-};

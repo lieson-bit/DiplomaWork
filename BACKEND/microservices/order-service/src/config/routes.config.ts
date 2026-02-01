@@ -1,4 +1,4 @@
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger'; // Changed from 'logger' to 'Logger'
 
 export interface RoutePoint {
   lat: number;
@@ -26,6 +26,7 @@ export interface DriverSimulation {
 
 class RoutesConfig {
   private driverSimulations: Map<string, DriverSimulation> = new Map();
+  private logger: Logger; // Add logger instance
   
   // Earth's radius in kilometers
   private static readonly EARTH_RADIUS_KM = 6371;
@@ -47,8 +48,9 @@ class RoutesConfig {
   };
 
   constructor() {
+    this.logger = new Logger('RoutesConfig'); // Initialize logger
     this.initializeDriverSimulations();
-    logger.info('Routes configuration initialized');
+    this.logger.info('Routes configuration initialized');
   }
 
   private initializeDriverSimulations() {
@@ -75,7 +77,7 @@ class RoutesConfig {
       });
     }
     
-    logger.debug(`Initialized ${this.driverSimulations.size} driver simulations`);
+    this.logger.debug(`Initialized ${this.driverSimulations.size} driver simulations`);
   }
 
   // Calculate distance between two points using Haversine formula
@@ -132,7 +134,7 @@ class RoutesConfig {
       };
       
     } catch (error: any) {
-      logger.error('Route calculation failed:', error);
+      this.logger.error('Route calculation failed:', error);
       throw new Error(`Failed to calculate route: ${error.message}`);
     }
   }
@@ -196,7 +198,7 @@ class RoutesConfig {
     const remainingDistance = this.calculateDistance(newLocation, destination);
     if (remainingDistance < 0.1) { // 100 meters
       driver.status = 'available';
-      logger.debug(`Driver ${driverId} arrived at destination`);
+      this.logger.debug(`Driver ${driverId} arrived at destination`);
     }
     
     return newLocation;

@@ -1,12 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import { ResponseUtil } from '../utils/response.util';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
+
+// Create logger instance for this module
+const logger = new Logger('CapacityMiddleware');
 
 export const validateOrderCapacity = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     const orderData = req.body;
     
@@ -61,7 +64,7 @@ export const validateOrderCapacity = (
     next();
   } catch (error: any) {
     logger.error('Capacity validation error:', error);
-    ResponseUtil.error(res, 'Capacity validation failed', 500, error.message);
+    return ResponseUtil.error(res, 'Capacity validation failed', 500, error.message);
   }
 };
 
@@ -69,14 +72,14 @@ export const checkVehicleCapacity = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     // This would typically check against the selected vehicle's capacity
     // For now, we'll just pass through - actual capacity check happens in matching service
     next();
   } catch (error: any) {
     logger.error('Vehicle capacity check error:', error);
-    ResponseUtil.error(res, 'Vehicle capacity check failed', 500, error.message);
+    return ResponseUtil.error(res, 'Vehicle capacity check failed', 500, error.message);
   }
 };
 
@@ -84,7 +87,7 @@ export const validatePickupDeliveryTimes = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     const orderData = req.body;
     
@@ -104,6 +107,6 @@ export const validatePickupDeliveryTimes = (
     next();
   } catch (error: any) {
     logger.error('Time validation error:', error);
-    ResponseUtil.error(res, 'Time validation failed', 500, error.message);
+    return ResponseUtil.error(res, 'Time validation failed', 500, error.message);
   }
 };

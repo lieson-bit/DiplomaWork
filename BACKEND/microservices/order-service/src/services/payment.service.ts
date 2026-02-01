@@ -1,4 +1,4 @@
-import { Logger } from './logger';
+import { Logger } from '../utils/logger';
 import { HttpClient } from '../utils/httpClient';
 
 export interface PaymentRequest {
@@ -79,10 +79,11 @@ export class PaymentService {
         transactionId: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Payment processing failed';
       this.logger.error('Payment processing failed:', error);
       return {
         success: false,
-        message: error.message || 'Payment processing failed',
+        message: errorMessage,
         customerBalanceUpdated: false,
         driverBalanceUpdated: false
       };
@@ -107,7 +108,12 @@ export class PaymentService {
       );
 
       if (!customerResponse.success) {
-        return customerResponse;
+        return {
+          success: customerResponse.success,
+          message: customerResponse.message,
+          customerBalanceUpdated: false,
+          driverBalanceUpdated: false
+        };
       }
 
       // Deduct from driver (if driver was already paid)
@@ -129,10 +135,11 @@ export class PaymentService {
         transactionId: `refund_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       };
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Refund processing failed';
       this.logger.error('Refund processing failed:', error);
       return {
         success: false,
-        message: error.message || 'Refund processing failed',
+        message: errorMessage,
         customerBalanceUpdated: false,
         driverBalanceUpdated: false
       };

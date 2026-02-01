@@ -1,13 +1,15 @@
 import mysql from 'mysql2/promise';
 import fs from 'fs/promises';
 import path from 'path';
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger';
 
 class Database {
   private pool: mysql.Pool | null = null;
   private isConnected = false;
+  private logger: Logger;
 
   constructor() {
+    this.logger = new Logger('Database');
     this.initialize();
   }
 
@@ -32,17 +34,17 @@ class Database {
       // Test connection
       await this.testConnection();
       
-      logger.info('Database pool initialized successfully');
+      this.logger.info('Database pool initialized successfully');
       
     } catch (error: any) {
-      logger.error('Failed to initialize database pool:', error.message);
+      this.logger.error('Failed to initialize database pool:', error);
       throw error;
     }
   }
 
   async testConnection(): Promise<boolean> {
     if (!this.pool) {
-      logger.error('Database pool not initialized');
+      this.logger.error('Database pool not initialized');
       return false;
     }
 
@@ -52,12 +54,12 @@ class Database {
       connection.release();
       
       this.isConnected = true;
-      logger.info('Database connection test successful');
+      this.logger.info('Database connection test successful');
       return true;
       
     } catch (error: any) {
       this.isConnected = false;
-      logger.error('Database connection test failed:', error.message);
+      this.logger.error('Database connection test failed:', error);
       return false;
     }
   }
@@ -68,12 +70,12 @@ class Database {
     }
 
     try {
-      logger.debug('Executing query:', { sql, params });
+      this.logger.debug('Executing query:', { sql, params });
       const [rows] = await this.pool.execute(sql, params || []);
       return rows as T[];
       
     } catch (error: any) {
-      logger.error('Query execution failed:', {
+      this.logger.error('Query execution failed:', {
         sql,
         params,
         error: error.message,
@@ -94,12 +96,12 @@ class Database {
     }
 
     try {
-      logger.debug('Executing statement:', { sql, params });
+      this.logger.debug('Executing statement:', { sql, params });
       const [result] = await this.pool.execute(sql, params || []);
       return result as mysql.OkPacket;
       
     } catch (error: any) {
-      logger.error('Statement execution failed:', {
+      this.logger.error('Statement execution failed:', {
         sql,
         params,
         error: error.message,
@@ -123,12 +125,12 @@ class Database {
       const result = await callback(connection);
       await connection.commit();
       
-      logger.debug('Transaction committed successfully');
+      this.logger.debug('Transaction committed successfully');
       return result;
       
     } catch (error: any) {
       await connection.rollback();
-      logger.error('Transaction rolled back:', error.message);
+      this.logger.error('Transaction rolled back:', error);
       throw error;
       
     } finally {
@@ -155,17 +157,17 @@ class Database {
         } catch (error: any) {
           // Log but continue for some errors (like tables already exist)
           if (error.code === 'ER_TABLE_EXISTS_ERROR') {
-            logger.warn(`Table already exists: ${statement.substring(0, 50)}...`);
+            this.logger.warn(`Table already exists: ${statement.substring(0, 50)}...`);
           } else {
             throw error;
           }
         }
       }
       
-      logger.info('Database schema initialized successfully');
+      this.logger.info('Database schema initialized successfully');
       
     } catch (error: any) {
-      logger.error('Failed to initialize database schema:', error.message);
+      this.logger.error('Failed to initialize database schema:', error);
       throw error;
     }
   }
@@ -173,7 +175,7 @@ class Database {
   async close(): Promise<void> {
     if (this.pool) {
       await this.pool.end();
-      logger.info('Database pool closed');
+      this.logger.info('Database pool closed');
     }
   }
 

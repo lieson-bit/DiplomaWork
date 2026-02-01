@@ -1,10 +1,8 @@
 import { Logger } from '../utils/logger';
-import { DistanceUtil } from '../utils/distance.util';
+import { DistanceUtil, Coordinates } from '../utils/distance.util';
 import { HttpClient } from '../utils/httpClient';
 
-export interface RoutePoint {
-  lat: number;
-  lng: number;
+export interface RoutePoint extends Coordinates {
   address?: string;
   orderId?: string;
   type: 'pickup' | 'delivery' | 'depot';
@@ -16,10 +14,7 @@ export interface RoutePoint {
 }
 
 export interface RouteOptimizationRequest {
-  depot: {
-    lat: number;
-    lng: number;
-  };
+  depot: RoutePoint; // Changed from Coordinates to RoutePoint
   points: RoutePoint[];
   vehicleCapacity?: {
     weight: number;
@@ -75,13 +70,14 @@ export interface DirectionsResponse {
 }
 
 export class RoutingService {
-  private logger = new Logger('RoutingService');
+  private logger: Logger;
   private distanceUtil: DistanceUtil;
   private httpClient: HttpClient;
   private routingApiKey: string;
   private routingApiUrl: string;
 
   constructor(distanceUtil: DistanceUtil, httpClient: HttpClient) {
+    this.logger = new Logger('RoutingService');
     this.distanceUtil = distanceUtil;
     this.httpClient = httpClient;
     this.routingApiKey = process.env.ROUTING_API_KEY || '';
@@ -89,29 +85,30 @@ export class RoutingService {
   }
 
   async optimizeRoutes(request: RouteOptimizationRequest): Promise<RouteOptimizationResult> {
+    const startTime = Date.now(); // Moved here to fix the reference error
+    
     try {
       this.logger.info(`Optimizing routes for ${request.points.length} points`);
 
-      const startTime = Date.now();
-
       // For small number of points, use simple algorithm
       if (request.points.length <= 10) {
-        return await this.optimizeSimpleRoutes(request);
+        return await this.optimizeSimpleRoutes(request, startTime);
       }
 
       // For larger problems, use external routing service or more complex algorithm
       return await this.optimizeWithExternalService(request);
-    } catch (error) {
-      this.logger.error('Route optimization failed:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Route optimization failed:', errorMessage);
       // Fall back to simple optimization
-      return await this.optimizeSimpleRoutes(request);
+      return await this.optimizeSimpleRoutes(request, startTime);
     }
   }
 
   async getDirections(
-    origin: { lat: number; lng: number },
-    destination: { lat: number; lng: number },
-    waypoints?: Array<{ lat: number; lng: number }>
+    origin: Coordinates,
+    destination: Coordinates,
+    waypoints?: Coordinates[]
   ): Promise<DirectionsResponse> {
     try {
       const url = `${this.routingApiUrl}/v1/directions`;
@@ -138,15 +135,16 @@ export class RoutingService {
       });
 
       return response.data;
-    } catch (error) {
-      this.logger.warn('Failed to get directions from external service, using fallback:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn('Failed to get directions from external service, using fallback:', errorMessage);
       return this.getFallbackDirections(origin, destination, waypoints);
     }
   }
 
   async calculateRouteMatrix(
-    origins: Array<{ lat: number; lng: number }>,
-    destinations: Array<{ lat: number; lng: number }>
+    origins: Coordinates[],
+    destinations: Coordinates[]
   ): Promise<{ distances: number[][]; durations: number[][] }> {
     try {
       // Use distance matrix API for multiple points
@@ -157,14 +155,15 @@ export class RoutingService {
         // Large matrix, use batching
         return await this.calculateBatchedMatrix(origins, destinations);
       }
-    } catch (error) {
-      this.logger.error('Failed to calculate route matrix:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to calculate route matrix:', errorMessage);
       throw error;
     }
   }
 
-  decodePolyline(encoded: string): Array<{ lat: number; lng: number }> {
-    const points = [];
+  decodePolyline(encoded: string): Coordinates[] {
+    const points: Coordinates[] = [];
     let index = 0;
     const len = encoded.length;
     let lat = 0, lng = 0;
@@ -195,7 +194,7 @@ export class RoutingService {
     return points;
   }
 
-  encodePolyline(points: Array<{ lat: number; lng: number }>): string {
+  encodePolyline(points: Coordinates[]): string {
     let encoded = '';
     let prevLat = 0, prevLng = 0;
 
@@ -213,7 +212,10 @@ export class RoutingService {
     return encoded;
   }
 
-  private async optimizeSimpleRoutes(request: RouteOptimizationRequest): Promise<RouteOptimizationResult> {
+  private async optimizeSimpleRoutes(
+    request: RouteOptimizationRequest,
+    startTime: number
+  ): Promise<RouteOptimizationResult> {
     // Simple clustering algorithm for route optimization
     const points = request.points;
     const depot = request.depot;
@@ -231,7 +233,7 @@ export class RoutingService {
       const sortedPoints = this.sortPointsForRoute([depot, ...clusterPoints]);
       
       // Remove depot from points list
-      const routePoints = sortedPoints.slice(1);
+      const routePoints = sortedPoints.slice(1) as RoutePoint[];
       
       // Calculate route metrics
       const { distance, duration, polyline } = await this.calculateRouteMetrics([depot, ...routePoints, depot]);
@@ -270,19 +272,21 @@ export class RoutingService {
   }
 
   private async optimizeWithExternalService(request: RouteOptimizationRequest): Promise<RouteOptimizationResult> {
+    const startTime = Date.now();
+    
     // Call external routing optimization service
     const url = `${this.routingApiUrl}/v1/optimize`;
     
     const payload = {
       vehicles: [{
         id: 'vehicle_1',
-        start: request.depot,
-        end: request.depot,
+        start: { lat: request.depot.lat, lng: request.depot.lng },
+        end: { lat: request.depot.lat, lng: request.depot.lng },
         capacity: request.vehicleCapacity
       }],
       jobs: request.points.map((point, index) => ({
         id: `job_${index}`,
-        location: point,
+        location: { lat: point.lat, lng: point.lng },
         service: point.serviceTime || 5, // default 5 minutes service time
         skills: point.type === 'pickup' ? ['pickup'] : ['delivery'],
         time_windows: point.timeWindow ? [[
@@ -306,9 +310,14 @@ export class RoutingService {
         data: payload
       });
       
-      return this.parseExternalResponse(response.data, request);
-    } catch (error) {
-      this.logger.error('External routing service failed:', error);
+      const result = this.parseExternalResponse(response.data, request);
+      return {
+        ...result,
+        optimizationTime: Date.now() - startTime
+      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('External routing service failed:', errorMessage);
       throw error;
     }
   }
@@ -317,10 +326,10 @@ export class RoutingService {
     // Simple k-means clustering
     const clusters: RoutePoint[][] = [];
     
-    // Sort points by distance from depot
+    // Sort points by distance from first point
     const sortedPoints = [...points].sort((a, b) => {
-      const distA = this.distanceUtil.calculateHaversineDistance(a, a); // Simplified
-      const distB = this.distanceUtil.calculateHaversineDistance(b, b);
+      const distA = this.distanceUtil.calculateHaversineDistance(a, points[0]);
+      const distB = this.distanceUtil.calculateHaversineDistance(b, points[0]);
       return distA - distB;
     });
     
@@ -337,7 +346,7 @@ export class RoutingService {
     const sorted: RoutePoint[] = [];
     const remaining = [...points];
     
-    // Start with depot
+    // Start with first point
     let current = remaining.shift()!;
     sorted.push(current);
     
@@ -364,7 +373,7 @@ export class RoutingService {
   private async calculateRouteMetrics(points: RoutePoint[]): Promise<{ distance: number; duration: number; polyline: string }> {
     let totalDistance = 0;
     let totalDuration = 0;
-    const routePoints: Array<{ lat: number; lng: number }> = [];
+    const routePoints: Coordinates[] = [];
     
     for (let i = 0; i < points.length - 1; i++) {
       const from = points[i];
@@ -406,8 +415,8 @@ export class RoutingService {
   }
 
   private async calculateDirectMatrix(
-    origins: Array<{ lat: number; lng: number }>,
-    destinations: Array<{ lat: number; lng: number }>
+    origins: Coordinates[],
+    destinations: Coordinates[]
   ): Promise<{ distances: number[][]; durations: number[][] }> {
     const distances: number[][] = [];
     const durations: number[][] = [];
@@ -429,8 +438,8 @@ export class RoutingService {
   }
 
   private async calculateBatchedMatrix(
-    origins: Array<{ lat: number; lng: number }>,
-    destinations: Array<{ lat: number; lng: number }>
+    origins: Coordinates[],
+    destinations: Coordinates[]
   ): Promise<{ distances: number[][]; durations: number[][] }> {
     // Batch calculation for large matrices
     const batchSize = 10;
@@ -458,9 +467,9 @@ export class RoutingService {
   }
 
   private getFallbackDirections(
-    origin: { lat: number; lng: number },
-    destination: { lat: number; lng: number },
-    waypoints?: Array<{ lat: number; lng: number }>
+    origin: Coordinates,
+    destination: Coordinates,
+    waypoints?: Coordinates[]
   ): DirectionsResponse {
     const points = [origin, ...(waypoints || []), destination];
     const distance = this.calculateTotalDistance(points);
@@ -480,7 +489,7 @@ export class RoutingService {
     };
   }
 
-  private calculateTotalDistance(points: Array<{ lat: number; lng: number }>): number {
+  private calculateTotalDistance(points: Coordinates[]): number {
     let total = 0;
     for (let i = 0; i < points.length - 1; i++) {
       total += this.distanceUtil.calculateHaversineDistance(points[i], points[i + 1]);
@@ -552,3 +561,6 @@ export class RoutingService {
     };
   }
 }
+
+// Export singleton instance
+export const routingService = new RoutingService(new DistanceUtil(), new HttpClient());

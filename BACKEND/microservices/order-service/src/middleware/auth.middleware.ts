@@ -22,7 +22,7 @@ export const authenticate = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     const authHeader = req.headers.authorization;
     
@@ -58,7 +58,7 @@ export const authenticate = (
       return ResponseUtil.unauthorized(res, 'Token expired');
     }
     
-    ResponseUtil.unauthorized(res, 'Authentication failed');
+    return ResponseUtil.unauthorized(res, 'Authentication failed');
   }
 };
 
@@ -66,7 +66,7 @@ export const authorizeCustomer = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   if (!req.user) {
     return ResponseUtil.unauthorized(res, 'No user found');
   }
@@ -82,7 +82,7 @@ export const authorizeDriver = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   if (!req.user) {
     return ResponseUtil.unauthorized(res, 'No user found');
   }
@@ -98,7 +98,7 @@ export const authorizeDriverOrCustomer = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   if (!req.user) {
     return ResponseUtil.unauthorized(res, 'No user found');
   }

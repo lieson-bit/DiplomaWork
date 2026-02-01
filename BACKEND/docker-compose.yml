@@ -192,91 +192,90 @@ services:
       "
 
 
-# ============ ORDER SERVICE ============
-order-db:
-  image: mysql:8.0
-  container_name: order-db
-  restart: unless-stopped
-  environment:
-    MYSQL_ROOT_PASSWORD: password123
-    MYSQL_DATABASE: order_service_db
-    MYSQL_USER: order_user
-    MYSQL_PASSWORD: order_pass
-  ports:
-    - "3310:3306"
-  volumes:
-    - order-mysql-data:/var/lib/mysql
-    - ./microservices/order-service/sql/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql
-  networks:
-    - app-network
-  healthcheck:
-    test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "order_user", "-porder_pass"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
-    start_period: 40s
-
-order-service:
-  build:
-    context: ./microservices/order-service
-    dockerfile: Dockerfile
-  container_name: order-service
-  restart: unless-stopped
-  environment:
-    NODE_ENV: development
-    PORT: 3004
-    MYSQL_HOST: order-db
-    MYSQL_PORT: 3306
-    MYSQL_USER: order_user
-    MYSQL_PASSWORD: order_pass
-    MYSQL_DATABASE: order_service_db
-    JWT_SECRET: d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044
-    SERVICE_SECRET: shared_service_secret_key_1234567890
-    USER_SERVICE_URL: http://user-service:3001
-    DRIVER_SERVICE_URL: http://driver-service:3002
-    CUSTOMER_SERVICE_URL: http://customer-service:3003
-    APP_URL: http://localhost:3004
-    CORS_ORIGIN: http://localhost:3000
-    LOG_DIR: /app/logs
-  ports:
-    - "3004:3004"
-  depends_on:
-    order-db:
-      condition: service_healthy
-    user-service:
-      condition: service_started
-    driver-service:
-      condition: service_started
-    customer-service:
-      condition: service_started
-  volumes:
-    - order-logs:/app/logs
-    - order-uploads:/app/uploads
-  networks:
-    - app-network
-  # Add startup script to wait for dependencies
-  command: >
-    sh -c "
-    echo 'Installing curl for debugging...' &&
-    apk add --no-cache curl &&
-    echo 'Testing connectivity to user-service...' &&
-    until curl -f http://user-service:3001/health; do
-      echo 'Waiting for user-service...';
-      sleep 5;
-    done &&
-    echo 'Testing connectivity to driver-service...' &&
-    until curl -f http://driver-service:3002/health; do
-      echo 'Waiting for driver-service...';
-      sleep 5;
-    done &&
-    echo 'Testing connectivity to customer-service...' &&
-    until curl -f http://customer-service:3003/health; do
-      echo 'Waiting for customer-service...';
-      sleep 5;
-    done &&
-    echo 'Starting order service...' &&
-    npm start
-    "
+  # ============ ORDER SERVICE ============
+  order-db:
+    image: mysql:8.0
+    container_name: order-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password123
+      MYSQL_DATABASE: order_service_db
+      MYSQL_USER: order_user
+      MYSQL_PASSWORD: order_pass
+    ports:
+      - "3310:3306"
+    volumes:
+      - order-mysql-data:/var/lib/mysql
+      - ./microservices/order-service/sql/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "order_user", "-porder_pass"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  
+  order-service:
+    build:
+      context: ./microservices/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+      MYSQL_HOST: order-db
+      MYSQL_PORT: 3306
+      MYSQL_USER: order_user
+      MYSQL_PASSWORD: order_pass
+      MYSQL_DATABASE: order_service_db
+      JWT_SECRET: d6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044
+      SERVICE_SECRET: shared_service_secret_key_1234567890
+      USER_SERVICE_URL: http://user-service:3001
+      DRIVER_SERVICE_URL: http://driver-service:3002
+      CUSTOMER_SERVICE_URL: http://customer-service:3003
+      APP_URL: http://localhost:3004
+      CORS_ORIGIN: http://localhost:3000
+      LOG_DIR: /app/logs
+    ports:
+      - "3004:3004"
+    depends_on:
+      order-db:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      driver-service:
+        condition: service_started
+      customer-service:
+        condition: service_started
+    volumes:
+      - order-logs:/app/logs
+      - order-uploads:/app/uploads
+    networks:
+      - app-network
+    # Add startup script to wait for dependencies
+    command: >
+      sh -c "
+      echo 'Installing curl for debugging...' &&
+      echo 'Testing connectivity to user-service...' &&
+      until curl -f http://user-service:3001/health; do
+        echo 'Waiting for user-service...';
+        sleep 5;
+      done &&
+      echo 'Testing connectivity to driver-service...' &&
+      until curl -f http://driver-service:3002/health; do
+        echo 'Waiting for driver-service...';
+        sleep 5;
+      done &&
+      echo 'Testing connectivity to customer-service...' &&
+      until curl -f http://customer-service:3003/health; do
+        echo 'Waiting for customer-service...';
+        sleep 5;
+      done &&
+      echo 'Starting order service...' &&
+      npm start
+      "
 
 volumes:
   user-mysql-data:

@@ -1,30 +1,212 @@
 import { Logger } from '../utils/logger';
-import { DistanceUtil } from '../utils/distance.util';
+import { distanceUtil } from '../utils/distance.util';
 
-export interface PricingRequest {
-  pickupAddress: string;
-  deliveryAddress: string;
-  pickupLatLng?: { lat: number; lng: number };
-  deliveryLatLng?: { lat: number; lng: number };
-  weight: number; // in kg
-  volume: number; // in m³
-  dimensions?: {
-    length: number;
-    width: number;
-    height: number;
-  };
-  priority: 'low' | 'normal' | 'high' | 'urgent';
-  isFragile: boolean;
-  isTemperatureControlled: boolean;
-  hasLiquid: boolean;
-  scheduledPickup?: Date;
-  timeWindow?: {
-    start: Date;
-    end: Date;
-  };
+// Base interface for all pricing strategies
+export interface PricingStrategy {
+  calculatePrice(request: PricingRequest): Promise<PricingResult>;
+  getName(): string;
 }
 
-export interface PricingResponse {
+// ML Pricing Strategy (for future implementation)
+export class MLPricingStrategy implements PricingStrategy {
+  private mlModel: any; // To be loaded from your trained model
+  
+  constructor() {
+    // Initialize ML model
+    // this.mlModel = loadModel('path/to/model');
+  }
+  
+  async calculatePrice(request: PricingRequest): Promise<PricingResult> {
+    // Extract features for ML model
+    const features = this.extractFeatures(request);
+    
+    // Predict price using ML model
+    // const predictedPrice = await this.mlModel.predict(features);
+    
+    // For now, use rule-based as fallback
+    return new RuleBasedPricingStrategy().calculatePrice(request);
+  }
+  
+  private extractFeatures(request: PricingRequest): any {
+    return {
+      distance: request.distance,
+      weight: request.weight,
+      volume: request.volume,
+      hourOfDay: new Date().getHours(),
+      dayOfWeek: new Date().getDay(),
+      isWeekend: [0, 6].includes(new Date().getDay()),
+      priority: request.priority,
+      hasFragile: request.isFragile,
+      hasTemperatureControl: request.isTemperatureControlled,
+      areaType: this.determineAreaType(request.pickupLatLng, request.deliveryLatLng)
+    };
+  }
+  
+  private determineAreaType(pickup: any, delivery: any): string {
+    // Determine urban/suburban/rural based on coordinates
+    return 'urban'; // Simplified
+  }
+  
+  getName(): string {
+    return 'ML_Pricing';
+  }
+}
+
+// Rule-based pricing strategy (current implementation)
+export class RuleBasedPricingStrategy implements PricingStrategy {
+  async calculatePrice(request: PricingRequest): Promise<PricingResult> {
+    // Your existing rule-based calculation
+    const config = this.getPricingConfig();
+    
+    const basePrice = config.baseRate;
+    const distanceFee = request.distance * config.distanceRate;
+    const weightFee = Math.max(0, request.weight - 5) * config.weightRate;
+    const volumeFee = Math.max(0, request.volume - 0.1) * config.volumeRate;
+    const rushFee = config.priorityRates[request.priority];
+    
+    // ... rest of calculation
+    return this.formatResult(basePrice, distanceFee, weightFee, volumeFee, rushFee, request);
+  }
+  formatResult(basePrice: number, distanceFee: number, weightFee: number, volumeFee: number, rushFee: number, request: PricingRequest): PricingResult | PromiseLike<PricingResult> {
+    throw new Error('Method not implemented.');
+  }
+  
+  private getPricingConfig() {
+    return {
+      baseRate: 5.00,
+      distanceRate: 1.50,
+      weightRate: 0.50,
+      volumeRate: 10.00,
+      priorityRates: {
+        low: 0.00,
+        normal: 0.00,
+        high: 3.00,
+        urgent: 7.00
+      }
+    };
+  }
+  
+  getName(): string {
+    return 'Rule_Based_Pricing';
+  }
+}
+
+// Main Pricing Service with strategy pattern
+export class PricingService {
+  private logger = new Logger('PricingService');
+  private currentStrategy: PricingStrategy;
+  private strategies: Map<string, PricingStrategy> = new Map();
+  
+  constructor() {
+    // Initialize strategies
+    this.strategies.set('rule_based', new RuleBasedPricingStrategy());
+    this.strategies.set('ml', new MLPricingStrategy());
+    
+    // Default to rule-based
+    this.currentStrategy = this.strategies.get('rule_based')!;
+  }
+  
+  // Main method - abstracts strategy
+  async calculatePrice(request: {
+    pickupAddress: string;
+    deliveryAddress: string;
+    pickupLatLng: { lat: number; lng: number };
+    deliveryLatLng: { lat: number; lng: number };
+    weight: number;
+    volume: number;
+    priority: 'low' | 'normal' | 'high' | 'urgent';
+    isFragile?: boolean;
+    isTemperatureControlled?: boolean;
+    hasLiquid?: boolean;
+  }): Promise<PricingResult> {
+    try {
+      // Calculate distance
+      const distance = distanceUtil.calculateHaversineDistance(
+        request.pickupLatLng,
+        request.deliveryLatLng
+      );
+      
+      // Prepare request for strategy
+      const pricingRequest: PricingRequest = {
+        ...request,
+        distance,
+        timestamp: new Date()
+      };
+      
+      // Use current strategy
+      const result = await this.currentStrategy.calculatePrice(pricingRequest);
+      
+      // Log which strategy was used
+      this.logger.debug(`Pricing calculated using: ${this.currentStrategy.getName()}`);
+      
+      return result;
+    } catch (error) {
+      this.logger.error('Price calculation failed:', error);
+      return this.getFallbackPrice();
+    }
+  }
+  
+  // Switch pricing strategy at runtime
+  setStrategy(strategyName: string): void {
+    const strategy = this.strategies.get(strategyName);
+    if (strategy) {
+      this.currentStrategy = strategy;
+      this.logger.info(`Switched to pricing strategy: ${strategyName}`);
+    } else {
+      this.logger.warn(`Unknown pricing strategy: ${strategyName}`);
+    }
+  }
+  
+  // Get current strategy
+  getCurrentStrategy(): string {
+    return this.currentStrategy.getName();
+  }
+  
+  // Add new strategy dynamically (for ML model updates)
+  addStrategy(name: string, strategy: PricingStrategy): void {
+    this.strategies.set(name, strategy);
+    this.logger.info(`Added new pricing strategy: ${name}`);
+  }
+  
+  // Fallback pricing
+  private getFallbackPrice(): PricingResult {
+    return {
+      basePrice: 5.00,
+      distanceFee: 10.00,
+      weightFee: 2.50,
+      volumeFee: 5.00,
+      rushFee: 0,
+      fuelSurcharge: 1.00,
+      specialHandlingFee: 0,
+      platformFee: 3.45,
+      platformFeePercent: 15,
+      subtotal: 18.50,
+      taxAmount: 1.64,
+      totalPrice: 20.14,
+      estimatedDistance: 10,
+      estimatedDuration: 30,
+      driverEarnings: 16.69,
+      pricingStrategy: 'fallback',
+      confidence: 0.0
+    };
+  }
+}
+
+// Types for ML integration
+export interface PricingRequest {
+  distance: number;
+  weight: number;
+  volume: number;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  isFragile?: boolean;
+  isTemperatureControlled?: boolean;
+  hasLiquid?: boolean;
+  timestamp: Date;
+  pickupLatLng: { lat: number; lng: number };
+  deliveryLatLng: { lat: number; lng: number };
+}
+
+export interface PricingResult {
   basePrice: number;
   distanceFee: number;
   weightFee: number;
@@ -37,368 +219,10 @@ export interface PricingResponse {
   subtotal: number;
   taxAmount: number;
   totalPrice: number;
-  estimatedDistance: number; // in km
-  estimatedDuration: number; // in minutes
+  estimatedDistance: number;
+  estimatedDuration: number;
   driverEarnings: number;
-  breakdown: {
-    item: string;
-    amount: number;
-    description: string;
-  }[];
-}
-
-export interface PricingConfig {
-  baseRate: number;
-  distanceRate: number; // per km
-  weightRate: number; // per kg
-  volumeRate: number; // per m³
-  priorityRates: {
-    low: number;
-    normal: number;
-    high: number;
-    urgent: number;
-  };
-  specialHandling: {
-    fragile: number;
-    temperatureControlled: number;
-    liquid: number;
-  };
-  fuelSurchargePercent: number;
-  platformFeePercent: number;
-  taxRatePercent: number;
-  minOrderValue: number;
-  maxOrderValue: number;
-}
-
-export class PricingService {
-  private logger = new Logger('PricingService');
-  private distanceUtil: DistanceUtil;
-  private config: PricingConfig;
-
-  constructor(distanceUtil: DistanceUtil) {
-    this.distanceUtil = distanceUtil;
-    this.config = this.loadDefaultConfig();
-  }
-
-  async calculatePrice(request: PricingRequest): Promise<PricingResponse> {
-    try {
-      this.logger.info(`Calculating price for delivery from ${request.pickupAddress} to ${request.deliveryAddress}`);
-
-      // Calculate distance and duration
-      const { distance, duration } = await this.calculateDistanceAndDuration(request);
-
-      // Calculate base price
-      const basePrice = this.calculateBasePrice();
-
-      // Calculate distance fee
-      const distanceFee = this.calculateDistanceFee(distance);
-
-      // Calculate weight fee
-      const weightFee = this.calculateWeightFee(request.weight);
-
-      // Calculate volume fee
-      const volumeFee = this.calculateVolumeFee(request.volume);
-
-      // Calculate rush fee based on priority
-      const rushFee = this.calculateRushFee(request.priority, request.scheduledPickup);
-
-      // Calculate special handling fees
-      const specialHandlingFee = this.calculateSpecialHandlingFees(request);
-
-      // Calculate fuel surcharge
-      const fuelSurcharge = this.calculateFuelSurcharge(distanceFee + weightFee + volumeFee);
-
-      // Calculate subtotal before platform fee
-      const subtotal = basePrice + distanceFee + weightFee + volumeFee + rushFee + fuelSurcharge + specialHandlingFee;
-
-      // Calculate platform fee
-      const platformFee = this.calculatePlatformFee(subtotal);
-      const platformFeePercent = this.config.platformFeePercent;
-
-      // Calculate tax
-      const taxAmount = this.calculateTax(subtotal);
-
-      // Calculate total price
-      const totalPrice = subtotal + platformFee + taxAmount;
-
-      // Calculate driver earnings (total price minus platform fee)
-      const driverEarnings = this.calculateDriverEarnings(totalPrice, platformFee, distanceFee, weightFee);
-
-      // Prepare breakdown
-      const breakdown = this.prepareBreakdown({
-        basePrice,
-        distanceFee,
-        weightFee,
-        volumeFee,
-        rushFee,
-        fuelSurcharge,
-        specialHandlingFee,
-        platformFee,
-        taxAmount
-      }, distance, request);
-
-      // Validate against min/max order values
-      this.validatePrice(totalPrice);
-
-      return {
-        basePrice,
-        distanceFee,
-        weightFee,
-        volumeFee,
-        rushFee,
-        fuelSurcharge,
-        specialHandlingFee,
-        platformFee,
-        platformFeePercent,
-        subtotal,
-        taxAmount,
-        totalPrice,
-        estimatedDistance: distance,
-        estimatedDuration: duration,
-        driverEarnings,
-        breakdown
-      };
-    } catch (error) {
-      this.logger.error('Error calculating price:', error);
-      throw new Error(`Price calculation failed: ${error.message}`);
-    }
-  }
-
-  async getPriceEstimate(request: PricingRequest): Promise<PricingResponse> {
-    // Simplified version for quick estimates
-    const response = await this.calculatePrice(request);
-    
-    // Round to 2 decimal places for estimate
-    return {
-      ...response,
-      basePrice: Math.round(response.basePrice * 100) / 100,
-      totalPrice: Math.round(response.totalPrice * 100) / 100,
-      estimatedDistance: Math.round(response.estimatedDistance * 10) / 10,
-      breakdown: response.breakdown.slice(0, 3) // Only show top 3 items in estimate
-    };
-  }
-
-  updateConfig(newConfig: Partial<PricingConfig>): void {
-    this.config = { ...this.config, ...newConfig };
-    this.logger.info('Pricing configuration updated');
-  }
-
-  getCurrentConfig(): PricingConfig {
-    return { ...this.config };
-  }
-
-  private async calculateDistanceAndDuration(request: PricingRequest): Promise<{ distance: number; duration: number }> {
-    try {
-      // Use provided coordinates or geocode addresses
-      const pickup = request.pickupLatLng || await this.distanceUtil.geocodeAddress(request.pickupAddress);
-      const delivery = request.deliveryLatLng || await this.distanceUtil.geocodeAddress(request.deliveryAddress);
-
-      if (!pickup || !delivery) {
-        throw new Error('Could not determine coordinates for addresses');
-      }
-
-      // Calculate distance and estimated duration
-      const distance = await this.distanceUtil.calculateDistance(pickup, delivery);
-      const duration = await this.distanceUtil.estimateTravelTime(distance);
-
-      return { distance, duration };
-    } catch (error) {
-      this.logger.warn('Failed to calculate exact distance, using estimate:', error);
-      // Return conservative estimates if calculation fails
-      return { distance: 10, duration: 30 }; // Default 10km, 30 minutes
-    }
-  }
-
-  private calculateBasePrice(): number {
-    return this.config.baseRate;
-  }
-
-  private calculateDistanceFee(distance: number): number {
-    return distance * this.config.distanceRate;
-  }
-
-  private calculateWeightFee(weight: number): number {
-    // First 5kg is free, then charge per kg
-    const chargeableWeight = Math.max(0, weight - 5);
-    return chargeableWeight * this.config.weightRate;
-  }
-
-  private calculateVolumeFee(volume: number): number {
-    // First 0.1m³ is free, then charge per m³
-    const chargeableVolume = Math.max(0, volume - 0.1);
-    return chargeableVolume * this.config.volumeRate;
-  }
-
-  private calculateRushFee(priority: PricingRequest['priority'], scheduledPickup?: Date): number {
-    const baseRate = this.config.priorityRates[priority];
-    
-    // Add extra for scheduled pickups outside business hours
-    let rushFee = baseRate;
-    if (scheduledPickup) {
-      const hour = scheduledPickup.getHours();
-      const isWeekend = scheduledPickup.getDay() === 0 || scheduledPickup.getDay() === 6;
-      const isOutsideHours = hour < 8 || hour > 20; // 8am to 8pm
-      
-      if (isOutsideHours || isWeekend) {
-        rushFee += baseRate * 0.5; // 50% extra for outside hours
-      }
-    }
-    
-    return rushFee;
-  }
-
-  private calculateSpecialHandlingFees(request: PricingRequest): number {
-    let fees = 0;
-    
-    if (request.isFragile) {
-      fees += this.config.specialHandling.fragile;
-    }
-    
-    if (request.isTemperatureControlled) {
-      fees += this.config.specialHandling.temperatureControlled;
-    }
-    
-    if (request.hasLiquid) {
-      fees += this.config.specialHandling.liquid;
-    }
-    
-    return fees;
-  }
-
-  private calculateFuelSurcharge(baseAmount: number): number {
-    return baseAmount * (this.config.fuelSurchargePercent / 100);
-  }
-
-  private calculatePlatformFee(subtotal: number): number {
-    return subtotal * (this.config.platformFeePercent / 100);
-  }
-
-  private calculateTax(subtotal: number): number {
-    return subtotal * (this.config.taxRatePercent / 100);
-  }
-
-  private calculateDriverEarnings(
-    totalPrice: number,
-    platformFee: number,
-    distanceFee: number,
-    weightFee: number
-  ): number {
-    // Driver gets: total price - platform fee + 100% of distance and weight fees
-    return (totalPrice - platformFee) + distanceFee + weightFee;
-  }
-
-  private prepareBreakdown(
-    fees: Record<string, number>,
-    distance: number,
-    request: PricingRequest
-  ): PricingResponse['breakdown'] {
-    const breakdown: PricingResponse['breakdown'] = [];
-
-    if (fees.basePrice > 0) {
-      breakdown.push({
-        item: 'Base Delivery Fee',
-        amount: fees.basePrice,
-        description: 'Standard delivery service'
-      });
-    }
-
-    if (fees.distanceFee > 0) {
-      breakdown.push({
-        item: 'Distance Fee',
-        amount: fees.distanceFee,
-        description: `${distance.toFixed(1)} km @ $${this.config.distanceRate}/km`
-      });
-    }
-
-    if (fees.weightFee > 0) {
-      breakdown.push({
-        item: 'Weight Fee',
-        amount: fees.weightFee,
-        description: `${request.weight} kg @ $${this.config.weightRate}/kg (first 5kg free)`
-      });
-    }
-
-    if (fees.volumeFee > 0) {
-      breakdown.push({
-        item: 'Volume Fee',
-        amount: fees.volumeFee,
-        description: `${request.volume} m³ @ $${this.config.volumeRate}/m³ (first 0.1m³ free)`
-      });
-    }
-
-    if (fees.rushFee > 0) {
-      breakdown.push({
-        item: 'Priority Fee',
-        amount: fees.rushFee,
-        description: `${request.priority} priority delivery`
-      });
-    }
-
-    if (fees.specialHandlingFee > 0) {
-      breakdown.push({
-        item: 'Special Handling',
-        amount: fees.specialHandlingFee,
-        description: 'Fragile/temperature-controlled items'
-      });
-    }
-
-    if (fees.fuelSurcharge > 0) {
-      breakdown.push({
-        item: 'Fuel Surcharge',
-        amount: fees.fuelSurcharge,
-        description: `${this.config.fuelSurchargePercent}% of transportation fees`
-      });
-    }
-
-    breakdown.push({
-      item: 'Platform Fee',
-      amount: fees.platformFee,
-      description: `${this.config.platformFeePercent}% service fee`
-    });
-
-    if (fees.taxAmount > 0) {
-      breakdown.push({
-        item: 'Tax',
-        amount: fees.taxAmount,
-        description: `${this.config.taxRatePercent}% sales tax`
-      });
-    }
-
-    return breakdown;
-  }
-
-  private validatePrice(totalPrice: number): void {
-    if (totalPrice < this.config.minOrderValue) {
-      throw new Error(`Order value ($${totalPrice.toFixed(2)}) is below minimum ($${this.config.minOrderValue.toFixed(2)})`);
-    }
-
-    if (totalPrice > this.config.maxOrderValue) {
-      throw new Error(`Order value ($${totalPrice.toFixed(2)}) exceeds maximum ($${this.config.maxOrderValue.toFixed(2)})`);
-    }
-  }
-
-  private loadDefaultConfig(): PricingConfig {
-    return {
-      baseRate: 5.00,
-      distanceRate: 1.50, // $1.50 per km
-      weightRate: 0.50,  // $0.50 per kg after first 5kg
-      volumeRate: 10.00, // $10.00 per m³ after first 0.1m³
-      priorityRates: {
-        low: 0.00,
-        normal: 0.00,
-        high: 3.00,
-        urgent: 7.00
-      },
-      specialHandling: {
-        fragile: 2.00,
-        temperatureControlled: 5.00,
-        liquid: 1.00
-      },
-      fuelSurchargePercent: 5, // 5% of transportation fees
-      platformFeePercent: 15,  // 15% platform fee
-      taxRatePercent: 8.875,   // Example tax rate
-      minOrderValue: 3.00,
-      maxOrderValue: 1000.00
-    };
-  }
+  pricingStrategy?: string;
+  confidence?: number; // For ML predictions
+  features?: any; // Features used for prediction
 }

@@ -17,9 +17,27 @@ export class OrderController {
    * /orders:
    *   post:
    *     summary: Create a new order
+   *     description: Create a new delivery order with pickup and delivery details
    *     tags: [Orders]
    *     security:
    *       - BearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/CreateOrderRequest'
+   *     responses:
+   *       201:
+   *         description: Order created successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Order'
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
    */
   async createOrder(req: Request, res: Response) {
     try {
@@ -43,7 +61,49 @@ export class OrderController {
    * @swagger
    * /orders/bulk:
    *   post:
-   *     summary: Create bulk orders
+   *     summary: Create multiple orders in bulk
+   *     description: Create multiple orders at once (max 100 orders per request)
+   *     tags: [Bulk]
+   *     security:
+   *       - BearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/BulkOrderRequest'
+   *     responses:
+   *       200:
+   *         description: Bulk orders processed
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 message:
+   *                   type: string
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     successful:
+   *                       type: array
+   *                       items:
+   *                         $ref: '#/components/schemas/Order'
+   *                     failed:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           data:
+   *                             type: object
+   *                           error:
+   *                             type: string
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
    */
   async createBulkOrder(req: Request, res: Response) {
     try {
@@ -67,6 +127,55 @@ export class OrderController {
    * /orders/upload:
    *   post:
    *     summary: Upload Excel file for bulk orders
+   *     description: Upload an Excel file containing multiple orders for batch processing
+   *     tags: [Bulk]
+   *     security:
+   *       - BearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         multipart/form-data:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               file:
+   *                 type: string
+   *                 format: binary
+   *                 description: Excel file (.xlsx) with order data
+   *     responses:
+   *       200:
+   *         description: Excel file processed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 message:
+   *                   type: string
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     successful:
+   *                       type: array
+   *                       items:
+   *                         $ref: '#/components/schemas/Order'
+   *                     failed:
+   *                       type: array
+   *                       items:
+   *                         type: object
+   *                         properties:
+   *                           data:
+   *                             type: object
+   *                           error:
+   *                             type: string
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       413:
+   *         description: File too large (max 10MB)
    */
   async uploadExcel(req: Request, res: Response) {
     try {
@@ -95,6 +204,43 @@ export class OrderController {
    * /orders:
    *   get:
    *     summary: Get orders with filters
+   *     description: Retrieve orders based on user role and filters
+   *     tags: [Orders]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: status
+   *         schema:
+   *           type: string
+   *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
+   *         description: Filter by order status
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *         description: Page number for pagination
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 20
+   *         description: Number of items per page
+   *     responses:
+   *       200:
+   *         description: Orders retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/PaginatedResponse'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       500:
+   *         description: Server error
    */
   async getOrders(req: Request, res: Response) {
     try {
@@ -143,6 +289,35 @@ export class OrderController {
    * /orders/{id}:
    *   get:
    *     summary: Get order details by ID
+   *     description: Retrieve detailed information about a specific order
+   *     tags: [Orders]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *       - in: query
+   *         name: optimize
+   *         schema:
+   *           type: boolean
+   *           default: false
+   *         description: Include knapsack optimization data
+   *     responses:
+   *       200:
+   *         description: Order retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Order'
+   *       404:
+   *         $ref: '#/components/responses/NotFound'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
    */
   async getOrder(req: Request, res: Response) {
     try {
@@ -168,6 +343,31 @@ export class OrderController {
    * /orders/{id}/accept:
    *   post:
    *     summary: Driver accepts an order
+   *     description: Driver accepts an assigned order
+   *     tags: [Driver]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     responses:
+   *       200:
+   *         description: Order accepted successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Order'
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       403:
+   *         description: Driver not assigned to this order
    */
   async acceptOrder(req: Request, res: Response) {
     try {
@@ -193,6 +393,35 @@ export class OrderController {
    * /orders/{id}/start:
    *   post:
    *     summary: Start order pickup
+   *     description: Driver starts the pickup process for an accepted order
+   *     tags: [Driver]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/LocationUpdateRequest'
+   *     responses:
+   *       200:
+   *         description: Pickup started successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Order'
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
    */
   async startPickup(req: Request, res: Response) {
     try {
@@ -219,6 +448,45 @@ export class OrderController {
    * /orders/{id}/location:
    *   post:
    *     summary: Update driver location
+   *     description: Update driver's current location during order delivery
+   *     tags: [Driver]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/LocationUpdateRequest'
+   *     responses:
+   *       200:
+   *         description: Location updated successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 eta:
+   *                   type: number
+   *                   description: Estimated time of arrival in minutes
+   *                 remaining_distance_km:
+   *                   type: number
+   *                 order_id:
+   *                   type: string
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
    */
   async updateLocation(req: Request, res: Response) {
     try {
@@ -245,6 +513,47 @@ export class OrderController {
    * /orders/{id}/complete:
    *   post:
    *     summary: Complete order
+   *     description: Mark order as delivered and process payment
+   *     tags: [Driver]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/CompleteOrderRequest'
+   *     responses:
+   *       200:
+   *         description: Order completed successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 order:
+   *                   $ref: '#/components/schemas/Order'
+   *                 payment:
+   *                   type: object
+   *                   properties:
+   *                     success:
+   *                       type: boolean
+   *                     message:
+   *                       type: string
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
    */
   async completeOrder(req: Request, res: Response) {
     try {
@@ -271,6 +580,37 @@ export class OrderController {
    * /orders/{id}/cancel:
    *   post:
    *     summary: Cancel an order
+   *     description: Cancel an order (customer or driver can cancel based on permissions)
+   *     tags: [Orders]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/CancelOrderRequest'
+   *     responses:
+   *       200:
+   *         description: Order cancelled successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/Order'
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       403:
+   *         description: Permission denied
    */
   async cancelOrder(req: Request, res: Response) {
     try {
@@ -298,13 +638,50 @@ export class OrderController {
    * /driver/orders:
    *   get:
    *     summary: Get driver's orders
+   *     description: Retrieve orders assigned to the authenticated driver
+   *     tags: [Driver]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: status
+   *         schema:
+   *           type: string
+   *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
+   *         description: Filter by order status
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *         description: Page number for pagination
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 20
+   *         description: Number of items per page
+   *     responses:
+   *       200:
+   *         description: Driver orders retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/PaginatedResponse'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       500:
+   *         description: Server error
    */
   async getDriverOrders(req: Request, res: Response) {
     try {
       const driverId = req.user!.userId;
       const { status, page, limit } = req.query;
       
-      const result = await (this.orderService as any).getDriverOrders(
+      const result = await this.orderService.getDriverOrders(
         driverId,
         status as string,
         parseInt(page as string) || 1,
@@ -328,6 +705,43 @@ export class OrderController {
    * /customer/orders:
    *   get:
    *     summary: Get customer's orders
+   *     description: Retrieve orders belonging to the authenticated customer
+   *     tags: [Customer]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: status
+   *         schema:
+   *           type: string
+   *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
+   *         description: Filter by order status
+   *       - in: query
+   *         name: page
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           default: 1
+   *         description: Page number for pagination
+   *       - in: query
+   *         name: limit
+   *         schema:
+   *           type: integer
+   *           minimum: 1
+   *           maximum: 100
+   *           default: 20
+   *         description: Number of items per page
+   *     responses:
+   *       200:
+   *         description: Customer orders retrieved successfully
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/PaginatedResponse'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       500:
+   *         description: Server error
    */
   async getCustomerOrders(req: Request, res: Response) {
     try {
@@ -358,6 +772,31 @@ export class OrderController {
    * /tracking/{id}:
    *   get:
    *     summary: Get order tracking
+   *     description: Get real-time tracking information for an order
+   *     tags: [Tracking]
+   *     security:
+   *       - BearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     responses:
+   *       200:
+   *         description: Tracking data retrieved
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/TrackingData'
+   *       400:
+   *         $ref: '#/components/responses/BadRequest'
+   *       401:
+   *         $ref: '#/components/responses/Unauthorized'
+   *       403:
+   *         description: Access denied to this order
    */
   async getTracking(req: Request, res: Response) {
     try {
@@ -394,7 +833,42 @@ export class OrderController {
    * @swagger
    * /internal/match/{id}:
    *   post:
-   *     summary: Match order (internal)
+   *     summary: Match order (internal use)
+   *     description: Internal endpoint to trigger order-driver matching
+   *     tags: [Orders]
+   *     security:
+   *       - ServiceSecret: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Order ID
+   *     responses:
+   *       200:
+   *         description: Order matching initiated
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 success:
+   *                   type: boolean
+   *                 message:
+   *                   type: string
+   *                 data:
+   *                   type: object
+   *                   properties:
+   *                     order_id:
+   *                       type: string
+   *                     driver_id:
+   *                       type: string
+   *       403:
+   *         description: Invalid service secret
+   *       500:
+   *         description: Failed to match order
    */
   async matchOrder(req: Request, res: Response) {
     try {

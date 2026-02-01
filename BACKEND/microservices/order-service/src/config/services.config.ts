@@ -1,4 +1,4 @@
-import { logger } from '../utils/logger';
+import { Logger } from '../utils/logger'; // Changed from 'logger' to 'Logger'
 
 export interface ServiceConfig {
   baseUrl: string;
@@ -14,8 +14,10 @@ export interface ServiceEndpoints {
 class ServicesConfig {
   private config: Record<string, ServiceConfig> = {};
   private endpoints: Record<string, ServiceEndpoints> = {};
+  private logger: Logger; // Add logger instance
 
   constructor() {
+    this.logger = new Logger('ServicesConfig'); // Initialize logger
     this.initializeConfig();
   }
 
@@ -80,12 +82,13 @@ class ServicesConfig {
       notifyCustomer: '/api/customers/notify'
     };
 
-    logger.info('Services configuration loaded');
+    this.logger.info('Services configuration loaded');
   }
 
   getServiceConfig(serviceName: string): ServiceConfig {
     const config = this.config[serviceName];
     if (!config) {
+      this.logger.error(`Service configuration not found for: ${serviceName}`);
       throw new Error(`Service configuration not found for: ${serviceName}`);
     }
     return config;
@@ -94,11 +97,13 @@ class ServicesConfig {
   getServiceEndpoint(serviceName: string, endpointName: string): string {
     const endpoints = this.endpoints[serviceName];
     if (!endpoints) {
+      this.logger.error(`Service endpoints not found for: ${serviceName}`);
       throw new Error(`Service endpoints not found for: ${serviceName}`);
     }
     
     const endpoint = endpoints[endpointName];
     if (!endpoint) {
+      this.logger.error(`Endpoint not found: ${endpointName} for service: ${serviceName}`);
       throw new Error(`Endpoint not found: ${endpointName} for service: ${serviceName}`);
     }
     
@@ -148,13 +153,13 @@ class ServicesConfig {
     
     for (const service of requiredServices) {
       if (!this.config[service]) {
-        logger.error(`Missing configuration for service: ${service}`);
+        this.logger.error(`Missing configuration for service: ${service}`);
         return false;
       }
       
       const baseUrl = this.config[service].baseUrl;
       if (!baseUrl || baseUrl === 'http://localhost:3000') {
-        logger.warn(`Service ${service} is using default localhost URL: ${baseUrl}`);
+        this.logger.warn(`Service ${service} is using default localhost URL: ${baseUrl}`);
       }
     }
     

@@ -11,7 +11,7 @@ COPY package*.json ./
 COPY tsconfig.json ./
 
 # Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --no-audit
 
 # Copy source code
 COPY src ./src
@@ -20,16 +20,15 @@ COPY src ./src
 RUN npm run build
 
 # Production stage
-FROM node:18-alpine
+FROM node:18-alpine AS production
 
 # Create app user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
 
-WORKDIR /app
-
-# Install curl for health checks
 RUN apk add --no-cache curl
+
+WORKDIR /app
 
 # Copy built application from builder stage
 COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules

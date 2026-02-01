@@ -1,13 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import { ResponseUtil } from '../utils/response.util';
-import { logger } from '../utils/logger';
-import { servicesConfig } from '../config/services.config';
+import { Logger } from '../utils/logger';
+
+// Create logger instance for this module
+const logger = new Logger('PaymentMiddleware');
 
 export const verifyCustomerBalance = async (
   req: Request,
   res: Response,
   next: NextFunction
-): Promise<void> => {
+): Promise<Response | void> => {
   try {
     const orderData = req.body;
     const customerId = req.user?.userId;
@@ -38,7 +40,7 @@ export const verifyCustomerBalance = async (
     next();
   } catch (error: any) {
     logger.error('Balance verification error:', error);
-    ResponseUtil.error(res, 'Balance verification failed', 500, error.message);
+    return ResponseUtil.error(res, 'Balance verification failed', 500, error.message);
   }
 };
 
@@ -46,7 +48,7 @@ export const validatePaymentMethod = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     const { payment_method } = req.body;
     
@@ -62,7 +64,7 @@ export const validatePaymentMethod = (
     next();
   } catch (error: any) {
     logger.error('Payment method validation error:', error);
-    ResponseUtil.error(res, 'Payment validation failed', 500, error.message);
+    return ResponseUtil.error(res, 'Payment validation failed', 500, error.message);
   }
 };
 
@@ -70,7 +72,7 @@ export const requirePaymentForUrgentOrders = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     const orderData = req.body;
     
@@ -84,7 +86,7 @@ export const requirePaymentForUrgentOrders = (
     next();
   } catch (error: any) {
     logger.error('Urgent order payment validation error:', error);
-    ResponseUtil.error(res, 'Payment validation failed', 500, error.message);
+    return ResponseUtil.error(res, 'Payment validation failed', 500, error.message);
   }
 };
 
@@ -92,7 +94,7 @@ export const verifyServiceSecret = (
   req: Request,
   res: Response,
   next: NextFunction
-): void => {
+): Response | void => {
   try {
     const secret = req.headers['x-service-secret'];
     const requiredSecret = process.env.SERVICE_SECRET;
@@ -108,6 +110,6 @@ export const verifyServiceSecret = (
     next();
   } catch (error: any) {
     logger.error('Service secret verification error:', error);
-    ResponseUtil.error(res, 'Service verification failed', 500, error.message);
+    return ResponseUtil.error(res, 'Service verification failed', 500, error.message);
   }
 };

@@ -58,17 +58,28 @@ export class DistanceUtil {
   /**
    * Calculate distance between multiple points
    */
-  calculateRouteDistance(points: Coordinates[]): number {
-    if (points.length < 2) {
-      return 0;
-    }
-
-    let totalDistance = 0;
-    for (let i = 0; i < points.length - 1; i++) {
-      totalDistance += this.calculateHaversineDistance(points[i], points[i + 1]);
-    }
+  // Fix the calculateRouteDistance method - replace the existing method with this:
+  calculateRouteDistance(points: Coordinates[]): number;
+  calculateRouteDistance(point1: Coordinates, point2: Coordinates): number;
+  calculateRouteDistance(arg1: Coordinates | Coordinates[], arg2?: Coordinates): number {
+    if (Array.isArray(arg1)) {
+      // Handle array of points
+      if (arg1.length < 2) {
+        return 0;
+      }
     
-    return totalDistance;
+      let totalDistance = 0;
+      for (let i = 0; i < arg1.length - 1; i++) {
+        totalDistance += this.calculateHaversineDistance(arg1[i], arg1[i + 1]);
+      }
+      
+      return totalDistance;
+    } else if (arg2) {
+      // Handle two coordinate points
+      return this.calculateHaversineDistance(arg1, arg2);
+    } else {
+      throw new Error('Invalid arguments for calculateRouteDistance');
+    }
   }
 
   /**
