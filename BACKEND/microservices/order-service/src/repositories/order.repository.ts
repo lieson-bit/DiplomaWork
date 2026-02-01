@@ -1,3 +1,4 @@
+import { v4 as uuidv4 } from 'uuid';
 import { db } from '../config/database';
 import { Logger } from '../utils/logger';
 
@@ -102,6 +103,7 @@ export interface Order {
 }
 
 export interface CreateOrderData {
+  order_number?: string;
   customer_id: string;
   pickup_address: string;
   pickup_latitude: number;
@@ -191,26 +193,69 @@ export class OrderRepository {
     this.logger = new Logger('OrderRepository');
   }
 
+  // Generates a unique order number (customize as needed)
+  private generateOrderNumber(): string {
+    // Example: ORD-YYYYMMDD-HHMMSS-<random>
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const datePart = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+    const timePart = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const randomPart = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    return `ORD-${datePart}-${timePart}-${randomPart}`;
+  }
+
   async create(data: CreateOrderData): Promise<Order> {
     try {
+      // 👇 Generate order number if not provided
+      const orderNumber = data.order_number || this.generateOrderNumber();
+
       const sql = `
         INSERT INTO orders (
-          customer_id, pickup_address, pickup_latitude, pickup_longitude,
-          pickup_contact_name, pickup_contact_phone, pickup_instructions,
-          delivery_address, delivery_latitude, delivery_longitude,
-          delivery_contact_name, delivery_contact_phone, delivery_instructions,
-          total_weight_kg, total_volume_m3, package_description,
-          fragile_items, temperature_controlled,
-          base_price, distance_fee, weight_fee, volume_fee, rush_fee,
-          fuel_surcharge, tip_amount, tax_amount,
-          platform_fee, platform_fee_percent,
-          subtotal_price, total_price,
-          estimated_distance_km, estimated_duration_minutes, route_polyline,
-          priority, customer_notes, is_bulk_order, bulk_order_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id,
+          order_number,  // 👈 Add this field
+          customer_id,
+          pickup_address,
+          pickup_latitude,
+          pickup_longitude,
+          pickup_contact_name,
+          pickup_contact_phone,
+          pickup_instructions,
+          delivery_address,
+          delivery_latitude,
+          delivery_longitude,
+          delivery_contact_name,
+          delivery_contact_phone,
+          delivery_instructions,
+          total_weight_kg,
+          total_volume_m3,
+          package_description,
+          fragile_items,
+          temperature_controlled,
+          base_price,
+          distance_fee,
+          weight_fee,
+          volume_fee,
+          rush_fee,
+          fuel_surcharge,
+          tip_amount,
+          tax_amount,
+          platform_fee,
+          platform_fee_percent,
+          subtotal_price,
+          total_price,
+          estimated_distance_km,
+          estimated_duration_minutes,
+          route_polyline,
+          priority,
+          customer_notes,
+          is_bulk_order,
+          bulk_order_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
-      
+
       const params = [
+        uuidv4(), // 👈 Add UUID for id
+        orderNumber, // 👈 Use generated order number
         data.customer_id,
         data.pickup_address,
         data.pickup_latitude,
@@ -218,20 +263,17 @@ export class OrderRepository {
         data.pickup_contact_name,
         data.pickup_contact_phone,
         data.pickup_instructions || null,
-        
         data.delivery_address,
         data.delivery_latitude,
         data.delivery_longitude,
         data.delivery_contact_name,
         data.delivery_contact_phone,
         data.delivery_instructions || null,
-        
         data.total_weight_kg,
         data.total_volume_m3,
         data.package_description || null,
         data.fragile_items || false,
         data.temperature_controlled || false,
-        
         data.base_price,
         data.distance_fee || 0,
         data.weight_fee || 0,
@@ -240,28 +282,21 @@ export class OrderRepository {
         data.fuel_surcharge || 0,
         data.tip_amount || 0,
         data.tax_amount || 0,
-        
-        data.platform_fee || (data.total_price * 0.15), // 15% default
+        data.platform_fee || (data.total_price * 0.15),
         data.platform_fee_percent || 15.00,
-        
         data.subtotal_price,
         data.total_price,
-        
         data.estimated_distance_km,
         data.estimated_duration_minutes,
         data.route_polyline || null,
-        
         data.priority || 'normal',
         data.customer_notes || null,
         data.is_bulk_order || false,
         data.bulk_order_id || null
       ];
-      
-      const result = await db.execute(sql, params);
-      const orderId = result.insertId;
-      
-      return await this.findById(orderId.toString()) as Order;
-      
+
+      await db.execute(sql, params);
+      return await this.findByOrderNumber(orderNumber) as Order;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to create order:', errorMessage);

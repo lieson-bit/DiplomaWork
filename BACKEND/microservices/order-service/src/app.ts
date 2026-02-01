@@ -328,9 +328,9 @@ const swaggerOptions = {
     ]
   },
   apis: [
-    path.join(swaggerDirname, 'src', 'routes', '*.ts'),
-    path.join(swaggerDirname, 'src', 'controllers', '*.ts'),
-    path.join(swaggerDirname, 'src', 'types', '*.ts')
+    path.join(swaggerDirname, 'dist', 'routes', '*.js'),
+    path.join(swaggerDirname, 'dist', 'controllers', '*.js'),
+    path.join(swaggerDirname, 'dist', 'types', '*.js')
   ]
 };
 
