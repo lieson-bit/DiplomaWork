@@ -212,7 +212,7 @@ export class OrderRepository {
       const sql = `
         INSERT INTO orders (
           id,
-          order_number,  // 👈 Add this field
+          order_number,
           customer_id,
           pickup_address,
           pickup_latitude,
