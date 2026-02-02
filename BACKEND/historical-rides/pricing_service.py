@@ -1,576 +1,657 @@
-# pricing_service.py - FIXED VERSION
-import joblib
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import json
-import pickle
 import requests
-from typing import Dict, List, Optional, Tuple
+import json
+from typing import Dict, Optional, Tuple, List
 import time
+import re
 
-class PricingModel:
-    def __init__(self, model_path='pricing_model.pkl', feature_info_path='feature_info.pkl'):
-        """Initialize the pricing model"""
-        try:
-            self.model = joblib.load(model_path)
-            self.feature_info = joblib.load(feature_info_path)
-            print("✓ ML Model loaded successfully")
-        except FileNotFoundError:
-            print("⚠ Warning: ML model files not found. Using rule-based pricing only.")
-            self.model = None
-            self.feature_info = None
-        
+class DeliveryDataService:
+    """Combined service for getting distance, time, and weather data"""
+    
+    def __init__(self):
         # DistanceMatrix.ai API configuration
         self.distance_api_key = "NFLqNsgalupmIuzDS6zKuprvodMgjdaGAxBtGYNpOT9TUwnCnC4Z9Do6T2drMT4Y"
         self.distance_api_url = "https://api.distancematrix.ai/maps/api/distancematrix/json"
         
-        # Fallback configuration
-        self.use_api_primary = True
-        self.api_timeout = 5  # seconds
+        # OpenWeatherMap API configuration
+        self.weather_api_key = "bd5e378503939ddaee76f12ad7a97608"
+        self.weather_api_url = "https://api.openweathermap.org/data/2.5/weather"
         
-        # Pricing configuration
-        self.minimum_price = 3.0  # Minimum price for any delivery
-        self.platform_fee_percentage = 0.15  # 15% platform fee
+        # Cache for API responses
+        self.cache = {}
+        self.cache_timeout = 300  # 5 minutes
         
-        # Base rates (USD per km) - adjusted for realism
-        self.base_rates = {
-            'walking': 2.5,      # For very short distances (< 1 km)
-            'bicycling': 1.8,    # For short-medium distances (1-5 km)
-            'standard': 1.5,     # For car deliveries (5-20 km)
-            'van': 2.0,          # For larger items
-            'truck': 2.5         # For furniture/large items
-        }
-        
-        # Maximum practical distances per vehicle type (km)
-        self.max_distances = {
-            'walking': 2.0,
-            'bicycling': 8.0,
-            'standard': 50.0,
-            'van': 100.0,
-            'truck': 200.0
-        }
-        
-        print(f"✓ Pricing service initialized at {datetime.now().strftime('%H:%M:%S')}")
+        print("DeliveryDataService initialized")
     
-    def _calculate_distance_haversine(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        """Calculate distance between two coordinates using Haversine formula"""
-        R = 6371  # Earth's radius in kilometers
+    def extract_city_from_address(self, address: str) -> str:
+        """
+        Extract city name from address string for fallback geocoding
+        """
+        # Common Russian city patterns
+        city_patterns = [
+            r'(Москва|Moscow)',
+            r'(Санкт-Петербург|Saint Petersburg|St\.? Petersburg)',
+            r'(Новосибирск|Novosibirsk)',
+            r'(Екатеринбург|Yekaterinburg)',
+            r'(Казань|Kazan)',
+            r'(Нижний Новгород|Nizhny Novgorod)',
+            r'(Челябинск|Chelyabinsk)',
+            r'(Омск|Omsk)',
+            r'(Самара|Samara)',
+            r'(Ростов-на-Дону|Rostov-on-Don)',
+            r'(Уфа|Ufa)',
+            r'(Красноярск|Krasnoyarsk)',
+            r'(Воронеж|Voronezh)',
+            r'(Пермь|Perm)',
+            r'(Волгоград|Volgograd)'
+        ]
         
-        lat1_rad = np.radians(lat1)
-        lat2_rad = np.radians(lat2)
-        delta_lat = np.radians(lat2 - lat1)
-        delta_lon = np.radians(lon2 - lon1)
+        # Check for patterns in the address
+        address_lower = address.lower()
+        for pattern in city_patterns:
+            match = re.search(pattern, address, re.IGNORECASE)
+            if match:
+                return match.group(1)
         
-        a = np.sin(delta_lat/2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(delta_lon/2)**2
-        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
+        # Try to extract city from address structure (common formats)
+        parts = address.split(',')
+        if len(parts) >= 2:
+            # City is often the second-to-last part in Russian addresses
+            possible_city = parts[-2].strip()
+            if possible_city and len(possible_city) > 2:
+                return possible_city
         
-        return R * c
+        # Return the last part if nothing else works
+        return parts[-1].strip() if parts else address
     
-    def _get_distance_and_time_api(self, origin: str, destination: str, 
-                                  transport_mode: str = 'driving') -> Optional[Dict]:
-        """Get distance and time using DistanceMatrix.ai API"""
-        if not self.distance_api_key:
-            print("⚠ Warning: DistanceMatrix API key not configured")
-            return None
-        
+    def get_coordinates_from_address(self, address: str) -> Optional[Tuple[float, float]]:
+        """
+        Get coordinates from an address using OpenWeatherMap's geocoding API
+        with improved error handling and fallbacks
+        """
         try:
+            # Clean and normalize address
+            normalized_address = address.strip()
+            if not normalized_address:
+                print("⚠ Empty address provided")
+                return None
+            
+            # Create cache key
+            cache_key = f"geocode_{normalized_address}"
+            
+            # Check cache
+            if cache_key in self.cache:
+                cached_data = self.cache[cache_key]
+                if time.time() - cached_data['timestamp'] < self.cache_timeout:
+                    print(f"Using cached coordinates for: {normalized_address}")
+                    return cached_data['data']
+            
+            print(f"🌍 Geocoding address: {normalized_address}")
+            
+            # Method 1: Try OpenWeatherMap geocoding API first
+            geocode_url = "http://api.openweathermap.org/geo/1.0/direct"
+            params = {
+                'q': normalized_address,
+                'limit': 5,  # Get multiple results for better matching
+                'appid': self.weather_api_key,
+                'lang': 'en'
+            }
+            
+            response = requests.get(geocode_url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data and len(data) > 0:
+                    # Try to find the best match
+                    best_match = data[0]
+                    
+                    # If we have multiple results, try to find one with "RU" country code
+                    if len(data) > 1:
+                        for result in data:
+                            if result.get('country') == 'RU':
+                                best_match = result
+                                break
+                    
+                    coords = (best_match['lat'], best_match['lon'])
+                    location_name = f"{best_match.get('name', 'Unknown')}, {best_match.get('country', 'Unknown')}"
+                    
+                    print(f"✅ Successfully geocoded: {normalized_address}")
+                    print(f"   → Coordinates: {coords}")
+                    print(f"   → Location: {location_name}")
+                    
+                    # Cache the result
+                    self.cache[cache_key] = {
+                        'timestamp': time.time(),
+                        'data': coords
+                    }
+                    
+                    return coords
+            
+            # Method 2: If OpenWeatherMap fails, try Nominatim (OpenStreetMap) as fallback
+            print(f"⚠ OpenWeatherMap geocoding failed, trying Nominatim...")
+            
+            nominatim_url = "https://nominatim.openstreetmap.org/search"
+            params = {
+                'q': normalized_address,
+                'format': 'json',
+                'limit': 1,
+                'countrycodes': 'ru',  # Prioritize Russia
+                'accept-language': 'en'
+            }
+            
+            headers = {
+                'User-Agent': 'DeliveryDataService/1.0'
+            }
+            
+            response = requests.get(nominatim_url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    coords = (float(data[0]['lat']), float(data[0]['lon']))
+                    print(f"✅ Successfully geocoded via Nominatim: {normalized_address}")
+                    print(f"   → Coordinates: {coords}")
+                    print(f"   → Location: {data[0].get('display_name', 'Unknown')}")
+                    
+                    # Cache the result
+                    self.cache[cache_key] = {
+                        'timestamp': time.time(),
+                        'data': coords
+                    }
+                    
+                    return coords
+            
+            # Method 3: Extract city and try geocoding just the city
+            print(f"⚠ Full address geocoding failed, extracting city...")
+            city_name = self.extract_city_from_address(normalized_address)
+            
+            if city_name and city_name != normalized_address:
+                print(f"   Trying with city only: {city_name}")
+                
+                # Try with OpenWeatherMap again
+                params = {
+                    'q': f"{city_name},RU",  # Add country code for better results
+                    'limit': 1,
+                    'appid': self.weather_api_key
+                }
+                
+                response = requests.get(geocode_url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and len(data) > 0:
+                        coords = (data[0]['lat'], data[0]['lon'])
+                        print(f"✅ Successfully geocoded city: {city_name}")
+                        print(f"   → Coordinates: {coords}")
+                        
+                        # Cache both the full address and city results
+                        self.cache[cache_key] = {
+                            'timestamp': time.time(),
+                            'data': coords
+                        }
+                        
+                        return coords
+            
+            print(f"❌ All geocoding attempts failed for: {normalized_address}")
+            return None
+                
+        except requests.exceptions.Timeout:
+            print(f"⚠ Geocoding timeout for: {address}")
+            return None
+        except requests.exceptions.RequestException as e:
+            print(f"⚠ Geocoding network error: {str(e)}")
+            return None
+        except Exception as e:
+            print(f"⚠ Unexpected geocoding error: {str(e)}")
+            return None
+    
+    def get_weather_by_coordinates(self, lat: float, lon: float) -> Dict:
+        """
+        Get weather data using coordinates (more reliable than city names)
+        """
+        print(f"🌤️  Getting weather for coordinates: ({lat}, {lon})")
+        return self.get_weather_data(lat=lat, lon=lon)
+    
+    def get_weather_for_address(self, address: str) -> Dict:
+        """
+        Get weather data for an address by automatically extracting coordinates
+        """
+        # Get coordinates from address
+        coords = self.get_coordinates_from_address(address)
+        
+        if coords:
+            lat, lon = coords
+            # Get weather using coordinates
+            return self.get_weather_by_coordinates(lat, lon)
+        else:
+            # Try to extract city name as fallback
+            city_name = self.extract_city_from_address(address)
+            if city_name:
+                print(f"⚠ Using city name fallback for weather: {city_name}")
+                return self.get_weather_data(city=city_name, country_code="RU")
+            else:
+                return {
+                    'success': False,
+                    'error': f"Could not determine location from address: {address}",
+                    'api_status': 'geocoding_failed'
+                }
+    
+    def get_delivery_route_info(self, origin: str, destination: str, 
+                               transport_mode: str = 'driving') -> Dict:
+        """
+        Get distance and time information for a delivery route
+        """
+        try:
+            # Normalize transport mode
+            valid_modes = ['driving', 'walking', 'bicycling', 'transit']
+            if transport_mode not in valid_modes:
+                print(f"⚠ Warning: Transport mode '{transport_mode}' not supported. Using 'driving'.")
+                transport_mode = 'driving'
+            
+            # Fix: Check if bicycling is available - if not, use driving
+            if transport_mode == 'bicycling':
+                transport_mode_to_use = 'bicycling'
+            else:
+                transport_mode_to_use = transport_mode
+            
+            # Create cache key
+            cache_key = f"route_{origin}_{destination}_{transport_mode_to_use}"
+            
+            # Check cache
+            if cache_key in self.cache:
+                cached_data = self.cache[cache_key]
+                if time.time() - cached_data['timestamp'] < self.cache_timeout:
+                    print(f"Using cached route data for {origin} to {destination}")
+                    return cached_data['data']
+            
+            # Prepare parameters
             params = {
                 "origins": origin,
                 "destinations": destination,
                 "key": self.distance_api_key,
-                "mode": transport_mode,
+                "mode": transport_mode_to_use,
                 "departure_time": "now",
-                "language": "en",
-                "units": "metric"
+                "units": "metric",
+                "language": "en"
             }
             
-            response = requests.get(self.distance_api_url, params=params, timeout=self.api_timeout)
+            # Make API request
+            print(f"📍 Getting route from: {origin}")
+            print(f"   → To: {destination}")
+            print(f"   → Mode: {transport_mode_to_use}")
+            
+            response = requests.get(self.distance_api_url, params=params, timeout=10)
             data = response.json()
             
+            # Process response
             if data.get("status") == "OK":
                 element = data["rows"][0]["elements"][0]
                 if element.get("status") == "OK":
-                    return {
-                        'distance_km': element["distance"]["value"] / 1000,  # meters to km
+                    result = {
+                        'success': True,
+                        'distance_meters': element["distance"]["value"],
                         'distance_text': element["distance"]["text"],
-                        'duration_minutes': element["duration"]["value"] / 60,  # seconds to minutes
+                        'duration_seconds': element["duration"]["value"],
                         'duration_text': element["duration"]["text"],
-                        'source': 'distancematrix_api',
-                        'status': 'success'
+                        'origin_address': data.get("origin_addresses", [origin])[0],
+                        'destination_address': data.get("destination_addresses", [destination])[0],
+                        'transport_mode': transport_mode_to_use,
+                        'api_status': 'success'
                     }
+                    
+                    # Add additional traffic info if available
+                    if 'duration_in_traffic' in element:
+                        result['duration_in_traffic_seconds'] = element["duration_in_traffic"]["value"]
+                        result['duration_in_traffic_text'] = element["duration_in_traffic"]["text"]
+                    
+                    # Cache the result
+                    self.cache[cache_key] = {
+                        'timestamp': time.time(),
+                        'data': result
+                    }
+                    
+                    return result
                 else:
-                    print(f"⚠ API route error: {element.get('status')}")
+                    # If bicycling fails, try with driving
+                    if transport_mode_to_use == 'bicycling':
+                        print(f"⚠ Bicycling mode failed: {element.get('status')}. Trying with driving...")
+                        return self.get_delivery_route_info(origin, destination, 'driving')
+                    else:
+                        return {
+                            'success': False,
+                            'error': f"Route calculation failed: {element.get('status')}",
+                            'api_status': 'route_error'
+                        }
             else:
-                print(f"⚠ API error: {data.get('status')} - {data.get('error_message', '')}")
+                return {
+                    'success': False,
+                    'error': f"API request failed: {data.get('status')}",
+                    'api_status': 'api_error'
+                }
                 
         except requests.exceptions.Timeout:
-            print(f"⚠ DistanceMatrix API timeout after {self.api_timeout} seconds")
+            return {
+                'success': False,
+                'error': "Distance API timeout after 10 seconds",
+                'api_status': 'timeout'
+            }
         except requests.exceptions.RequestException as e:
-            print(f"⚠ DistanceMatrix API request error: {str(e)}")
-        except Exception as e:
-            print(f"⚠ Error calling DistanceMatrix API: {str(e)}")
-        
-        return None
-    
-    def _select_appropriate_vehicle(self, distance_km: float, item_category: str, 
-                                   weight_kg: Optional[float] = None) -> str:
-        """Select appropriate vehicle type based on distance and item"""
-        
-        # First, determine vehicle by item type
-        if item_category == 'Documents and small packages':
-            if weight_kg and weight_kg < 2 and distance_km <= 2:
-                return 'walking'
-            elif distance_km <= 8:
-                return 'bicycling'
-            else:
-                return 'standard'
-        elif item_category in ['Furniture and appliances', 'Construction materials']:
-            return 'truck'
-        elif item_category in ['Food and beverages', 'Electronics and Fragile Items']:
-            return 'van'
-        else:
-            return 'standard'
-    
-    def calculate_distance_and_time(self, customer_input: Dict) -> Dict:
-        """Calculate distance and time using best available method"""
-        
-        transport_mode = customer_input.get('transport_mode', 'driving')
-        
-        # Priority 1: Use provided coordinates directly
-        if all(k in customer_input for k in ['pickup_lat', 'pickup_long', 'dropoff_lat', 'dropoff_long']):
-            distance_km = self._calculate_distance_haversine(
-                customer_input['pickup_lat'],
-                customer_input['pickup_long'],
-                customer_input['dropoff_lat'],
-                customer_input['dropoff_long']
-            )
-            
-            # Estimate time based on distance and transport mode
-            avg_speeds = {'walking': 4, 'bicycling': 12, 'driving': 30, 'transit': 20, 'van': 25, 'truck': 20}
-            avg_speed = avg_speeds.get(transport_mode, 25)
-            duration_minutes = (distance_km / avg_speed) * 60
-            
             return {
-                'distance_km': round(distance_km, 2),
-                'distance_text': f"{distance_km:.1f} km",
-                'duration_minutes': round(duration_minutes, 1),
-                'duration_text': f"{duration_minutes:.0f} mins",
-                'source': 'coordinates_haversine',
-                'status': 'success'
+                'success': False,
+                'error': f"Distance API request error: {str(e)}",
+                'api_status': 'network_error'
             }
-        
-        # Priority 2: Use provided distance directly
-        elif 'distance_kms' in customer_input:
-            distance_km = float(customer_input['distance_kms'])
-            avg_speeds = {'walking': 4, 'bicycling': 12, 'driving': 30, 'transit': 20, 'van': 25, 'truck': 20}
-            avg_speed = avg_speeds.get(transport_mode, 25)
-            duration_minutes = (distance_km / avg_speed) * 60
-            
-            return {
-                'distance_km': round(distance_km, 2),
-                'distance_text': f"{distance_km:.1f} km",
-                'duration_minutes': round(duration_minutes, 1),
-                'duration_text': f"{duration_minutes:.0f} mins",
-                'source': 'provided_distance',
-                'status': 'success'
-            }
-        
-        # Priority 3: Use DistanceMatrix API with addresses
-        elif all(k in customer_input for k in ['pickup_address', 'delivery_address']):
-            if self.use_api_primary and self.distance_api_key:
-                api_result = self._get_distance_and_time_api(
-                    customer_input['pickup_address'],
-                    customer_input['delivery_address'],
-                    transport_mode
-                )
-                
-                if api_result:
-                    return api_result
-                else:
-                    print("⚠ API failed, using fallback estimation")
-            
-            # Fallback: Estimate based on typical city distances
-            # In a real app, you might use a local geocoding database
-            return {
-                'distance_km': 5.0,  # Average city delivery distance
-                'distance_text': "5.0 km",
-                'duration_minutes': 20.0,
-                'duration_text': "20 mins",
-                'source': 'fallback_estimation',
-                'status': 'estimated'
-            }
-        
-        # Default values
-        else:
-            return {
-                'distance_km': 5.0,
-                'distance_text': "5.0 km",
-                'duration_minutes': 20.0,
-                'duration_text': "20 mins",
-                'source': 'default_values',
-                'status': 'estimated'
-            }
-    
-    def _get_time_features(self):
-        """Get current time features"""
-        now = datetime.now()
-        
-        return {
-            'hour': now.hour,
-            'day_of_week': now.weekday(),  # Monday=0, Sunday=6
-            'is_weekend': 1 if now.weekday() >= 5 else 0,
-            'is_rush_hour': 1 if (7 <= now.hour <= 9) or (16 <= now.hour <= 19) else 0,
-            'is_night': 1 if (22 <= now.hour <= 24) or (0 <= now.hour <= 5) else 0,
-            'month': now.month
-        }
-    
-    def _calculate_surge_multiplier(self, delivery_urgency: str, is_rush_hour: bool, 
-                                   is_night: bool) -> float:
-        """Calculate surge multiplier based on delivery urgency and time"""
-        base_multiplier = 1.0
-        
-        # Delivery urgency multiplier
-        urgency_multiplier = {
-            'standard': 1.0,
-            'urgent': 1.4,    # Reduced from 1.5
-            'scheduled': 0.85 # Slightly better discount
-        }
-        
-        base_multiplier *= urgency_multiplier.get(delivery_urgency, 1.0)
-        
-        # Time-based multiplier
-        if is_rush_hour:
-            base_multiplier *= 1.15  # Reduced from 1.2
-        if is_night:
-            base_multiplier *= 1.25  # Reduced from 1.3
-        
-        return round(base_multiplier, 3)
-    
-    def _calculate_weight_volume_multiplier(self, weight_kg: Optional[float] = None, 
-                                          volume_m3: Optional[float] = None) -> float:
-        """Calculate multiplier based on weight and volume"""
-        multiplier = 1.0
-        
-        if weight_kg:
-            if weight_kg > 50:
-                multiplier *= 1.4  # Reduced from 1.5
-            elif weight_kg > 20:
-                multiplier *= 1.25 # Reduced from 1.3
-            elif weight_kg > 10:
-                multiplier *= 1.15 # Reduced from 1.2
-            elif weight_kg > 5:
-                multiplier *= 1.05 # Reduced from 1.1
-        
-        if volume_m3:
-            if volume_m3 > 2:
-                multiplier *= 1.5  # Kept
-            elif volume_m3 > 1:
-                multiplier *= 1.3  # Reduced from 1.4
-            elif volume_m3 > 0.5:
-                multiplier *= 1.15 # Reduced from 1.2
-            elif volume_m3 > 0.2:
-                multiplier *= 1.05 # Reduced from 1.1
-        
-        return round(multiplier, 3)
-    
-    def _calculate_special_requirements_multiplier(self, special_requirements: List[str]) -> float:
-        """Calculate multiplier for special requirements"""
-        multiplier = 1.0
-        
-        if special_requirements:
-            if 'Fragile items' in special_requirements:
-                multiplier *= 1.15  # Reduced from 1.2
-            if 'Refrigerated transport' in special_requirements:
-                multiplier *= 1.4   # Reduced from 1.5
-            if 'Oversized items' in special_requirements:
-                multiplier *= 1.25  # Reduced from 1.3
-            if 'Hazardous materials' in special_requirements:
-                multiplier *= 1.6   # Reduced from 1.8
-        
-        return round(multiplier, 3)
-    
-    def prepare_features(self, customer_input: Dict) -> Dict:
-        """Prepare all features for prediction"""
-        
-        # Get current time features
-        time_features = self._get_time_features()
-        
-        # Calculate distance and time
-        distance_info = self.calculate_distance_and_time(customer_input)
-        distance_km = distance_info['distance_km']
-        
-        # Select appropriate vehicle type
-        vehicle_type = self._select_appropriate_vehicle(
-            distance_km,
-            customer_input.get('item_category', 'others'),
-            customer_input.get('weight_kg')
-        )
-        
-        # Update transport mode if needed
-        if 'transport_mode' not in customer_input:
-            customer_input['transport_mode'] = vehicle_type
-        
-        # Calculate surge multiplier
-        surge_multiplier = self._calculate_surge_multiplier(
-            customer_input.get('delivery_urgency', 'standard'),
-            time_features['is_rush_hour'],
-            time_features['is_night']
-        )
-        
-        # Calculate additional multipliers
-        weight_volume_multiplier = self._calculate_weight_volume_multiplier(
-            customer_input.get('weight_kg'),
-            customer_input.get('volume_m3')
-        )
-        
-        special_req_multiplier = self._calculate_special_requirements_multiplier(
-            customer_input.get('special_requirements', [])
-        )
-        
-        # Combine all multipliers
-        total_multiplier = round(surge_multiplier * weight_volume_multiplier * special_req_multiplier, 3)
-        
-        # Prepare feature dictionary
-        features = {
-            'distance_kms': distance_km,
-            'hour': time_features['hour'],
-            'day_of_week': time_features['day_of_week'],
-            'is_weekend': time_features['is_weekend'],
-            'is_rush_hour': time_features['is_rush_hour'],
-            'is_night': time_features['is_night'],
-            'temperature_value': 20.0,  # Default temperature
-            'humidity': 60.0,  # Default humidity
-            'surge_multiplier': total_multiplier,
-            'vehicle_type': vehicle_type,
-            'distance_source': distance_info['source'],
-            'status': distance_info['status']
-        }
-        
-        # Add duration if available
-        if 'duration_minutes' in distance_info:
-            features['duration_minutes'] = distance_info['duration_minutes']
-        
-        return features
-    
-    def predict_price_with_ml(self, features: Dict) -> Optional[Dict]:
-        """Predict price using ML model"""
-        if not self.model or not self.feature_info:
-            return None
-        
-        try:
-            # Create features dataframe
-            features_df = pd.DataFrame(0, index=[0], columns=self.feature_info['features'])
-            
-            # Fill in features
-            for feature, value in features.items():
-                if feature in features_df.columns:
-                    features_df[feature] = value
-            
-            # Handle categorical features
-            if 'vehicle_type' in features:
-                vehicle_type = features['vehicle_type']
-                vehicle_cols = [col for col in features_df.columns if 'vehicle_type_' in col]
-                for col in vehicle_cols:
-                    if vehicle_type in col:
-                        features_df[col] = 1
-            
-            # Handle surge category
-            surge_multiplier = features.get('surge_multiplier', 1.0)
-            if surge_multiplier <= 1:
-                category = 'no_surge'
-            elif surge_multiplier <= 1.3:
-                category = 'low_surge'
-            elif surge_multiplier <= 1.7:
-                category = 'medium_surge'
-            else:
-                category = 'high_surge'
-            
-            surge_cols = [col for col in features_df.columns if 'surge_category_' in col]
-            for col in surge_cols:
-                if category in col:
-                    features_df[col] = 1
-            
-            # Make prediction
-            price_per_km = float(self.model.predict(features_df)[0])
-            distance_km = features['distance_kms']
-            base_price = price_per_km * distance_km
-            
-            return {
-                'price_per_km': round(price_per_km, 3),
-                'base_price': round(base_price, 2),
-                'model_used': 'ml_model'
-            }
-            
-        except Exception as e:
-            print(f"⚠ ML prediction error: {str(e)}")
-            return None
-    
-    def predict_price_rule_based(self, features: Dict) -> Dict:
-        """Predict price using rule-based method"""
-        vehicle_type = features.get('vehicle_type', 'standard')
-        
-        # Get base rate
-        base_rate = self.base_rates.get(vehicle_type, 1.5)
-        
-        # Apply distance-based adjustment
-        distance_km = features['distance_kms']
-        max_distance = self.max_distances.get(vehicle_type, 50.0)
-        
-        # Reduce rate slightly for longer distances (economies of scale)
-        if distance_km > max_distance * 0.5:
-            base_rate *= 0.95
-        elif distance_km > max_distance * 0.8:
-            base_rate *= 0.9
-        
-        # Calculate price per km
-        price_per_km = round(base_rate * features.get('surge_multiplier', 1.0), 3)
-        base_price = round(price_per_km * distance_km, 2)
-        
-        return {
-            'price_per_km': price_per_km,
-            'base_price': base_price,
-            'model_used': 'rule_based'
-        }
-    
-    def predict_price(self, customer_input: Dict) -> Dict:
-        """Predict price based on customer input"""
-        
-        try:
-            # Prepare features
-            prepared_features = self.prepare_features(customer_input)
-            
-            # Try ML prediction first
-            ml_prediction = None
-            if self.model:
-                ml_prediction = self.predict_price_with_ml(prepared_features)
-            
-            # Fallback to rule-based if ML fails
-            if ml_prediction:
-                prediction = ml_prediction
-                prediction_method = 'ml_model'
-            else:
-                prediction = self.predict_price_rule_based(prepared_features)
-                prediction_method = 'rule_based'
-            
-            base_price = prediction['base_price']
-            price_per_km = prediction['price_per_km']
-            
-            # Calculate platform fee and driver earnings
-            platform_fee = base_price * self.platform_fee_percentage
-            driver_earnings = base_price - platform_fee
-            
-            # Apply minimum price
-            total_price = max(base_price, self.minimum_price)
-            
-            # Prepare breakdown
-            breakdown = {
-                'base_price': round(base_price, 2),
-                'distance_km': round(prepared_features['distance_kms'], 2),
-                'price_per_km': round(price_per_km, 3),
-                'surge_multiplier': prepared_features['surge_multiplier'],
-                'vehicle_type': prepared_features['vehicle_type'],
-                'time_of_day': prepared_features['hour'],
-                'is_rush_hour': bool(prepared_features['is_rush_hour']),
-                'is_night': bool(prepared_features['is_night']),
-                'platform_fee': round(platform_fee, 2),
-                'driver_earnings': round(driver_earnings, 2),
-                'distance_source': prepared_features['distance_source'],
-                'prediction_method': prediction_method,
-                'calculation_status': prepared_features.get('status', 'success')
-            }
-            
-            # Add estimated time if available
-            if 'duration_minutes' in prepared_features:
-                breakdown['estimated_duration_minutes'] = round(prepared_features['duration_minutes'], 1)
-            
-            return {
-                'success': True,
-                'total_price': round(total_price, 2),
-                'breakdown': breakdown,
-                'currency': 'USD',
-                'timestamp': datetime.now().isoformat()
-            }
-            
         except Exception as e:
             return {
                 'success': False,
-                'error': f"Pricing calculation error: {str(e)}",
-                'timestamp': datetime.now().isoformat()
+                'error': f"Unexpected error: {str(e)}",
+                'api_status': 'unexpected_error'
             }
     
-    def save_to_file(self, filepath='pricing_service.pkl'):
-        """Save the entire service to a file"""
-        with open(filepath, 'wb') as f:
-            pickle.dump(self, f)
-        print(f"✓ Service saved to {filepath}")
+    def get_weather_data(self, lat: float = None, lon: float = None, 
+                        city: str = None, country_code: str = None) -> Dict:
+        """
+        Get weather data for a location
+        Can use coordinates (lat, lon) OR city name
+        """
+        try:
+            # Create cache key
+            if lat is not None and lon is not None:
+                cache_key = f"weather_{lat}_{lon}"
+                params = {
+                    'lat': lat,
+                    'lon': lon,
+                    'appid': self.weather_api_key,
+                    'units': 'metric'
+                }
+            elif city is not None:
+                cache_key = f"weather_{city}_{country_code}"
+                query = f"{city},{country_code}" if country_code else city
+                params = {
+                    'q': query,
+                    'appid': self.weather_api_key,
+                    'units': 'metric'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': "Either coordinates (lat, lon) or city name must be provided",
+                    'api_status': 'invalid_params'
+                }
+            
+            # Check cache
+            if cache_key in self.cache:
+                cached_data = self.cache[cache_key]
+                if time.time() - cached_data['timestamp'] < self.cache_timeout:
+                    print(f"Using cached weather data for {cache_key}")
+                    return cached_data['data']
+            
+            # Make API request
+            response = requests.get(self.weather_api_url, params=params, timeout=10)
+            data = response.json()
+            
+            # Check for API errors
+            if data.get("cod") != 200:
+                error_msg = data.get("message", "Unknown weather API error")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'api_status': 'weather_api_error'
+                }
+            
+            # Parse successful response
+            weather_data = {
+                'success': True,
+                'temperature_value': data['main']['temp'],
+                'feels_like': data['main']['feels_like'],
+                'temp_min': data['main']['temp_min'],
+                'temp_max': data['main']['temp_max'],
+                'pressure': data['main']['pressure'],
+                'humidity': data['main']['humidity'],
+                'wind_speed': data['wind'].get('speed', 0),
+                'wind_deg': data['wind'].get('deg', 0),
+                'wind_gust': data['wind'].get('gust', 0),
+                'cloudness': data['clouds']['all'],
+                'weather_main': data['weather'][0]['main'],
+                'weather_desc': data['weather'][0]['description'],
+                'weather_icon': data['weather'][0]['icon'],
+                'visibility': data.get('visibility', 10000),
+                'timestamp': data['dt'],
+                'location': {
+                    'city': data.get('name'),
+                    'country': data['sys'].get('country'),
+                    'lat': data['coord']['lat'],
+                    'lon': data['coord']['lon']
+                },
+                'sunrise': data['sys']['sunrise'],
+                'sunset': data['sys']['sunset'],
+                'api_status': 'success'
+            }
+            
+            # Try to get precipitation data
+            if 'rain' in data:
+                weather_data['rain_1h'] = data['rain'].get('1h', 0)
+                weather_data['rain_3h'] = data['rain'].get('3h', 0)
+            if 'snow' in data:
+                weather_data['snow_1h'] = data['snow'].get('1h', 0)
+                weather_data['snow_3h'] = data['snow'].get('3h', 0)
+            
+            # Cache the result
+            self.cache[cache_key] = {
+                'timestamp': time.time(),
+                'data': weather_data
+            }
+            
+            return weather_data
+            
+        except requests.exceptions.Timeout:
+            return {
+                'success': False,
+                'error': "Weather API timeout after 10 seconds",
+                'api_status': 'timeout'
+            }
+        except requests.exceptions.RequestException as e:
+            return {
+                'success': False,
+                'error': f"Weather API request error: {str(e)}",
+                'api_status': 'network_error'
+            }
+        except KeyError as e:
+            return {
+                'success': False,
+                'error': f"Unexpected API response format: missing {str(e)}",
+                'api_status': 'format_error'
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f"Unexpected error: {str(e)}",
+                'api_status': 'unexpected_error'
+            }
+    
+    def get_complete_delivery_data(self, origin: str, destination: str, 
+                                  transport_mode: str = 'driving',
+                                  weather_location: str = None) -> Dict:
+        """
+        Get complete delivery data: route info + weather
+        Automatically extracts coordinates from addresses
+        """
+        print(f"\n🔍 Getting delivery data for:")
+        print(f"   Origin: {origin}")
+        print(f"   Destination: {destination}")
+        print(f"   Transport mode: {transport_mode}")
+        
+        # Get route information
+        route_info = self.get_delivery_route_info(origin, destination, transport_mode)
+        
+        # Determine which location to use for weather
+        weather_location_to_use = weather_location if weather_location else origin
+        
+        print(f"   Weather location: {weather_location_to_use}")
+        
+        # Get weather data for the specified location
+        weather_info = self.get_weather_for_address(weather_location_to_use)
+        
+        # If weather failed, try destination as fallback
+        if not weather_info.get('success') and weather_location_to_use != destination:
+            print(f"⚠ Weather failed for {weather_location_to_use}, trying destination...")
+            weather_info = self.get_weather_for_address(destination)
+        
+        # Combine results
+        result = {
+            'route': route_info,
+            'weather': weather_info,
+            'metadata': {
+                'origin': origin,
+                'destination': destination,
+                'transport_mode': transport_mode,
+                'timestamp': time.time(),
+                'weather_location': weather_location_to_use,
+                'coordinates_extracted': True
+            }
+        }
+        
+        return result
+    
+    def print_delivery_summary(self, delivery_data: Dict) -> None:
+        """Print a formatted summary of delivery data"""
+        route = delivery_data['route']
+        weather = delivery_data['weather']
+        
+        print("\n" + "="*60)
+        print("📦 DELIVERY DATA SUMMARY")
+        print("="*60)
+        
+        if route.get('success'):
+            print(f"📍 Route: {route.get('origin_address', 'Unknown')}")
+            print(f"          → {route.get('destination_address', 'Unknown')}")
+            print(f"📏 Distance: {route['distance_text']} ({route['distance_meters']} meters)")
+            print(f"⏱️  Duration: {route['duration_text']} ({route['duration_seconds']} seconds)")
+            print(f"🚗 Mode: {route.get('transport_mode', 'Unknown')}")
+            
+            if 'duration_in_traffic_text' in route:
+                print(f"🚦 Traffic duration: {route['duration_in_traffic_text']}")
+        else:
+            print(f"❌ Route Error: {route.get('error', 'Unknown error')}")
+        
+        print("\n" + "-"*60)
+        print("🌤️  WEATHER CONDITIONS")
+        print("-"*60)
+        
+        if weather.get('success'):
+            print(f"✅ Weather API: Success")
+            print(f"🌡️  Temperature: {weather['temperature_value']:.1f}°C")
+            print(f"   Feels like: {weather['feels_like']:.1f}°C")
+            print(f"💧 Humidity: {weather['humidity']}%")
+            print(f"💨 Wind: {weather['wind_speed']} m/s")
+            print(f"☁️  Clouds: {weather['cloudness']}%")
+            print(f"🌈 Conditions: {weather['weather_desc'].title()}")
+            
+            if 'rain_1h' in weather and weather['rain_1h'] > 0:
+                print(f"🌧️  Rain (1h): {weather['rain_1h']} mm")
+            if 'snow_1h' in weather and weather['snow_1h'] > 0:
+                print(f"❄️  Snow (1h): {weather['snow_1h']} mm")
+            
+            if 'location' in weather:
+                loc = weather['location']
+                print(f"📍 Location: {loc.get('city', 'Unknown')}, {loc.get('country', 'Unknown')}")
+        else:
+            print(f"⚠ Weather: {weather.get('api_status', 'fallback')}")
+            if 'error' in weather:
+                print(f"   Error: {weather['error']}")
+            print(f"🌡️  Temperature: {weather.get('temperature_value', 'N/A')}°C")
+            print(f"💧 Humidity: {weather.get('humidity', 'N/A')}%")
+            print(f"💨 Wind: {weather.get('wind_speed', 'N/A')} m/s")
+        
+        print("="*60)
 
-# Helper function to load the service
-def load_pricing_service(filepath='pricing_service.pkl'):
-    """Load the pricing service from file"""
-    with open(filepath, 'rb') as f:
-        service = pickle.load(f)
-    return service
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("🚀 Initializing Pricing Service...")
+    # Initialize the service
+    delivery_service = DeliveryDataService()
     
-    # Initialize the model
-    pricing_model = PricingModel()
+    # Test geocoding first
+    print("\n" + "🌍 TEST: Geocoding Capabilities")
+    print("-" * 40)
     
-    print("\n" + "="*50)
-    print("TEST 1: Address-based delivery (Documents)")
-    print("="*50)
-    customer_input = {
-        'pickup_address': 'ул. Тверская, 7, Москва, Russia',
-        'delivery_address': 'Красная площадь, Москва, Russia',
-        'item_category': 'Documents and small packages',
-        'weight_kg': 1.5,
-        'volume_m3': 0.01,
-        'delivery_urgency': 'standard',
-        'special_requirements': ['Fragile items'],
-        'transport_mode': 'driving'
-    }
+    test_addresses = [
+        "ул. Тверская, 7, Москва, Россия",
+        "Красная площадь, Москва",
+        "Невский проспект, Санкт-Петербург",
+        "улица Ленина, 1, Казань",
+        "London, UK"  # Test non-Russian address
+    ]
     
-    result = pricing_model.predict_price(customer_input)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    for address in test_addresses:
+        print(f"\nTesting: {address}")
+        coords = delivery_service.get_coordinates_from_address(address)
+        if coords:
+            print(f"✅ Coordinates: {coords}")
+        else:
+            print(f"❌ Failed to get coordinates")
     
-    print("\n" + "="*50)
-    print("TEST 2: Coordinate-based delivery (Food)")
-    print("="*50)
-    customer_input2 = {
-        'pickup_lat': 55.7558,
-        'pickup_long': 37.6173,
-        'dropoff_lat': 55.7539,
-        'dropoff_long': 37.6208,
-        'item_category': 'Food and beverages',
-        'weight_kg': 8.0,
-        'delivery_urgency': 'urgent',
-        'transport_mode': 'van'
-    }
+    # Test case 1: Basic route with automatically extracted weather
+    print("\n\n" + "🚀 TEST 1: Basic Delivery Route")
+    print("-" * 40)
     
-    result2 = pricing_model.predict_price(customer_input2)
-    print(json.dumps(result2, indent=2, ensure_ascii=False))
+    origin_address = "ул. Тверская, 7, Москва, Россия"
+    destination_address = "Красная площадь, Москва"
     
-    print("\n" + "="*50)
-    print("TEST 3: Distance-based delivery (Furniture)")
-    print("="*50)
-    customer_input3 = {
-        'distance_kms': 12.5,
-        'item_category': 'Furniture and appliances',
-        'weight_kg': 45.0,
-        'delivery_urgency': 'scheduled',
-        'special_requirements': ['Oversized items'],
-        'transport_mode': 'truck'
-    }
+    result = delivery_service.get_complete_delivery_data(
+        origin=origin_address,
+        destination=destination_address,
+        transport_mode='driving'
+    )
     
-    result3 = pricing_model.predict_price(customer_input3)
-    print(json.dumps(result3, indent=2, ensure_ascii=False))
+    delivery_service.print_delivery_summary(result)
     
-    # Save the service
-    pricing_model.save_to_file()
+    # Test case 2: Different city
+    print("\n\n" + "📍 TEST 2: Different City Delivery")
+    print("-" * 40)
     
-    print("\n" + "="*50)
-    print("✅ All tests completed successfully!")
-    print(f"Service ready to use in your order-service")
+    result2 = delivery_service.get_complete_delivery_data(
+        origin="Невский проспект, Санкт-Петербург",
+        destination="Петропавловская крепость, Санкт-Петербург",
+        transport_mode='walking',
+        weather_location="Санкт-Петербург"  # Optional: specify weather location
+    )
+    
+    delivery_service.print_delivery_summary(result2)
+    
+    # Test case 3: Direct weather by address
+    print("\n\n" + "🌤️  TEST 3: Direct Weather by Address")
+    print("-" * 40)
+    
+    weather_result = delivery_service.get_weather_for_address("улица Ленина, 1, Казань")
+    if weather_result.get('success'):
+        print(f"✅ Weather success for Казань")
+        print(f"🌡️  Temperature: {weather_result['temperature_value']}°C")
+        print(f"🌈 Conditions: {weather_result['weather_desc']}")
+    else:
+        print(f"❌ Weather failed: {weather_result.get('error')}")
+    
+    # Save results to JSON for inspection
+    with open('delivery_data_automatic.json', 'w', encoding='utf-8') as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    
+    print(f"\n✅ Sample data saved to 'delivery_data_automatic.json'")
+    
+    # Show data structure for pricing model
+    print("\n📊 Data structure for pricing model:")
+    if result['route'].get('success') and result['weather'].get('success'):
+        pricing_data = {
+            'distance_kms': result['route']['distance_meters'] / 1000,
+            'duration_minutes': result['route']['duration_seconds'] / 60,
+            'transport_mode': result['route'].get('transport_mode'),
+            'temperature_value': result['weather'].get('temperature_value'),
+            'feels_like': result['weather'].get('feels_like'),
+            'humidity': result['weather'].get('humidity'),
+            'wind_speed': result['weather'].get('wind_speed'),
+            'cloudness': result['weather'].get('cloudness'),
+            'weather_main': result['weather'].get('weather_main'),
+            'weather_desc': result['weather'].get('weather_desc'),
+            'coordinates_extracted': True
+        }
+        
+        print(json.dumps(pricing_data, indent=2, ensure_ascii=False))
