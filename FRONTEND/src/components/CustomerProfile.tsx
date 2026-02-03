@@ -1,4 +1,3 @@
-// CARLOADERSConnecting\src\components\CustomerProfile.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
@@ -14,6 +13,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { User, Building, CreditCard, MapPin, Phone, Mail, Calendar, Settings, Bell, Star, Package, DollarSign, Trash2, Plus, Edit2, Camera, Save, X, Loader2, Eye, CheckCircle } from 'lucide-react';
 import { toast } from "sonner";
 import { useCustomerProfile } from '../src/hooks/useCustomerProfile';
+import { useLanguage } from './LanguageContext';
 
 interface Address {
   id: string;
@@ -29,6 +29,7 @@ interface Address {
 }
 
 export function CustomerProfile() {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState('personal');
   const [isEditingPersonal, setIsEditingPersonal] = useState(false);
   const [isEditingBusiness, setIsEditingBusiness] = useState(false);
@@ -129,13 +130,13 @@ export function CustomerProfile() {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      toast.error('Please select an image file');
+      toast.error(t('customer.profile.invalid_image') || 'Please select an image file');
       return;
     }
 
     // Check file size (limit to 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image size should be less than 5MB');
+      toast.error(t('customer.profile.image_too_large') || 'Image size should be less than 5MB');
       return;
     }
 
@@ -144,11 +145,11 @@ export function CustomerProfile() {
       console.log('📤 Uploading profile picture:', file.name);
       const success = await uploadProfilePicture(file);
       if (success) {
-        toast.success('Profile picture uploaded successfully');
+        toast.success(t('customer.profile.picture_uploaded') || 'Profile picture uploaded successfully');
       }
     } catch (error: any) {
       console.error('❌ Profile picture upload error:', error);
-      toast.error(error.message || 'Failed to upload profile picture');
+      toast.error(error.message || t('customer.common.error') || 'Failed to upload profile picture');
     } finally {
       setIsUploadingPicture(false);
     }
@@ -162,10 +163,10 @@ export function CustomerProfile() {
       });
       if (success) {
         setIsEditingPersonal(false);
-        toast.success('Personal information updated successfully');
+        toast.success(t('customer.profile.personal_info_updated') || 'Personal information updated successfully');
       }
     } catch (error: any) {
-      toast.error(error.message || 'Failed to save personal info');
+      toast.error(error.message || t('customer.common.error') || 'Failed to save personal info');
     }
   };
 
@@ -182,17 +183,17 @@ export function CustomerProfile() {
       const success = await updateProfile(updateData);
       if (success) {
         setIsEditingBusiness(false);
-        toast.success('Business information updated successfully');
+        toast.success(t('customer.profile.business_info_updated') || 'Business information updated successfully');
       }
     } catch (error: any) {
-      toast.error(error.message || 'Failed to save business info');
+      toast.error(error.message || t('customer.common.error') || 'Failed to save business info');
     }
   };
 
   // Handle address operations
   const handleAddAddress = async () => {
     if (!newAddress.label || !newAddress.address || !newAddress.city || !newAddress.state || !newAddress.postalCode) {
-      toast.error('Please fill all required address fields');
+      toast.error(t('customer.profile.fill_all_address_fields') || 'Please fill all required address fields');
       return;
     }
 
@@ -221,7 +222,7 @@ export function CustomerProfile() {
         isActive: true,
         notes: ''
       });
-      toast.success('Address added successfully');
+      toast.success(t('customer.profile.address_added') || 'Address added successfully');
     }
   };
 
@@ -239,19 +240,19 @@ export function CustomerProfile() {
 
     if (success) {
       setEditingAddressId(null);
-      toast.success('Address updated successfully');
+      toast.success(t('customer.profile.address_updated') || 'Address updated successfully');
     }
   };
 
   const handleDeleteAddress = async (id: string) => {
     if (addresses.length <= 1) {
-      toast.error('Cannot delete the only address');
+      toast.error(t('customer.profile.cannot_delete_only_address') || 'Cannot delete the only address');
       return;
     }
 
     const success = await deleteAddress(id);
     if (success) {
-      toast.success('Address deleted successfully');
+      toast.success(t('customer.profile.address_deleted') || 'Address deleted successfully');
     }
   };
 
@@ -261,7 +262,7 @@ export function CustomerProfile() {
 
     const success = await updateAddress(id, { isDefault: true });
     if (success) {
-      toast.success('Default address updated');
+      toast.success(t('customer.profile.default_address_updated') || 'Default address updated');
     }
   };
 
@@ -270,10 +271,13 @@ export function CustomerProfile() {
     try {
       const success = await updateAccountType(accountType);
       if (success) {
-        toast.success(`Account type changed to ${accountType}`);
+        toast.success(
+          t('customer.profile.account_type_changed', { type: accountType }) || 
+          `Account type changed to ${accountType}`
+        );
       }
     } catch (error: any) {
-      toast.error(error.message || 'Failed to update account type');
+      toast.error(error.message || t('customer.common.error') || 'Failed to update account type');
     }
   };
 
@@ -288,7 +292,7 @@ export function CustomerProfile() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        <span className="ml-2 text-gray-600">Loading profile...</span>
+        <span className="ml-2 text-gray-600">{t('customer.common.loading') || 'Loading profile...'}</span>
       </div>
     );
   }
@@ -298,7 +302,7 @@ export function CustomerProfile() {
       <div className="text-center py-12">
         <p className="text-gray-600 mb-4">{error}</p>
         <Button onClick={() => loadProfile()} className="mt-4">
-          Retry Loading
+          {t('customer.profile.retry_loading') || 'Retry Loading'}
         </Button>
       </div>
     );
@@ -315,7 +319,7 @@ export function CustomerProfile() {
     if (userData?.email) {
       return userData.email.split('@')[0];
     }
-    return 'Customer';
+    return t('customer.profile.customer') || 'Customer';
   };
 
   const hasProfileData = userData || customerData;
@@ -324,10 +328,14 @@ export function CustomerProfile() {
     return (
       <div className="text-center py-12">
         <User className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-gray-900">No Profile Found</h3>
-        <p className="text-gray-600 mt-1">Complete onboarding to create your customer profile</p>
+        <h3 className="text-lg font-medium text-gray-900">
+          {t('customer.profile.no_profile') || 'No Profile Found'}
+        </h3>
+        <p className="text-gray-600 mt-1">
+          {t('customer.profile.complete_onboarding') || 'Complete onboarding to create your customer profile'}
+        </p>
         <Button className="mt-4" onClick={() => window.location.href = '/customer-onboarding'}>
-          Go to Onboarding
+          {t('customer.profile.go_to_onboarding') || 'Go to Onboarding'}
         </Button>
       </div>
     );
@@ -394,7 +402,7 @@ export function CustomerProfile() {
               onClick={triggerProfilePicUpload}
               disabled={isUploadingPicture}
               className="absolute bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full cursor-pointer hover:bg-blue-700 transition shadow-lg"
-              title="Change profile picture"
+              title={t('customer.profile.change_picture') || 'Change profile picture'}
             >
               {isUploadingPicture ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -410,7 +418,9 @@ export function CustomerProfile() {
             <div className="flex items-center gap-2 mt-1">
               <Badge variant={isBusinessAccount ? "secondary" : "outline"} 
                 className={isBusinessAccount ? "bg-purple-100 text-purple-800" : "bg-gray-100 text-gray-800"}>
-                {isBusinessAccount ? 'Business Account' : 'Personal Account'}
+                {isBusinessAccount 
+                  ? t('customer.profile.business_account') || 'Business Account'
+                  : t('customer.profile.personal_account') || 'Personal Account'}
               </Badge>
               {combinedData.customer?.membershipLevel && (
                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
@@ -430,7 +440,7 @@ export function CustomerProfile() {
               )}
               {combinedData.customer?.totalOrders !== undefined && (
                 <div className="text-sm text-gray-600">
-                  {totalOrders} orders
+                  {totalOrders} {t('customer.profile.orders') || 'orders'}
                 </div>
               )}
             </div>
@@ -439,11 +449,15 @@ export function CustomerProfile() {
         <div className="flex flex-col items-end gap-2">
           {combinedData.customer?.joinDate && (
             <Badge variant="secondary" className="bg-blue-100 text-blue-800">
-              Member since {new Date(combinedData.customer.joinDate).toLocaleDateString()}
+              {t('customer.profile.member_since', { 
+                date: new Date(combinedData.customer.joinDate).toLocaleDateString() 
+              }) || `Member since ${new Date(combinedData.customer.joinDate).toLocaleDateString()}`}
             </Badge>
           )}
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">Account Type:</span>
+            <span className="text-sm text-gray-600">
+              {t('customer.profile.account_type') || 'Account Type'}:
+            </span>
             <Select
               value={combinedData.customer?.accountType || 'personal'}
               onValueChange={(value: 'personal' | 'business') => handleAccountTypeChange(value)}
@@ -452,8 +466,12 @@ export function CustomerProfile() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="personal">Personal</SelectItem>
-                <SelectItem value="business">Business</SelectItem>
+                <SelectItem value="personal">
+                  {t('customer.profile.tab.personal') || 'Personal'}
+                </SelectItem>
+                <SelectItem value="business">
+                  {t('customer.profile.tab.business') || 'Business'}
+                </SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -462,11 +480,21 @@ export function CustomerProfile() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="personal">Personal</TabsTrigger>
-          <TabsTrigger value="addresses">Addresses</TabsTrigger>
-          <TabsTrigger value="payment">Payment</TabsTrigger>
-          <TabsTrigger value="preferences">Preferences</TabsTrigger>
-          <TabsTrigger value="stats">Statistics</TabsTrigger>
+          <TabsTrigger value="personal">
+            {t('customer.profile.tab.personal') || 'Personal'}
+          </TabsTrigger>
+          <TabsTrigger value="addresses">
+            {t('customer.profile.tab.addresses') || 'Addresses'}
+          </TabsTrigger>
+          <TabsTrigger value="payment">
+            {t('customer.profile.tab.payment') || 'Payment'}
+          </TabsTrigger>
+          <TabsTrigger value="preferences">
+            {t('customer.profile.tab.preferences') || 'Preferences'}
+          </TabsTrigger>
+          <TabsTrigger value="stats">
+            {t('customer.profile.tab.stats') || 'Statistics'}
+          </TabsTrigger>
         </TabsList>
 
         {/* Personal Information Tab */}
@@ -477,7 +505,7 @@ export function CustomerProfile() {
               <div className="flex justify-between items-center">
                 <CardTitle className="flex items-center gap-2">
                   <User className="h-5 w-5" />
-                  Personal Information
+                  {t('customer.profile.personal_info') || 'Personal Information'}
                 </CardTitle>
                 <div className="flex items-center space-x-2">
                   {isEditingPersonal ? (
@@ -495,13 +523,13 @@ export function CustomerProfile() {
                         }}
                       >
                         <X className="h-4 w-4 mr-2" />
-                        Cancel
+                        {t('customer.common.cancel') || 'Cancel'}
                       </Button>
                       <Button
                         onClick={handleSavePersonalInfo}
                       >
                         <Save className="h-4 w-4 mr-2" />
-                        Save
+                        {t('customer.common.save') || 'Save'}
                       </Button>
                     </>
                   ) : (
@@ -510,7 +538,7 @@ export function CustomerProfile() {
                       onClick={() => setIsEditingPersonal(true)}
                     >
                       <Edit2 className="h-4 w-4 mr-2" />
-                      Edit
+                      {t('customer.common.edit') || 'Edit'}
                     </Button>
                   )}
                 </div>
@@ -519,7 +547,9 @@ export function CustomerProfile() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
+                  <Label htmlFor="firstName">
+                    {t('customer.profile.first_name') || 'First Name'}
+                  </Label>
                   <Input
                     id="firstName"
                     value={userData?.firstName || ''}
@@ -528,7 +558,9 @@ export function CustomerProfile() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
+                  <Label htmlFor="lastName">
+                    {t('customer.profile.last_name') || 'Last Name'}
+                  </Label>
                   <Input
                     id="lastName"
                     value={userData?.lastName || ''}
@@ -539,7 +571,9 @@ export function CustomerProfile() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">
+                  {t('customer.profile.email') || 'Email'}
+                </Label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                   <Input
@@ -554,7 +588,9 @@ export function CustomerProfile() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number</Label>
+                  <Label htmlFor="phone">
+                    {t('customer.profile.phone') || 'Phone Number'}
+                  </Label>
                   <div className="relative">
                     <Phone className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                     <Input
@@ -567,7 +603,9 @@ export function CustomerProfile() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="dateOfBirth">Date of Birth</Label>
+                  <Label htmlFor="dateOfBirth">
+                    {t('customer.profile.date_of_birth') || 'Date of Birth'}
+                  </Label>
                   <div className="relative">
                     <Calendar className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
                     <Input
@@ -594,7 +632,7 @@ export function CustomerProfile() {
                 <div className="flex justify-between items-center">
                   <CardTitle className="flex items-center gap-2">
                     <Building className="h-5 w-5" />
-                    Business Information
+                    {t('customer.profile.business_info') || 'Business Information'}
                   </CardTitle>
                   <div className="flex items-center space-x-2">
                     {isEditingBusiness ? (
@@ -613,13 +651,13 @@ export function CustomerProfile() {
                           }}
                         >
                           <X className="h-4 w-4 mr-2" />
-                          Cancel
+                          {t('customer.common.cancel') || 'Cancel'}
                         </Button>
                         <Button
                           onClick={handleSaveBusinessInfo}
                         >
                           <Save className="h-4 w-4 mr-2" />
-                          Save
+                          {t('customer.common.save') || 'Save'}
                         </Button>
                       </>
                     ) : (
@@ -628,7 +666,7 @@ export function CustomerProfile() {
                         onClick={() => setIsEditingBusiness(true)}
                       >
                         <Edit2 className="h-4 w-4 mr-2" />
-                        Edit
+                        {t('customer.common.edit') || 'Edit'}
                       </Button>
                     )}
                   </div>
@@ -636,7 +674,9 @@ export function CustomerProfile() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="businessName">Business Name</Label>
+                  <Label htmlFor="businessName">
+                    {t('customer.profile.business_name') || 'Business Name'}
+                  </Label>
                   <Input
                     id="businessName"
                     value={tempBusinessData.businessName}
@@ -650,7 +690,9 @@ export function CustomerProfile() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="businessType">Business Type</Label>
+                    <Label htmlFor="businessType">
+                      {t('customer.profile.business_type') || 'Business Type'}
+                    </Label>
                     <Select 
                       value={tempBusinessData.businessType}
                       disabled={!isEditingBusiness}
@@ -660,24 +702,44 @@ export function CustomerProfile() {
                       })}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Select business type" />
+                        <SelectValue placeholder={t('customer.profile.select_business_type') || 'Select business type'} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="Retail Store">Retail Store</SelectItem>
-                        <SelectItem value="Restaurant/Food Service">Restaurant/Food Service</SelectItem>
-                        <SelectItem value="E-commerce">E-commerce</SelectItem>
-                        <SelectItem value="Manufacturing">Manufacturing</SelectItem>
-                        <SelectItem value="Healthcare">Healthcare</SelectItem>
-                        <SelectItem value="Education">Education</SelectItem>
-                        <SelectItem value="Construction">Construction</SelectItem>
-                        <SelectItem value="Professional Services">Professional Services</SelectItem>
-                        <SelectItem value="Other">Other</SelectItem>
+                        <SelectItem value="Retail Store">
+                          {t('customer.profile.business_type_retail') || 'Retail Store'}
+                        </SelectItem>
+                        <SelectItem value="Restaurant/Food Service">
+                          {t('customer.profile.business_type_food') || 'Restaurant/Food Service'}
+                        </SelectItem>
+                        <SelectItem value="E-commerce">
+                          {t('customer.profile.business_type_ecommerce') || 'E-commerce'}
+                        </SelectItem>
+                        <SelectItem value="Manufacturing">
+                          {t('customer.profile.business_type_manufacturing') || 'Manufacturing'}
+                        </SelectItem>
+                        <SelectItem value="Healthcare">
+                          {t('customer.profile.business_type_healthcare') || 'Healthcare'}
+                        </SelectItem>
+                        <SelectItem value="Education">
+                          {t('customer.profile.business_type_education') || 'Education'}
+                        </SelectItem>
+                        <SelectItem value="Construction">
+                          {t('customer.profile.business_type_construction') || 'Construction'}
+                        </SelectItem>
+                        <SelectItem value="Professional Services">
+                          {t('customer.profile.business_type_professional') || 'Professional Services'}
+                        </SelectItem>
+                        <SelectItem value="Other">
+                          {t('customer.profile.business_type_other') || 'Other'}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="taxId">Tax ID</Label>
+                    <Label htmlFor="taxId">
+                      {t('customer.profile.tax_id') || 'Tax ID'}
+                    </Label>
                     <Input
                       id="taxId"
                       value={tempBusinessData.taxId}
@@ -691,7 +753,9 @@ export function CustomerProfile() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="businessPhone">Business Phone</Label>
+                  <Label htmlFor="businessPhone">
+                    {t('customer.profile.business_phone') || 'Business Phone'}
+                  </Label>
                   <Input
                     id="businessPhone"
                     value={tempBusinessData.businessPhone}
@@ -714,11 +778,11 @@ export function CustomerProfile() {
               <div className="flex justify-between items-center">
                 <CardTitle className="flex items-center gap-2">
                   <MapPin className="h-5 w-5" />
-                  Saved Addresses
+                  {t('customer.profile.saved_addresses') || 'Saved Addresses'}
                 </CardTitle>
                 <Button onClick={() => setShowAddAddress(true)}>
                   <Plus className="mr-2 h-4 w-4" />
-                  Add Address
+                  {t('customer.profile.add_address') || 'Add Address'}
                 </Button>
               </div>
             </CardHeader>
@@ -727,27 +791,29 @@ export function CustomerProfile() {
               {showAddAddress && (
                 <div className="p-4 border-2 border-dashed border-blue-300 rounded-lg bg-blue-50 mb-6">
                   <div className="flex justify-between items-center mb-4">
-                    <h4 className="font-medium text-blue-900">Add New Address</h4>
+                    <h4 className="font-medium text-blue-900">
+                      {t('customer.profile.add_new_address') || 'Add New Address'}
+                    </h4>
                     <div className="flex space-x-2">
                       <Button
                         size="sm"
                         onClick={handleAddAddress}
                       >
-                        Save
+                        {t('customer.common.save') || 'Save'}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => setShowAddAddress(false)}
                       >
-                        Cancel
+                        {t('customer.common.cancel') || 'Cancel'}
                       </Button>
                     </div>
                   </div>
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="space-y-2">
-                        <Label>Label *</Label>
+                        <Label>{t('customer.profile.label') || 'Label'} *</Label>
                         <Select
                           value={newAddress.label}
                           onValueChange={(value) => setNewAddress({...newAddress, label: value})}
@@ -756,46 +822,54 @@ export function CustomerProfile() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="Home">Home</SelectItem>
-                            <SelectItem value="Office">Office</SelectItem>
-                            <SelectItem value="Business">Business</SelectItem>
-                            <SelectItem value="Other">Other</SelectItem>
+                            <SelectItem value="Home">
+                              {t('customer.profile.label_home') || 'Home'}
+                            </SelectItem>
+                            <SelectItem value="Office">
+                              {t('customer.profile.label_office') || 'Office'}
+                            </SelectItem>
+                            <SelectItem value="Business">
+                              {t('customer.profile.label_business') || 'Business'}
+                            </SelectItem>
+                            <SelectItem value="Other">
+                              {t('customer.profile.label_other') || 'Other'}
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label>Street Address *</Label>
+                        <Label>{t('customer.profile.street_address') || 'Street Address'} *</Label>
                         <Input
                           value={newAddress.address}
                           onChange={(e) => setNewAddress({...newAddress, address: e.target.value})}
-                          placeholder="123 Main St"
+                          placeholder={t('customer.profile.street_address_placeholder') || '123 Main St'}
                         />
                       </div>
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div className="space-y-2">
-                        <Label>City *</Label>
+                        <Label>{t('customer.profile.city') || 'City'} *</Label>
                         <Input
                           value={newAddress.city}
                           onChange={(e) => setNewAddress({...newAddress, city: e.target.value})}
-                          placeholder="New York"
+                          placeholder={t('customer.profile.city_placeholder') || 'New York'}
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>State *</Label>
+                        <Label>{t('customer.profile.state') || 'State'} *</Label>
                         <Input
                           value={newAddress.state}
                           onChange={(e) => setNewAddress({...newAddress, state: e.target.value})}
-                          placeholder="NY"
+                          placeholder={t('customer.profile.state_placeholder') || 'NY'}
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label>ZIP Code *</Label>
+                        <Label>{t('customer.profile.zip_code') || 'ZIP Code'} *</Label>
                         <Input
                           value={newAddress.postalCode}
                           onChange={(e) => setNewAddress({...newAddress, postalCode: e.target.value})}
-                          placeholder="10001"
+                          placeholder={t('customer.profile.zip_code_placeholder') || '10001'}
                         />
                       </div>
                     </div>
@@ -809,17 +883,19 @@ export function CustomerProfile() {
                         className="rounded"
                       />
                       <Label htmlFor="isDefault" className="cursor-pointer">
-                        Set as default address
+                        {t('customer.profile.set_as_default') || 'Set as default address'}
                       </Label>
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="notes">Notes (Optional)</Label>
+                      <Label htmlFor="notes">
+                        {t('customer.profile.notes') || 'Notes'} ({t('customer.profile.optional') || 'Optional'})
+                      </Label>
                       <Textarea
                         id="notes"
                         value={newAddress.notes}
                         onChange={(e) => setNewAddress({...newAddress, notes: e.target.value})}
-                        placeholder="Any special instructions for delivery"
+                        placeholder={t('customer.profile.notes_placeholder') || 'Any special instructions for delivery'}
                         rows={2}
                       />
                     </div>
@@ -832,13 +908,15 @@ export function CustomerProfile() {
                 {addresses.length === 0 ? (
                   <div className="text-center py-8">
                     <MapPin className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                    <p className="text-gray-600">No addresses saved yet</p>
+                    <p className="text-gray-600">
+                      {t('customer.profile.no_addresses') || 'No addresses saved yet'}
+                    </p>
                     <Button 
                       variant="outline" 
                       className="mt-4"
                       onClick={() => setShowAddAddress(true)}
                     >
-                      Add Your First Address
+                      {t('customer.profile.add_first_address') || 'Add Your First Address'}
                     </Button>
                   </div>
                 ) : (
@@ -864,11 +942,13 @@ export function CustomerProfile() {
                             {addr.isDefault && (
                               <Badge variant="secondary" className="bg-green-100 text-green-800">
                                 <CheckCircle className="h-3 w-3 mr-1" />
-                                Default
+                                {t('customer.profile.default_badge') || 'Default'}
                               </Badge>
                             )}
                             {!addr.isActive && (
-                              <Badge variant="outline" className="text-gray-500">Inactive</Badge>
+                              <Badge variant="outline" className="text-gray-500">
+                                {t('customer.profile.inactive_badge') || 'Inactive'}
+                              </Badge>
                             )}
                           </div>
                           
@@ -876,7 +956,7 @@ export function CustomerProfile() {
                             <div className="space-y-3">
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                 <div>
-                                  <Label>Label</Label>
+                                  <Label>{t('customer.profile.label') || 'Label'}</Label>
                                   <Input
                                     value={addr.label}
                                     onChange={(e) => {
@@ -886,7 +966,7 @@ export function CustomerProfile() {
                                   />
                                 </div>
                                 <div>
-                                  <Label>Street Address</Label>
+                                  <Label>{t('customer.profile.street_address') || 'Street Address'}</Label>
                                   <Input
                                     value={addr.address}
                                     onChange={(e) => {
@@ -898,7 +978,7 @@ export function CustomerProfile() {
                               
                               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                 <div>
-                                  <Label>City</Label>
+                                  <Label>{t('customer.profile.city') || 'City'}</Label>
                                   <Input
                                     value={addr.city}
                                     onChange={(e) => {
@@ -907,7 +987,7 @@ export function CustomerProfile() {
                                   />
                                 </div>
                                 <div>
-                                  <Label>State</Label>
+                                  <Label>{t('customer.profile.state') || 'State'}</Label>
                                   <Input
                                     value={addr.state}
                                     onChange={(e) => {
@@ -916,7 +996,7 @@ export function CustomerProfile() {
                                   />
                                 </div>
                                 <div>
-                                  <Label>ZIP Code</Label>
+                                  <Label>{t('customer.profile.zip_code') || 'ZIP Code'}</Label>
                                   <Input
                                     value={addr.postalCode}
                                     onChange={(e) => {
@@ -927,14 +1007,16 @@ export function CustomerProfile() {
                               </div>
 
                               <div className="space-y-2">
-                                <Label htmlFor="edit-notes">Notes (Optional)</Label>
+                                <Label htmlFor="edit-notes">
+                                  {t('customer.profile.notes') || 'Notes'} ({t('customer.profile.optional') || 'Optional'})
+                                </Label>
                                 <Textarea
                                   id="edit-notes"
                                   value={addr.notes || ''}
                                   onChange={(e) => {
                                     const updatedAddr = {...addr, notes: e.target.value};
                                   }}
-                                  placeholder="Any special instructions for delivery"
+                                  placeholder={t('customer.profile.notes_placeholder') || 'Any special instructions for delivery'}
                                   rows={2}
                                 />
                               </div>
@@ -944,14 +1026,14 @@ export function CustomerProfile() {
                                   size="sm"
                                   onClick={() => handleUpdateAddress(addr)}
                                 >
-                                  Save
+                                  {t('customer.common.save') || 'Save'}
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
                                   onClick={() => setEditingAddressId(null)}
                                 >
-                                  Cancel
+                                  {t('customer.common.cancel') || 'Cancel'}
                                 </Button>
                               </div>
                             </div>
@@ -962,7 +1044,9 @@ export function CustomerProfile() {
                                 {addr.city}, {addr.state} {addr.postalCode}, {addr.country}
                               </div>
                               {addr.notes && (
-                                <div className="text-sm text-gray-500 mt-1">Note: {addr.notes}</div>
+                                <div className="text-sm text-gray-500 mt-1">
+                                  {t('customer.profile.note') || 'Note'}: {addr.notes}
+                                </div>
                               )}
                             </>
                           )}
@@ -975,7 +1059,7 @@ export function CustomerProfile() {
                               variant="outline"
                               onClick={() => handleSetDefaultAddress(addr.id)}
                             >
-                              Set Default
+                              {t('customer.profile.set_default_button') || 'Set Default'}
                             </Button>
                           )}
                           {editingAddressId === addr.id ? null : (
@@ -999,18 +1083,22 @@ export function CustomerProfile() {
                                 </AlertDialogTrigger>
                                 <AlertDialogContent>
                                   <AlertDialogHeader>
-                                    <AlertDialogTitle>Delete Address</AlertDialogTitle>
+                                    <AlertDialogTitle>
+                                      {t('customer.profile.delete_address_title') || 'Delete Address'}
+                                    </AlertDialogTitle>
                                     <AlertDialogDescription>
-                                      Are you sure you want to delete this address? This action cannot be undone.
+                                      {t('customer.profile.delete_address_description') || 'Are you sure you want to delete this address? This action cannot be undone.'}
                                     </AlertDialogDescription>
                                   </AlertDialogHeader>
                                   <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogCancel>
+                                      {t('customer.common.cancel') || 'Cancel'}
+                                    </AlertDialogCancel>
                                     <AlertDialogAction 
                                       onClick={() => handleDeleteAddress(addr.id)}
                                       className="bg-red-600 hover:bg-red-700"
                                     >
-                                      Delete
+                                      {t('customer.common.delete') || 'Delete'}
                                     </AlertDialogAction>
                                   </AlertDialogFooter>
                                 </AlertDialogContent>
@@ -1034,25 +1122,29 @@ export function CustomerProfile() {
               <div className="flex justify-between items-center">
                 <CardTitle className="flex items-center gap-2">
                   <CreditCard className="h-5 w-5" />
-                  Payment Methods
+                  {t('customer.profile.payment_methods') || 'Payment Methods'}
                 </CardTitle>
-                <Button onClick={() => toast.info('Payment method setup would open here')}>
+                <Button onClick={() => toast.info(t('customer.profile.payment_setup_info') || 'Payment method setup would open here')}>
                   <Plus className="mr-2 h-4 w-4" />
-                  Add Payment Method
+                  {t('customer.profile.add_payment_method') || 'Add Payment Method'}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               <div className="text-center py-8">
                 <CreditCard className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                <p className="text-gray-600">Payment methods integration would be implemented separately</p>
-                <p className="text-sm text-gray-500 mb-4">This would connect to a payment service like Stripe</p>
+                <p className="text-gray-600">
+                  {t('customer.profile.payment_integration_info') || 'Payment methods integration would be implemented separately'}
+                </p>
+                <p className="text-sm text-gray-500 mb-4">
+                  {t('customer.profile.payment_service_info') || 'This would connect to a payment service like Stripe'}
+                </p>
                 <Button 
                   variant="outline" 
                   className="mt-4"
-                  onClick={() => toast.info('Payment method setup would open here')}
+                  onClick={() => toast.info(t('customer.profile.payment_setup_info') || 'Payment method setup would open here')}
                 >
-                  Connect Payment Method
+                  {t('customer.profile.connect_payment_method') || 'Connect Payment Method'}
                 </Button>
               </div>
             </CardContent>
@@ -1066,14 +1158,18 @@ export function CustomerProfile() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Bell className="h-5 w-5" />
-                  Notification Preferences
+                  {t('customer.profile.notification_preferences') || 'Notification Preferences'}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="email-notifications" className="cursor-pointer">Email Notifications</Label>
-                    <p className="text-sm text-gray-600">Order updates, receipts, and newsletters</p>
+                    <Label htmlFor="email-notifications" className="cursor-pointer">
+                      {t('customer.profile.email_notifications') || 'Email Notifications'}
+                    </Label>
+                    <p className="text-sm text-gray-600">
+                      {t('customer.profile.email_notifications_desc') || 'Order updates, receipts, and newsletters'}
+                    </p>
                   </div>
                   <Switch
                     id="email-notifications"
@@ -1081,9 +1177,9 @@ export function CustomerProfile() {
                     onCheckedChange={async (checked) => {
                       try {
                         await updatePreferences({ notification_email: checked ? 1 : 0 });
-                        toast.success('Email notification preference updated');
+                        toast.success(t('customer.profile.email_preference_updated') || 'Email notification preference updated');
                       } catch (error: any) {
-                        toast.error(error.message || 'Failed to update preference');
+                        toast.error(error.message || t('customer.common.error') || 'Failed to update preference');
                       }
                     }}
                   />
@@ -1091,8 +1187,12 @@ export function CustomerProfile() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="sms-notifications" className="cursor-pointer">SMS Notifications</Label>
-                    <p className="text-sm text-gray-600">Real-time delivery updates</p>
+                    <Label htmlFor="sms-notifications" className="cursor-pointer">
+                      {t('customer.profile.sms_notifications') || 'SMS Notifications'}
+                    </Label>
+                    <p className="text-sm text-gray-600">
+                      {t('customer.profile.sms_notifications_desc') || 'Real-time delivery updates'}
+                    </p>
                   </div>
                   <Switch
                     id="sms-notifications"
@@ -1100,9 +1200,9 @@ export function CustomerProfile() {
                     onCheckedChange={async (checked) => {
                       try {
                         await updatePreferences({ notification_sms: checked ? 1 : 0 });
-                        toast.success('SMS notification preference updated');
+                        toast.success(t('customer.profile.sms_preference_updated') || 'SMS notification preference updated');
                       } catch (error: any) {
-                        toast.error(error.message || 'Failed to update preference');
+                        toast.error(error.message || t('customer.common.error') || 'Failed to update preference');
                       }
                     }}
                   />
@@ -1110,8 +1210,12 @@ export function CustomerProfile() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="push-notifications" className="cursor-pointer">Push Notifications</Label>
-                    <p className="text-sm text-gray-600">In-app notifications</p>
+                    <Label htmlFor="push-notifications" className="cursor-pointer">
+                      {t('customer.profile.push_notifications') || 'Push Notifications'}
+                    </Label>
+                    <p className="text-sm text-gray-600">
+                      {t('customer.profile.push_notifications_desc') || 'In-app notifications'}
+                    </p>
                   </div>
                   <Switch
                     id="push-notifications"
@@ -1119,9 +1223,9 @@ export function CustomerProfile() {
                     onCheckedChange={async (checked) => {
                       try {
                         await updatePreferences({ notification_push: checked ? 1 : 0 });
-                        toast.success('Push notification preference updated');
+                        toast.success(t('customer.profile.push_preference_updated') || 'Push notification preference updated');
                       } catch (error: any) {
-                        toast.error(error.message || 'Failed to update preference');
+                        toast.error(error.message || t('customer.common.error') || 'Failed to update preference');
                       }
                     }}
                   />
@@ -1133,14 +1237,18 @@ export function CustomerProfile() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Settings className="h-5 w-5" />
-                  Privacy Preferences
+                  {t('customer.profile.privacy_preferences') || 'Privacy Preferences'}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="location-data" className="cursor-pointer">Share Location Data</Label>
-                    <p className="text-sm text-gray-600">Help improve route optimization</p>
+                    <Label htmlFor="location-data" className="cursor-pointer">
+                      {t('customer.profile.share_location') || 'Share Location Data'}
+                    </Label>
+                    <p className="text-sm text-gray-600">
+                      {t('customer.profile.share_location_desc') || 'Help improve route optimization'}
+                    </p>
                   </div>
                   <Switch
                     id="location-data"
@@ -1148,9 +1256,9 @@ export function CustomerProfile() {
                     onCheckedChange={async (checked) => {
                       try {
                         await updatePreferences({ share_location_data: checked ? 1 : 0 });
-                        toast.success('Location sharing preference updated');
+                        toast.success(t('customer.profile.location_preference_updated') || 'Location sharing preference updated');
                       } catch (error: any) {
-                        toast.error(error.message || 'Failed to update preference');
+                        toast.error(error.message || t('customer.common.error') || 'Failed to update preference');
                       }
                     }}
                   />
@@ -1158,8 +1266,12 @@ export function CustomerProfile() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="usage-analytics" className="cursor-pointer">Share Usage Analytics</Label>
-                    <p className="text-sm text-gray-600">Help improve the platform</p>
+                    <Label htmlFor="usage-analytics" className="cursor-pointer">
+                      {t('customer.profile.share_analytics') || 'Share Usage Analytics'}
+                    </Label>
+                    <p className="text-sm text-gray-600">
+                      {t('customer.profile.share_analytics_desc') || 'Help improve the platform'}
+                    </p>
                   </div>
                   <Switch
                     id="usage-analytics"
@@ -1167,9 +1279,9 @@ export function CustomerProfile() {
                     onCheckedChange={async (checked) => {
                       try {
                         await updatePreferences({ share_usage_analytics: checked ? 1 : 0 });
-                        toast.success('Usage analytics preference updated');
+                        toast.success(t('customer.profile.analytics_preference_updated') || 'Usage analytics preference updated');
                       } catch (error: any) {
-                        toast.error(error.message || 'Failed to update preference');
+                        toast.error(error.message || t('customer.common.error') || 'Failed to update preference');
                       }
                     }}
                   />
@@ -1177,8 +1289,12 @@ export function CustomerProfile() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <Label htmlFor="marketing-emails" className="cursor-pointer">Marketing Emails</Label>
-                    <p className="text-sm text-gray-600">Promotional offers and tips</p>
+                    <Label htmlFor="marketing-emails" className="cursor-pointer">
+                      {t('customer.profile.marketing_emails') || 'Marketing Emails'}
+                    </Label>
+                    <p className="text-sm text-gray-600">
+                      {t('customer.profile.marketing_emails_desc') || 'Promotional offers and tips'}
+                    </p>
                   </div>
                   <Switch
                     id="marketing-emails"
@@ -1186,9 +1302,9 @@ export function CustomerProfile() {
                     onCheckedChange={async (checked) => {
                       try {
                         await updatePreferences({ marketing_emails: checked ? 1 : 0 });
-                        toast.success('Marketing emails preference updated');
+                        toast.success(t('customer.profile.marketing_preference_updated') || 'Marketing emails preference updated');
                       } catch (error: any) {
-                        toast.error(error.message || 'Failed to update preference');
+                        toast.error(error.message || t('customer.common.error') || 'Failed to update preference');
                       }
                     }}
                   />
@@ -1203,7 +1319,9 @@ export function CustomerProfile() {
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Account Statistics</CardTitle>
+                <CardTitle>
+                  {t('customer.profile.account_stats') || 'Account Statistics'}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
@@ -1211,29 +1329,45 @@ export function CustomerProfile() {
                     <p className="text-3xl text-blue-600 font-bold">
                       {totalOrders}
                     </p>
-                    <p className="text-gray-600">Total Orders</p>
-                    <p className="text-xs text-gray-500 mt-1">Customer Service</p>
+                    <p className="text-gray-600">
+                      {t('customer.profile.total_orders') || 'Total Orders'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('customer.profile.customer_service') || 'Customer Service'}
+                    </p>
                   </div>
                   <div className="text-center p-4 bg-green-50 rounded-lg">
                     <p className="text-3xl text-green-600 font-bold">
                       {formatCurrency(totalSpent)}
                     </p>
-                    <p className="text-gray-600">Total Spent</p>
-                    <p className="text-xs text-gray-500 mt-1">Customer Service</p>
+                    <p className="text-gray-600">
+                      {t('customer.profile.total_spent') || 'Total Spent'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('customer.profile.customer_service') || 'Customer Service'}
+                    </p>
                   </div>
                   <div className="text-center p-4 bg-yellow-50 rounded-lg">
                     <p className="text-3xl text-yellow-600 font-bold">
                       {formatAverageRating(averageRating)}
                     </p>
-                    <p className="text-gray-600">Average Rating</p>
-                    <p className="text-xs text-gray-500 mt-1">Customer Service</p>
+                    <p className="text-gray-600">
+                      {t('customer.profile.average_rating') || 'Average Rating'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('customer.profile.customer_service') || 'Customer Service'}
+                    </p>
                   </div>
                   <div className="text-center p-4 bg-purple-50 rounded-lg">
                     <p className="text-3xl text-purple-600 font-bold">
                       {loyaltyPoints.toLocaleString()}
                     </p>
-                    <p className="text-gray-600">Loyalty Points</p>
-                    <p className="text-xs text-gray-500 mt-1">Customer Service</p>
+                    <p className="text-gray-600">
+                      {t('customer.profile.loyalty_points') || 'Loyalty Points'}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {t('customer.profile.customer_service') || 'Customer Service'}
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -1241,7 +1375,9 @@ export function CustomerProfile() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Account Benefits</CardTitle>
+                <CardTitle>
+                  {t('customer.profile.account_benefits') || 'Account Benefits'}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
@@ -1249,7 +1385,9 @@ export function CustomerProfile() {
                     <div className="flex items-center space-x-3">
                       <Package className="h-5 w-5 text-blue-600" />
                       <div>
-                        <p className="font-medium">Membership Level</p>
+                        <p className="font-medium">
+                          {t('customer.profile.membership_level') || 'Membership Level'}
+                        </p>
                         <p className="text-sm text-gray-600">
                           {combinedData.customer?.membershipLevel || 'Standard'}
                         </p>
@@ -1268,13 +1406,17 @@ export function CustomerProfile() {
                     <div className="flex items-center space-x-3">
                       <Star className="h-5 w-5 text-yellow-600" />
                       <div>
-                        <p className="font-medium">Account Status</p>
+                        <p className="font-medium">
+                          {t('customer.profile.account_status') || 'Account Status'}
+                        </p>
                         <p className="text-sm text-gray-600">
-                          Active since {
-                            combinedData.customer?.joinDate 
+                          {t('customer.profile.active_since', { 
+                            date: combinedData.customer?.joinDate 
                               ? new Date(combinedData.customer.joinDate).toLocaleDateString() 
                               : 'Recently'
-                          }
+                          }) || `Active since ${combinedData.customer?.joinDate 
+                            ? new Date(combinedData.customer.joinDate).toLocaleDateString() 
+                            : 'Recently'}`}
                         </p>
                       </div>
                     </div>
@@ -1291,14 +1433,16 @@ export function CustomerProfile() {
                     <div className="flex items-center space-x-3">
                       <DollarSign className="h-5 w-5 text-green-600" />
                       <div>
-                        <p className="font-medium">Address Management</p>
+                        <p className="font-medium">
+                          {t('customer.profile.address_management') || 'Address Management'}
+                        </p>
                         <p className="text-sm text-gray-600">
-                          {addresses.length} saved address{addresses.length !== 1 ? 'es' : ''}
+                          {addresses.length} {t('customer.profile.saved_addresses_count') || 'saved address(es)'}
                         </p>
                       </div>
                     </div>
                     <Badge className="bg-blue-100 text-blue-800">
-                      {addresses.length} Address{addresses.length !== 1 ? 'es' : ''}
+                      {addresses.length} {t('customer.profile.address_count') || 'Address(es)'}
                     </Badge>
                   </div>
 
@@ -1306,11 +1450,13 @@ export function CustomerProfile() {
                     <div className="flex items-center space-x-3">
                       <User className="h-5 w-5 text-gray-600" />
                       <div>
-                        <p className="font-medium">Account Type</p>
+                        <p className="font-medium">
+                          {t('customer.profile.account_type_stat') || 'Account Type'}
+                        </p>
                         <p className="text-sm text-gray-600">
                           {isBusinessAccount 
-                            ? 'Business Account with full features' 
-                            : 'Personal Account'}
+                            ? t('customer.profile.business_account_full') || 'Business Account with full features' 
+                            : t('customer.profile.personal_account_desc') || 'Personal Account'}
                         </p>
                       </div>
                     </div>
@@ -1319,7 +1465,9 @@ export function CustomerProfile() {
                         ? 'bg-purple-100 text-purple-800' 
                         : 'bg-gray-100 text-gray-800'
                     }>
-                      {isBusinessAccount ? 'Business' : 'Personal'}
+                      {isBusinessAccount 
+                        ? t('customer.profile.business') || 'Business'
+                        : t('customer.profile.personal') || 'Personal'}
                     </Badge>
                   </div>
                 </div>
