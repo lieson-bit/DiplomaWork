@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "prediction": {
+    "price_rub": 193.13711547851562,
+    "price_usd": 2.145967949761285,
+    "confidence_interval": {
+      "lower_bound_rub": 164.1665481567383,
+      "upper_bound_rub": 222.10768280029296,
+      "percentage": 15.0
+    }
+  },
+  "route_data": {
+    "origin": "ул. Тверская, 7, Москва",
+    "destination": "Красная площадь, Москва",
+    "distance_km": 3.551,
+    "distance_text": "3.6 km",
+    "duration_minutes": 9.833333333333334,
+    "duration_text": "9 mins",
+    "transport_mode": "driving"
+  },
+  "weather_data": {
+    "temperature": -17.02,
+    "feels_like": -24.02,
+    "humidity": 90,
+    "wind_speed": 3.34,
+    "cloudness": 98,
+    "conditions": "overcast clouds"
+  },
+  "timestamp": "2026-02-03T14:03:34.756910",
+  "model_info": {
+    "model_type": "XGBoost",
+    "feature_count": 50,
+    "r2_score": 0.8117,
+    "confidence_level": "15.0%"
+  }
+}

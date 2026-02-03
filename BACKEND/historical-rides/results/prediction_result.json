@@ -1,0 +1,35 @@
+{
+  "input_data": {
+    "distance_kms": 3.5,
+    "total_time_minutes": 9.57,
+    "transport_mode": "driving",
+    "temperature_value": -18.7,
+    "feels_like": -24.6,
+    "humidity": 100,
+    "wind_speed": 2.19,
+    "cloudness": 73,
+    "weather_main": "Broken Clouds",
+    "city": "Moscow",
+    "country": "RU"
+  },
+  "predicted_price_rub": 242.3524932861328,
+  "predicted_price_usd": 2.6928054809570314,
+  "model_used": "XGBoost (настроенная)",
+  "model_name": "XGBoost",
+  "scaling_type": "No Scaling",
+  "model_performance": {
+    "test_r2": 0.8116933600117718,
+    "test_rmse": 109.60266112492295,
+    "test_mae": 60.89649042690501
+  },
+  "prediction_timestamp": "2026-02-03T12:52:59.261486",
+  "confidence_interval": {
+    "lower_bound": 205.9996192932129,
+    "upper_bound": 278.7053672790527,
+    "percentage": 15.0
+  },
+  "comparison_with_average": {
+    "average_price": 303.36028023598817,
+    "difference_percentage": -20.11067068582497
+  }
+}

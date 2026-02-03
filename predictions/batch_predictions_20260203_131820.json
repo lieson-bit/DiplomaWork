@@ -1,0 +1,40 @@
+[
+  {
+    "trip_id": 1,
+    "predicted_price_rub": 187.8124542236328,
+    "predicted_price_usd": 2.0868050469292534,
+    "confidence_interval": {
+      "lower_bound_rub": 159.64058609008788,
+      "upper_bound_rub": 215.98432235717775,
+      "percentage": 15.0
+    },
+    "input_parameters": {
+      "distance_kms": 5.2,
+      "total_time_minutes": 15.3,
+      "transport_mode": "driving",
+      "temperature_value": 10.5,
+      "weather_main": "Clear",
+      "city": "Saint Petersburg",
+      "hour": 18
+    }
+  },
+  {
+    "trip_id": 2,
+    "predicted_price_rub": 204.8905029296875,
+    "predicted_price_usd": 2.2765611436631943,
+    "confidence_interval": {
+      "lower_bound_rub": 174.15692749023438,
+      "upper_bound_rub": 235.62407836914062,
+      "percentage": 15.0
+    },
+    "input_parameters": {
+      "distance_kms": 2.1,
+      "total_time_minutes": 8.2,
+      "transport_mode": "driving",
+      "temperature_value": 5.0,
+      "weather_main": "Rain",
+      "city": "Moscow",
+      "hour": 9
+    }
+  }
+]

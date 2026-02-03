@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "prediction": {
+    "price_rub": 196.55340576171875,
+    "price_usd": 2.183926730685764,
+    "confidence_interval": {
+      "lower_bound_rub": 167.07039489746094,
+      "upper_bound_rub": 226.03641662597656,
+      "percentage": 15.0
+    }
+  },
+  "route_data": {
+    "origin": "улица Ленина, 1, Казань",
+    "destination": "Казанский Кремль, Казань",
+    "distance_km": 15.339,
+    "distance_text": "15.3 km",
+    "duration_minutes": 30.183333333333334,
+    "duration_text": "30 mins",
+    "transport_mode": "driving"
+  },
+  "weather_data": {
+    "temperature": -18.04,
+    "feels_like": -21.95,
+    "humidity": 86,
+    "wind_speed": 1.36,
+    "cloudness": 73,
+    "conditions": "broken clouds"
+  },
+  "timestamp": "2026-02-03T14:03:40.426630",
+  "model_info": {
+    "model_type": "XGBoost",
+    "feature_count": 50,
+    "r2_score": 0.8117,
+    "confidence_level": "15.0%"
+  }
+}

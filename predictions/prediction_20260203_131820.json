@@ -1,0 +1,44 @@
+{
+  "predicted_price_rub": 193.13711547851562,
+  "predicted_price_usd": 2.145967949761285,
+  "confidence_interval": {
+    "lower_bound_rub": 164.1665481567383,
+    "upper_bound_rub": 222.10768280029296,
+    "percentage": 15.0
+  },
+  "input_parameters": {
+    "distance_kms": 3.5,
+    "total_time_minutes": 9.57,
+    "transport_mode": "driving",
+    "temperature_value": -18.7,
+    "feels_like": -24.6,
+    "humidity": 100,
+    "wind_speed": 2.19,
+    "cloudness": 73,
+    "weather_main": "Broken Clouds",
+    "city": "Moscow",
+    "country": "RU",
+    "hour": 14,
+    "date": "2024-01-15"
+  },
+  "prediction_timestamp": "2026-02-03T13:18:20.708927",
+  "exchange_rate_usd_rub": 90.0,
+  "model_info": {
+    "loaded_at": "2026-02-03T13:18:20.644052",
+    "model_type": "Pipeline",
+    "num_features": 50,
+    "features": [
+      "distance_kms",
+      "trip_time_minutes",
+      "total_time_minutes",
+      "speed_kmh",
+      "trip_type_uberblack",
+      "trip_type_uberx",
+      "surge_multiplier",
+      "trip_type_uberelka",
+      "trip_start_time_year",
+      "weather_partly_cloudy_night",
+      "..."
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "prediction": {
+    "price_rub": 196.55340576171875,
+    "price_usd": 2.183926730685764,
+    "confidence_interval": {
+      "lower_bound_rub": 167.07039489746094,
+      "upper_bound_rub": 226.03641662597656,
+      "percentage": 15.0
+    }
+  },
+  "route_data": {
+    "origin": "Невский проспект, Санкт-Петербург",
+    "destination": "Петропавловская крепость, Санкт-Петербург",
+    "distance_km": 3.803,
+    "distance_text": "3.8 km",
+    "duration_minutes": 53.11666666666667,
+    "duration_text": "53 mins",
+    "transport_mode": "walking"
+  },
+  "weather_data": {
+    "temperature": -10.54,
+    "feels_like": -17.54,
+    "humidity": 83,
+    "wind_speed": 6.0,
+    "cloudness": 40,
+    "conditions": "scattered clouds"
+  },
+  "timestamp": "2026-02-03T14:03:37.372847",
+  "model_info": {
+    "model_type": "XGBoost",
+    "feature_count": 50,
+    "r2_score": 0.8117,
+    "confidence_level": "15.0%"
+  }
+}

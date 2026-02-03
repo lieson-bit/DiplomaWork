@@ -13,37 +13,15 @@
     "duration_in_traffic_text": "9 mins"
   },
   "weather": {
-    "success": true,
-    "temperature_value": -19.52,
-    "feels_like": -25.58,
-    "temp_min": -20.81,
-    "temp_max": -19.33,
-    "pressure": 1015,
-    "humidity": 100,
-    "wind_speed": 2.19,
-    "wind_deg": 263,
-    "wind_gust": 5.33,
-    "cloudness": 73,
-    "weather_main": "Clouds",
-    "weather_desc": "broken clouds",
-    "weather_icon": "04n",
-    "visibility": 4716,
-    "timestamp": 1770071099,
-    "location": {
-      "city": "Moscow",
-      "country": "RU",
-      "lat": 55.764,
-      "lon": 37.6087
-    },
-    "sunrise": 1770096015,
-    "sunset": 1770127584,
-    "api_status": "success"
+    "success": false,
+    "error": "Your account is temporary blocked due to exceeding of requests limitation of your subscription type. Please choose the proper subscription https://openweathermap.org/price",
+    "api_status": "weather_api_error"
   },
   "metadata": {
     "origin": "ул. Тверская, 7, Москва, Россия",
     "destination": "Красная площадь, Москва",
     "transport_mode": "driving",
-    "timestamp": 1770071101.1063347,
+    "timestamp": 1770111253.8847575,
     "weather_location": "ул. Тверская, 7, Москва, Россия",
     "coordinates_extracted": true
   }
