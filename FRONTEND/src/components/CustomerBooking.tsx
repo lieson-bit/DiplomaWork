@@ -8,6 +8,7 @@ import { Checkbox } from "./ui/checkbox";
 import { MapPin, Package, Weight, Ruler, Clock, DollarSign, Truck, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import debounce from 'lodash/debounce';
+import { useLanguage } from './LanguageContext';
 
 interface BookingForm {
   pickupAddress: string;
@@ -37,6 +38,7 @@ interface PriceResponse {
 }
 
 export function CustomerBooking() {
+  const { t } = useLanguage();
   const [formData, setFormData] = useState<BookingForm>({
     pickupAddress: '',
     deliveryAddress: '',
@@ -62,15 +64,15 @@ export function CustomerBooking() {
       .catch(() => {
         // Fallback categories
         setCategories([
-          { value: 'documents', label: 'Documents & Small Packages' },
-          { value: 'furniture', label: 'Furniture & Appliances' },
-          { value: 'construction', label: 'Construction Materials' },
-          { value: 'food', label: 'Food & Beverages' },
-          { value: 'electronics', label: 'Electronics & Fragile Items' },
-          { value: 'other', label: 'Other' }
+          { value: 'documents', label: t('customer.booking.category_documents') || 'Documents & Small Packages' },
+          { value: 'furniture', label: t('customer.booking.category_furniture') || 'Furniture & Appliances' },
+          { value: 'construction', label: t('customer.booking.category_construction') || 'Construction Materials' },
+          { value: 'food', label: t('customer.booking.category_food') || 'Food & Beverages' },
+          { value: 'electronics', label: t('customer.booking.category_electronics') || 'Electronics & Fragile Items' },
+          { value: 'other', label: t('customer.booking.category_other') || 'Other' }
         ]);
       });
-  }, []);
+  }, [t]);
 
   // Функция для расчета стоимости
   const calculatePrice = useCallback(
@@ -112,21 +114,21 @@ export function CustomerBooking() {
         
         if (data.success) {
           setPriceData(data);
-          toast.success('Price calculated successfully!');
+          toast.success(t('customer.booking.price_calculated_success') || 'Price calculated successfully!');
         } else {
           setPriceData(null);
-          toast.error(data.error || 'Failed to calculate price');
+          toast.error(data.error || t('customer.booking.price_calculation_failed') || 'Failed to calculate price');
         }
         
       } catch (error: any) {
         console.error('Error calculating price:', error);
         setPriceData(null);
-        toast.error('Failed to connect to pricing service');
+        toast.error(t('customer.booking.service_connection_failed') || 'Failed to connect to pricing service');
       } finally {
         setLoading(false);
       }
     }, 1000), // Дебаунс 1 секунда
-    []
+    [t]
   );
 
   // Обновляем расчет при изменении данных формы
@@ -140,12 +142,15 @@ export function CustomerBooking() {
 
   const handleSubmit = () => {
     if (!priceData) {
-      toast.error('Please fill all required fields');
+      toast.error(t('customer.booking.fill_all_fields') || 'Please fill all required fields');
       return;
     }
     
     // Здесь можно добавить логику создания заказа
-    toast.success('Ready to book! Estimated price: $' + priceData.price_usd.toFixed(2));
+    toast.success(
+      t('customer.booking.ready_to_book', { price: priceData.price_usd.toFixed(2) }) || 
+      `Ready to book! Estimated price: $${priceData.price_usd.toFixed(2)}`
+    );
   };
 
   // Компонент отображения цены
@@ -154,7 +159,9 @@ export function CustomerBooking() {
       return (
         <div className="flex items-center justify-center space-x-2 p-4 bg-blue-50 rounded-lg">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
-          <span className="text-blue-600">Calculating price...</span>
+          <span className="text-blue-600">
+            {t('customer.booking.calculating') || 'Calculating price...'}
+          </span>
         </div>
       );
     }
@@ -164,7 +171,9 @@ export function CustomerBooking() {
         <div className="space-y-3 p-4 bg-gradient-to-r from-green-50 to-blue-50 rounded-lg border border-green-200">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-sm font-medium text-gray-600">Estimated Price</div>
+              <div className="text-sm font-medium text-gray-600">
+                {t('customer.booking.estimated_price') || 'Estimated Price'}
+              </div>
               <div className="text-3xl font-bold text-green-700">
                 ${priceData.price_usd.toFixed(2)}
               </div>
@@ -185,21 +194,28 @@ export function CustomerBooking() {
               <MapPin className="h-4 w-4 text-gray-400" />
               <div>
                 <div className="font-medium">{priceData.distance_km.toFixed(1)} km</div>
-                <div className="text-gray-500">Distance</div>
+                <div className="text-gray-500">
+                  {t('customer.booking.distance') || 'Distance'}
+                </div>
               </div>
             </div>
             <div className="flex items-center space-x-2">
               <Clock className="h-4 w-4 text-gray-400" />
               <div>
                 <div className="font-medium">{priceData.duration_text}</div>
-                <div className="text-gray-500">Est. time</div>
+                <div className="text-gray-500">
+                  {t('customer.booking.estimated_time') || 'Est. time'}
+                </div>
               </div>
             </div>
           </div>
           
           <div className="pt-3 border-t border-gray-200">
             <div className="text-xs text-gray-500">
-              Confidence interval: ${(priceData.confidence_interval_low / 90).toFixed(2)} - ${(priceData.confidence_interval_high / 90).toFixed(2)}
+              {t('customer.booking.confidence_interval', {
+                low: (priceData.confidence_interval_low / 90).toFixed(2),
+                high: (priceData.confidence_interval_high / 90).toFixed(2)
+              }) || `Confidence interval: $${(priceData.confidence_interval_low / 90).toFixed(2)} - $${(priceData.confidence_interval_high / 90).toFixed(2)}`}
             </div>
           </div>
         </div>
@@ -208,7 +224,9 @@ export function CustomerBooking() {
 
     return (
       <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
-        <div className="text-gray-500">Fill in all fields to see price estimate</div>
+        <div className="text-gray-500">
+          {t('customer.booking.fill_all_fields_to_see_price') || 'Fill in all fields to see price estimate'}
+        </div>
       </div>
     );
   };
@@ -218,9 +236,11 @@ export function CustomerBooking() {
       <CardHeader>
         <CardTitle className="flex items-center">
           <Package className="mr-2 h-6 w-6" />
-          Delivery Price Calculator
+          {t('customer.booking.title') || 'Delivery Price Calculator'}
         </CardTitle>
-        <p className="text-gray-600">Get instant price estimates for your delivery</p>
+        <p className="text-gray-600">
+          {t('customer.booking.subtitle') || 'Get instant price estimates for your delivery'}
+        </p>
       </CardHeader>
       
       <CardContent className="space-y-6">
@@ -232,11 +252,11 @@ export function CustomerBooking() {
           <div className="space-y-2">
             <Label htmlFor="pickup" className="flex items-center">
               <MapPin className="h-4 w-4 mr-1" />
-              Pickup Address *
+              {t('customer.booking.pickup_address') || 'Pickup Address'} *
             </Label>
             <Input
               id="pickup"
-              placeholder="Enter pickup address"
+              placeholder={t('customer.booking.pickup_address_placeholder') || 'Enter pickup address'}
               value={formData.pickupAddress}
               onChange={(e) => handleInputChange('pickupAddress', e.target.value)}
               className="h-10"
@@ -245,11 +265,11 @@ export function CustomerBooking() {
           <div className="space-y-2">
             <Label htmlFor="delivery" className="flex items-center">
               <MapPin className="h-4 w-4 mr-1" />
-              Delivery Address *
+              {t('customer.booking.delivery_address') || 'Delivery Address'} *
             </Label>
             <Input
               id="delivery"
-              placeholder="Enter delivery address"
+              placeholder={t('customer.booking.delivery_address_placeholder') || 'Enter delivery address'}
               value={formData.deliveryAddress}
               onChange={(e) => handleInputChange('deliveryAddress', e.target.value)}
               className="h-10"
@@ -259,13 +279,15 @@ export function CustomerBooking() {
 
         {/* Category */}
         <div className="space-y-2">
-          <Label htmlFor="category">Item Category *</Label>
+          <Label htmlFor="category">
+            {t('customer.booking.item_category') || 'Item Category'} *
+          </Label>
           <Select 
             value={formData.category} 
             onValueChange={(value) => handleInputChange('category', value)}
           >
             <SelectTrigger>
-              <SelectValue placeholder="Select category" />
+              <SelectValue placeholder={t('customer.booking.select_category') || 'Select category'} />
             </SelectTrigger>
             <SelectContent>
               {categories.map((cat) => (
@@ -282,14 +304,14 @@ export function CustomerBooking() {
           <div className="space-y-2">
             <Label htmlFor="weight" className="flex items-center">
               <Weight className="h-4 w-4 mr-1" />
-              Weight (kg) *
+              {t('customer.booking.weight') || 'Weight (kg)'} *
             </Label>
             <Input
               id="weight"
               type="number"
               min="0.1"
               step="0.1"
-              placeholder="e.g., 5.5"
+              placeholder={t('customer.booking.weight_placeholder') || 'e.g., 5.5'}
               value={formData.weight}
               onChange={(e) => handleInputChange('weight', e.target.value)}
               className="h-10"
@@ -298,14 +320,14 @@ export function CustomerBooking() {
           <div className="space-y-2">
             <Label htmlFor="volume" className="flex items-center">
               <Ruler className="h-4 w-4 mr-1" />
-              Volume (m³) *
+              {t('customer.booking.volume') || 'Volume (m³)'} *
             </Label>
             <Input
               id="volume"
               type="number"
               min="0.1"
               step="0.1"
-              placeholder="e.g., 0.5"
+              placeholder={t('customer.booking.volume_placeholder') || 'e.g., 0.5'}
               value={formData.volume}
               onChange={(e) => handleInputChange('volume', e.target.value)}
               className="h-10"
@@ -315,7 +337,9 @@ export function CustomerBooking() {
 
         {/* Urgency */}
         <div className="space-y-2">
-          <Label htmlFor="urgency">Delivery Urgency</Label>
+          <Label htmlFor="urgency">
+            {t('customer.booking.urgency') || 'Delivery Urgency'}
+          </Label>
           <Select 
             value={formData.urgency} 
             onValueChange={(value) => handleInputChange('urgency', value)}
@@ -324,16 +348,22 @@ export function CustomerBooking() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="standard">Standard (same day)</SelectItem>
-              <SelectItem value="urgent">Urgent (within 2 hours)</SelectItem>
-              <SelectItem value="scheduled">Scheduled (next day)</SelectItem>
+              <SelectItem value="standard">
+                {t('customer.booking.urgency_standard') || 'Standard (same day)'}
+              </SelectItem>
+              <SelectItem value="urgent">
+                {t('customer.booking.urgency_urgent') || 'Urgent (within 2 hours)'}
+              </SelectItem>
+              <SelectItem value="scheduled">
+                {t('customer.booking.urgency_scheduled') || 'Scheduled (next day)'}
+              </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
         {/* Special Requirements */}
         <div className="space-y-3">
-          <Label>Special Requirements</Label>
+          <Label>{t('customer.booking.special_requirements') || 'Special Requirements'}</Label>
           <div className="grid grid-cols-2 gap-3">
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -341,7 +371,9 @@ export function CustomerBooking() {
                 checked={formData.fragile}
                 onCheckedChange={(checked) => handleInputChange('fragile', checked === true)}
               />
-              <Label htmlFor="fragile" className="text-sm cursor-pointer">Fragile items</Label>
+              <Label htmlFor="fragile" className="text-sm cursor-pointer">
+                {t('customer.booking.fragile') || 'Fragile items'}
+              </Label>
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -349,7 +381,9 @@ export function CustomerBooking() {
                 checked={formData.refrigerated}
                 onCheckedChange={(checked) => handleInputChange('refrigerated', checked === true)}
               />
-              <Label htmlFor="refrigerated" className="text-sm cursor-pointer">Refrigerated</Label>
+              <Label htmlFor="refrigerated" className="text-sm cursor-pointer">
+                {t('customer.booking.refrigerated') || 'Refrigerated'}
+              </Label>
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -357,7 +391,9 @@ export function CustomerBooking() {
                 checked={formData.oversized}
                 onCheckedChange={(checked) => handleInputChange('oversized', checked === true)}
               />
-              <Label htmlFor="oversized" className="text-sm cursor-pointer">Oversized</Label>
+              <Label htmlFor="oversized" className="text-sm cursor-pointer">
+                {t('customer.booking.oversized') || 'Oversized'}
+              </Label>
             </div>
             <div className="flex items-center space-x-2">
               <Checkbox
@@ -365,7 +401,9 @@ export function CustomerBooking() {
                 checked={formData.hazardous}
                 onCheckedChange={(checked) => handleInputChange('hazardous', checked === true)}
               />
-              <Label htmlFor="hazardous" className="text-sm cursor-pointer">Hazardous</Label>
+              <Label htmlFor="hazardous" className="text-sm cursor-pointer">
+                {t('customer.booking.hazardous') || 'Hazardous'}
+              </Label>
             </div>
           </div>
         </div>
@@ -379,21 +417,23 @@ export function CustomerBooking() {
           {loading ? (
             <>
               <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              Calculating...
+              {t('customer.booking.calculating') || 'Calculating...'}
             </>
           ) : priceData ? (
             <>
               <DollarSign className="mr-2 h-5 w-5" />
-              Book Delivery for ${priceData.price_usd.toFixed(2)}
+              {t('customer.booking.book_delivery', { amount: priceData.price_usd.toFixed(2) }) || `Book Delivery for $${priceData.price_usd.toFixed(2)}`}
             </>
           ) : (
-            'Fill all fields to see price'
+            t('customer.booking.fill_all_fields_to_book') || 'Fill all fields to see price'
           )}
         </Button>
 
         <div className="text-center text-sm text-gray-500 pt-4">
-          <p>Price updates automatically as you fill the form</p>
-          <p className="text-xs mt-1">Using AI-powered delivery cost prediction with 81% accuracy</p>
+          <p>{t('customer.booking.price_updates_automatically') || 'Price updates automatically as you fill the form'}</p>
+          <p className="text-xs mt-1">
+            {t('customer.booking.ai_powered_prediction') || 'Using AI-powered delivery cost prediction with 81% accuracy'}
+          </p>
         </div>
       </CardContent>
     </Card>

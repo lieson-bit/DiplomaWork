@@ -1,0 +1,2173 @@
+Project Path: src
+
+Source Tree:
+
+```txt
+src
+├── components
+│   ├── LandingPage.tsx
+│   ├── README.md
+│   ├── index.ts
+│   └── landing
+│       ├── CTASection.tsx
+│       ├── FeaturesSection.tsx
+│       ├── Footer.tsx
+│       ├── Header.tsx
+│       ├── HeroSection.tsx
+│       ├── HowItWorksSection.tsx
+│       ├── StatsGrid.tsx
+│       └── index.ts
+├── config
+│   └── environment.ts
+├── hooks
+│   ├── useCustomerProfile.ts
+│   └── useDriverProfile.ts
+├── lib
+│   ├── api.ts
+│   ├── auth-utils.ts
+│   └── seed-data.ts
+├── shared
+│   ├── constants
+│   │   └── app.ts
+│   ├── hooks
+│   │   ├── index.ts
+│   │   ├── useAuth.ts
+│   │   └── useNotifications.ts
+│   └── utils
+│       ├── format.ts
+│       ├── index.ts
+│       └── validation.ts
+└── types
+    ├── index.ts
+    ├── react.d.ts
+    └── sonner.d.ts
+
+```
+
+`components\LandingPage.tsx`:
+
+```tsx
+import React from 'react';
+import { Header } from './landing/Header';
+import { HeroSection } from './landing/HeroSection';
+import { FeaturesSection } from './landing/FeaturesSection';
+import { HowItWorksSection } from './landing/HowItWorksSection';
+import { CTASection } from './landing/CTASection';
+import { Footer } from './landing/Footer';
+
+interface LandingPageProps {
+  onGetStarted: () => void;
+}
+
+export function LandingPage({ onGetStarted }: LandingPageProps) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+      <Header onGetStarted={onGetStarted} />
+      <HeroSection onGetStarted={onGetStarted} />
+      <FeaturesSection />
+      <HowItWorksSection />
+      <CTASection onGetStarted={onGetStarted} />
+      <Footer />
+    </div>
+  );
+}
+
+```
+
+`components\README.md`:
+
+```md
+# DeliveryMatch Components
+
+This directory contains all the main application components for the DeliveryMatch platform.
+
+## Structure
+
+### Landing Page Components (`/landing`)
+
+The landing page is broken down into modular, reusable components:
+
+- **Header.tsx** - Top navigation bar with logo, language selector, and CTA button
+- **HeroSection.tsx** - Main hero section with title, CTA buttons, and hero image
+- **StatsGrid.tsx** - Statistics display (drivers, deliveries, cities, rating)
+- **FeaturesSection.tsx** - Feature cards showcasing platform capabilities
+- **HowItWorksSection.tsx** - Step-by-step guide for customers and drivers
+- **CTASection.tsx** - Call-to-action section encouraging sign-ups
+- **Footer.tsx** - Footer with branding and additional information
+
+### Main Component
+
+- **LandingPage.tsx** - Main landing page component that composes all landing sections
+
+## Usage
+
+Import components from this directory:
+
+```tsx
+import { LandingPage } from './src/components/LandingPage';
+// or
+import { Header, HeroSection, Footer } from './src/components/landing';
+```
+
+## Design Principles
+
+1. **Modularity** - Each component is self-contained and reusable
+2. **Composition** - Larger components are built from smaller ones
+3. **Separation of Concerns** - Each component has a single, clear responsibility
+4. **Type Safety** - All components use TypeScript for type checking
+5. **Internationalization** - All text content uses the translation system
+
+## Component Guidelines
+
+- Keep components focused and single-purpose
+- Use props for customization and data passing
+- Leverage the shared UI components from `/components/ui`
+- Follow the existing code style and patterns
+- Use lucide-react for icons
+- Implement responsive design with Tailwind CSS
+
+```
+
+`components\index.ts`:
+
+```ts
+export { LandingPage } from './LandingPage';
+export * from './landing';
+
+```
+
+`components\landing\CTASection.tsx`:
+
+```tsx
+import React from 'react';
+import { Button } from "../../../components/ui/button";
+import { useLanguage } from '../../../components/LanguageContext';
+
+interface CTASectionProps {
+  onGetStarted: () => void;
+}
+
+export function CTASection({ onGetStarted }: CTASectionProps) {
+  const { t } = useLanguage();
+
+  return (
+    <section className="py-20 bg-blue-600">
+      <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
+        <h2 className="text-3xl text-white mb-4">{t('landing.cta.title')}</h2>
+        <p className="text-xl text-blue-100 mb-8">
+          {t('landing.cta.subtitle')}
+        </p>
+        <Button 
+          onClick={onGetStarted}
+          className="bg-white text-blue-600 hover:bg-gray-50 h-12 px-8 text-lg"
+        >
+          {t('landing.cta.button')}
+        </Button>
+      </div>
+    </section>
+  );
+}
+```
+
+`components\landing\FeaturesSection.tsx`:
+
+```tsx
+import React from 'react';
+import { Card, CardContent } from "../../../components/ui/card";
+import { Truck, Package, MapPin, Shield } from 'lucide-react';
+import { useLanguage } from '../../../components/LanguageContext';
+
+export function FeaturesSection() {
+  const { t } = useLanguage();
+  
+  const features = [
+    {
+      icon: <Truck className="h-6 w-6 text-blue-600" />,
+      title: t('landing.features.smart_matching.title'),
+      description: t('landing.features.smart_matching.desc')
+    },
+    {
+      icon: <Package className="h-6 w-6 text-green-600" />,
+      title: t('landing.features.bulk_orders.title'),
+      description: t('landing.features.bulk_orders.desc')
+    },
+    {
+      icon: <MapPin className="h-6 w-6 text-purple-600" />,
+      title: t('landing.features.real_time_tracking.title'),
+      description: t('landing.features.real_time_tracking.desc')
+    },
+    {
+      icon: <Shield className="h-6 w-6 text-orange-600" />,
+      title: t('landing.features.secure_reliable.title'),
+      description: t('landing.features.secure_reliable.desc')
+    }
+  ];
+
+  return (
+    <section className="py-20 bg-white">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl text-gray-900 mb-4">{t('landing.features.title')}</h2>
+          <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            {t('landing.features.subtitle')}
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          {features.map((feature, index) => (
+            <Card key={index} className="border-0 shadow-lg hover:shadow-xl transition-shadow">
+              <CardContent className="p-6 text-center">
+                <div className="mb-4 flex justify-center">
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    {feature.icon}
+                  </div>
+                </div>
+                <h3 className="text-lg mb-2">{feature.title}</h3>
+                <p className="text-gray-600 text-sm leading-relaxed">{feature.description}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+```
+
+`components\landing\Footer.tsx`:
+
+```tsx
+import React from 'react';
+import { Truck } from 'lucide-react';
+import { useLanguage } from '../../../components/LanguageContext';
+
+export function Footer() {
+  const { t } = useLanguage();
+
+  return (
+    <footer className="bg-gray-900 text-white py-12">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center">
+          <div className="flex justify-center items-center mb-4">
+            <div className="p-2 bg-blue-600 rounded-lg mr-3">
+              <Truck className="h-6 w-6 text-white" />
+            </div>
+            <h3 className="text-xl">{t('app.name')}</h3>
+          </div>
+          <p className="text-gray-400">
+            {t('landing.footer.subtitle')}
+          </p>
+        </div>
+      </div>
+    </footer>
+  );
+}
+```
+
+`components\landing\Header.tsx`:
+
+```tsx
+import React from 'react';
+import { Button } from "../../../components/ui/button";
+import { Truck } from 'lucide-react';
+import { useLanguage } from '../../../components/LanguageContext';
+import { LanguageSelector } from '../../../components/LanguageSelector';
+
+interface HeaderProps {
+  onGetStarted: () => void;
+}
+
+export function Header({ onGetStarted }: HeaderProps) {
+  const { t } = useLanguage();
+
+  return (
+    <header className="bg-white/80 backdrop-blur-sm border-b border-blue-100 sticky top-0 z-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex justify-between items-center h-16">
+          <div className="flex items-center">
+            <div className="p-2 bg-blue-600 rounded-lg mr-3">
+              <Truck className="h-6 w-6 text-white" />
+            </div>
+            <h1 className="text-xl text-gray-900">{t('app.name')}</h1>
+          </div>
+          <div className="flex items-center space-x-4">
+            <LanguageSelector />
+            <Button onClick={onGetStarted} className="bg-blue-600 hover:bg-blue-700">
+              {t('landing.get_started')}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
+```
+
+`components\landing\HeroSection.tsx`:
+
+```tsx
+import React from 'react';
+import { Button } from "../../../components/ui/button";
+import { Badge } from "../../../components/ui/badge";
+import { Package, Truck, CheckCircle } from 'lucide-react';
+import { useLanguage } from '../../../components/LanguageContext';
+import { StatsGrid } from './StatsGrid';
+
+interface HeroSectionProps {
+  onGetStarted: () => void;
+}
+
+export function HeroSection({ onGetStarted }: HeroSectionProps) {
+  const { t } = useLanguage();
+
+  return (
+    <section className="relative py-20 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+          <div className="space-y-8">
+            <div className="space-y-4">
+              <Badge className="bg-blue-100 text-blue-800 border-blue-200">
+                {t('landing.features.title')}
+              </Badge>
+              <h1 className="text-4xl lg:text-6xl text-gray-900 leading-tight">
+                {t('landing.title')}
+              </h1>
+              <p className="text-lg text-gray-600 leading-relaxed">
+                {t('landing.subtitle')}
+              </p>
+            </div>
+            
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Button 
+                onClick={onGetStarted} 
+                className="bg-blue-600 hover:bg-blue-700 h-12 px-8"
+              >
+                <Package className="mr-2 h-5 w-5" />
+                {t('landing.ship_now')}
+              </Button>
+              <Button 
+                onClick={onGetStarted} 
+                variant="outline" 
+                className="h-12 px-8 border-blue-200 text-blue-600 hover:bg-blue-50"
+              >
+                <Truck className="mr-2 h-5 w-5" />
+                {t('landing.drive_earn')}
+              </Button>
+            </div>
+
+            <StatsGrid />
+          </div>
+
+          <div className="relative">
+            <div className="relative z-10">
+              <img
+                src="https://images.unsplash.com/photo-1566576912322-38b6bf8bb9cb?w=600&h=400&fit=crop"
+                alt="Delivery truck"
+                className="rounded-2xl shadow-2xl w-full h-auto"
+              />
+            </div>
+            {/* Floating Cards */}
+            <div className="absolute -top-6 -left-6 bg-white rounded-lg shadow-lg p-4 z-20">
+              <div className="flex items-center space-x-3">
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <span className="text-sm">Live Tracking</span>
+              </div>
+            </div>
+            <div className="absolute -bottom-6 -right-6 bg-white rounded-lg shadow-lg p-4 z-20">
+              <div className="flex items-center space-x-3">
+                <CheckCircle className="h-5 w-5 text-green-500" />
+                <span className="text-sm">Delivered</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+```
+
+`components\landing\HowItWorksSection.tsx`:
+
+```tsx
+import React from 'react';
+import { useLanguage } from '../../../components/LanguageContext';
+
+export function HowItWorksSection() {
+  const { t } = useLanguage();
+
+  const customerSteps = [
+    { 
+      step: "1", 
+      title: t('landing.how_it_works.customer_step1'), 
+      desc: t('landing.how_it_works.customer_step1_desc') 
+    },
+    { 
+      step: "2", 
+      title: t('landing.how_it_works.customer_step2'), 
+      desc: t('landing.how_it_works.customer_step2_desc') 
+    },
+    { 
+      step: "3", 
+      title: t('landing.how_it_works.customer_step3'), 
+      desc: t('landing.how_it_works.customer_step3_desc') 
+    }
+  ];
+
+  const driverSteps = [
+    { 
+      step: "1", 
+      title: t('landing.how_it_works.driver_step1'), 
+      desc: t('landing.how_it_works.driver_step1_desc') 
+    },
+    { 
+      step: "2", 
+      title: t('landing.how_it_works.driver_step2'), 
+      desc: t('landing.how_it_works.driver_step2_desc') 
+    },
+    { 
+      step: "3", 
+      title: t('landing.how_it_works.driver_step3'), 
+      desc: t('landing.how_it_works.driver_step3_desc') 
+    }
+  ];
+
+  return (
+    <section className="py-20 bg-gray-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl text-gray-900 mb-4">{t('landing.how_it_works.title')}</h2>
+          <p className="text-lg text-gray-600">{t('landing.how_it_works.subtitle')}</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
+          {/* For Customers */}
+          <div className="space-y-8">
+            <h3 className="text-xl text-center text-blue-600">{t('landing.how_it_works.customers')}</h3>
+            <div className="space-y-6">
+              {customerSteps.map((item, index) => (
+                <div key={index} className="flex items-start space-x-4">
+                  <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center text-sm flex-shrink-0">
+                    {item.step}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">{item.title}</h4>
+                    <p className="text-gray-600 text-sm">{item.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* For Drivers */}
+          <div className="space-y-8">
+            <h3 className="text-xl text-center text-green-600">{t('landing.how_it_works.drivers')}</h3>
+            <div className="space-y-6">
+              {driverSteps.map((item, index) => (
+                <div key={index} className="flex items-start space-x-4">
+                  <div className="w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center text-sm flex-shrink-0">
+                    {item.step}
+                  </div>
+                  <div>
+                    <h4 className="font-medium">{item.title}</h4>
+                    <p className="text-gray-600 text-sm">{item.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+```
+
+`components\landing\StatsGrid.tsx`:
+
+```tsx
+import React from 'react';
+import { useLanguage } from '../../../components/LanguageContext';
+
+export function StatsGrid() {
+  const { t } = useLanguage();
+
+  const stats = [
+    { number: "10K+", label: t('landing.stats.drivers') },
+    { number: "50K+", label: t('landing.stats.deliveries') },
+    { number: "500+", label: t('landing.stats.cities') },
+    { number: "4.9★", label: t('landing.stats.rating') }
+  ];
+
+  return (
+    <div className="grid grid-cols-4 gap-6 pt-8">
+      {stats.map((stat, index) => (
+        <div key={index} className="text-center">
+          <p className="text-2xl text-blue-600">{stat.number}</p>
+          <p className="text-sm text-gray-600">{stat.label}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+`components\landing\index.ts`:
+
+```ts
+export { Header } from './Header';
+export { HeroSection } from './HeroSection';
+export { StatsGrid } from './StatsGrid';
+export { FeaturesSection } from './FeaturesSection';
+export { HowItWorksSection } from './HowItWorksSection';
+export { CTASection } from './CTASection';
+export { Footer } from './Footer';
+
+```
+
+`config\environment.ts`:
+
+```ts
+// Safe access to environment variables with fallbacks
+const getEnvVar = (key: string, defaultValue: string): string => {
+  try {
+    // For Vite/React apps
+    if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
+      return ((import.meta as any).env)[key] || defaultValue;
+    }
+    return defaultValue;
+  } catch {
+    return defaultValue;
+  }
+};
+
+// Microservices configuration
+export const MICROSERVICES_CONFIG = {
+  USER_SERVICE: {
+    baseUrl: getEnvVar('VITE_USER_SERVICE_URL', 'http://localhost:3001'),
+  },
+  DRIVER_SERVICE: {
+    baseUrl: getEnvVar('VITE_DRIVER_SERVICE_URL', 'http://localhost:3002'),
+  },
+  CUSTOMER_SERVICE: {
+    baseUrl: getEnvVar('VITE_CUSTOMER_SERVICE_URL', 'http://localhost:3003'),
+  },
+};
+
+export const API_TIMEOUT = parseInt(getEnvVar('VITE_API_TIMEOUT', '30000')); // 30 seconds
+export const ENABLE_MOCK_API = getEnvVar('VITE_ENABLE_MOCK_API', 'false') === 'true';
+export const APP_ENV = getEnvVar('VITE_MODE', 'development');
+```
+
+`hooks\useCustomerProfile.ts`:
+
+```ts
+// CARLOADERSConnecting\src\src\hooks\useCustomerProfile.ts
+import { useState, useEffect, useCallback } from 'react';
+import { customerApi, authApi } from '../lib/api';
+import { toast } from 'sonner';
+import { getCurrentUser } from '../lib/auth-utils';
+
+export const useCustomerProfile = () => {
+  const [customerData, setCustomerData] = useState<any>(null);
+  const [userData, setUserData] = useState<any>(null);
+  const [addresses, setAddresses] = useState<any[]>([]);
+  const [preferences, setPreferences] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadProfile = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      console.log('👤 Loading customer profile data from both services...');
+      
+      // Get current user from localStorage
+      const currentUser = getCurrentUser();
+      if (!currentUser) {
+        setError('No user logged in');
+        toast.error('Please login first');
+        setLoading(false);
+        return;
+      }
+
+      const userId = currentUser.id;
+      console.log('🆔 Current user ID:', userId);
+
+      // 1. Load user personal info from User Service
+      console.log('📨 Fetching user data from User Service...');
+      const userResponse = await authApi.getUserById(userId);
+      console.log('✅ User Service response:', userResponse);
+      
+      if (!userResponse.success) {
+        console.error('❌ Failed to load user data:', userResponse.error);
+        toast.error('Failed to load personal information');
+      } else {
+        setUserData(userResponse.data);
+        console.log('👤 User data loaded:', {
+          firstName: userResponse.data?.firstName,
+          lastName: userResponse.data?.lastName,
+          email: userResponse.data?.email
+        });
+      }
+
+      // 2. Load customer profile from Customer Service
+      console.log('📨 Fetching customer data from Customer Service...');
+      const customerResponse = await customerApi.getProfile();
+      console.log('✅ Customer Service response:', customerResponse);
+      
+      if (!customerResponse.success) {
+        // If no customer profile exists yet
+        if (customerResponse.error?.toLowerCase().includes('not found') || 
+            customerResponse.status === 404) {
+          console.log('ℹ️ No customer profile found yet');
+          setCustomerData(null);
+          setAddresses([]);
+          setPreferences(null);
+        } else {
+          setError(customerResponse.error || 'Failed to load customer profile');
+          toast.error(customerResponse.error || 'Failed to load customer profile');
+        }
+      } else {
+        console.log('✅ Customer data loaded:', customerResponse.data);
+        setCustomerData(customerResponse.data);
+        
+        // Extract addresses
+        if (customerResponse.data?.addresses && Array.isArray(customerResponse.data.addresses)) {
+          console.log('🏠 Addresses loaded:', customerResponse.data.addresses.length);
+          setAddresses(customerResponse.data.addresses);
+        } else {
+          console.log('🏠 No addresses found in profile, fetching separately...');
+          // Try to load addresses separately
+          const addressesResponse = await customerApi.getAddresses();
+          if (addressesResponse.success) {
+            console.log('🏠 Addresses loaded separately:', addressesResponse.data?.length || 0);
+            setAddresses(addressesResponse.data || []);
+          }
+        }
+
+        // Extract preferences
+        if (customerResponse.data?.preferences) {
+          console.log('⚙️ Preferences loaded:', customerResponse.data.preferences);
+          setPreferences(customerResponse.data.preferences);
+        }
+      }
+
+    } catch (err: any) {
+      console.error('❌ Error loading customer profile:', err);
+      setError(err.message || 'Network error');
+      toast.error('Failed to load profile. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProfile();
+  }, [loadProfile]);
+
+  // Combined data getter for easy access
+  const getCombinedData = () => {
+    return {
+      // User data from User Service
+      userInfo: userData ? {
+        id: userData.id,
+        email: userData.email,
+        firstName: userData.firstName,
+        lastName: userData.lastName,
+        phone: userData.phone,
+        userType: userData.userType,
+      } : null,
+      
+      // Customer data from Customer Service
+      customer: customerData ? {
+        id: customerData.id,
+        accountType: customerData.account_type || customerData.accountType || 'personal',
+        dateOfBirth: customerData.date_of_birth || customerData.dateOfBirth,
+        businessName: customerData.business_name || customerData.businessName,
+        businessType: customerData.business_type || customerData.businessType,
+        businessPhone: customerData.business_phone || customerData.businessPhone,
+        taxId: customerData.tax_id || customerData.taxId,
+        joinDate: customerData.join_date || customerData.joinDate,
+        totalOrders: customerData.total_orders || customerData.totalOrders || 0,
+        totalSpent: customerData.total_spent || customerData.totalSpent || 0,
+        averageRating: customerData.average_rating || customerData.averageRating || 0,
+        loyaltyPoints: customerData.loyalty_points || customerData.loyaltyPoints || 0,
+        membershipLevel: customerData.membership_level || customerData.membershipLevel || 'standard',
+        status: customerData.status || 'active',
+        profilePictureUrl: customerData.profile_picture_url || customerData.profilePictureUrl,
+      } : null,
+      
+      // Arrays
+      addresses: addresses || [],
+      preferences: preferences || {
+        notification_email: 1,
+        notification_sms: 1,
+        notification_push: 1,
+        share_location_data: 0,
+        share_usage_analytics: 0,
+        marketing_emails: 0
+      }
+    };
+  };
+
+  // Create profile
+  const createProfile = async (data: any) => {
+    try {
+      const response = await customerApi.createProfile(data);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Profile created successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to create profile');
+      return false;
+    } catch (error: any) {
+      console.error('Error creating profile:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  // Update profile
+  const updateProfile = async (data: any) => {
+    try {
+      const response = await customerApi.updateProfile(data);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Profile updated successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to update profile');
+      return false;
+    } catch (error: any) {
+      console.error('Error updating profile:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  // Update account type (personal/business)
+  const updateAccountType = async (accountType: 'personal' | 'business') => {
+    try {
+      const response = await customerApi.updateProfile({ accountType });
+      if (response.success) {
+        await loadProfile();
+        toast.success(`Account type changed to ${accountType}`);
+        return true;
+      }
+      toast.error(response.error || 'Failed to update account type');
+      return false;
+    } catch (error: any) {
+      console.error('Error updating account type:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  // Upload profile picture
+  const uploadProfilePicture = async (file: File) => {
+    try {
+      const formData = new FormData();
+      formData.append('profilePicture', file);
+      const response = await customerApi.uploadProfilePicture(formData);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Profile picture uploaded successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to upload picture');
+      return false;
+    } catch (error: any) {
+      console.error('Error uploading picture:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  // Address operations
+  const addAddress = async (data: any) => {
+    try {
+      const response = await customerApi.addAddress(data);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Address added successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to add address');
+      return false;
+    } catch (error: any) {
+      console.error('Error adding address:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  const updateAddress = async (id: string, data: any) => {
+    try {
+      const response = await customerApi.updateAddress(id, data);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Address updated successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to update address');
+      return false;
+    } catch (error: any) {
+      console.error('Error updating address:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  const deleteAddress = async (id: string) => {
+    try {
+      const response = await customerApi.deleteAddress(id);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Address deleted successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to delete address');
+      return false;
+    } catch (error: any) {
+      console.error('Error deleting address:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  // Update preferences
+  const updatePreferences = async (data: any) => {
+    try {
+      const response = await customerApi.updatePreferences(data);
+      if (response.success) {
+        await loadProfile();
+        toast.success('Preferences updated successfully');
+        return true;
+      }
+      toast.error(response.error || 'Failed to update preferences');
+      return false;
+    } catch (error: any) {
+      console.error('Error updating preferences:', error);
+      toast.error(error.message || 'Network error');
+      return false;
+    }
+  };
+
+  return {
+    // Data
+    customerData,
+    userData,
+    addresses,
+    preferences,
+    
+    // State
+    loading,
+    error,
+    
+    // Combined data
+    getCombinedData,
+    
+    // Methods
+    loadProfile,
+    createProfile,
+    updateProfile,
+    updateAccountType,
+    uploadProfilePicture,
+    addAddress,
+    updateAddress,
+    deleteAddress,
+    updatePreferences,
+  };
+};
+```
+
+`hooks\useDriverProfile.ts`:
+
+```ts
+import { useState, useEffect, useCallback } from 'react';
+import api from '../lib/api';
+import { toast } from 'sonner';
+import { getCurrentUser } from '../lib/auth-utils';
+
+export const useDriverProfile = () => {
+  const [driverData, setDriverData] = useState(null);
+  const [vehicles, setVehicles] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadDriverProfile = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      console.log('👤 Loading driver profile...');
+      
+      // 🔴 FIX: Typo was "getp()" → should be "getProfile()"
+      const profileResponse = await api.driver.getProfile();
+      console.log('📨 Profile API response:', profileResponse);
+      
+      if (!profileResponse.success) {
+        const errorMsg = profileResponse.error || 'Failed to load driver profile';
+        
+        // Handle "not found" gracefully (onboarding state)
+        if (
+          errorMsg.toLowerCase().includes('not found') ||
+          errorMsg.includes('No profile') ||
+          profileResponse.status === 404
+        ) {
+          console.log('ℹ️ No driver profile found yet — showing onboarding');
+          setDriverData(null);
+          setVehicles([]);
+        } else {
+          setError(errorMsg);
+          toast.error(`Profile load failed: ${errorMsg}`);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // ✅ Success: Set full driver data
+      console.log('✅ Driver profile loaded:', profileResponse.data);
+      setDriverData(profileResponse.data);
+
+      // Load vehicles
+      const vehiclesResponse = await api.driver.getVehicles();
+      if (vehiclesResponse.success) {
+        console.log('🚗 Vehicles loaded:', vehiclesResponse.data);
+        setVehicles(vehiclesResponse.data || []);
+      } else {
+        console.warn('⚠️ Failed to load vehicles:', vehiclesResponse.error);
+        setVehicles([]);
+      }
+
+      setError(null);
+    } catch (err: any) {
+      const message = err.message || 'Unknown error loading profile';
+      console.error('❌ Error loading driver profile:', err);
+      setError(message);
+      toast.error(`Failed to load profile: ${message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDriverProfile();
+  }, [loadDriverProfile]);
+
+  // ✅ Update driver profile (license/insurance only)
+  const updateProfile = async (data: any) => {
+    try {
+      const response = await api.driver.updateProfile(data);
+      if (response.success) {
+        await loadDriverProfile(); // Refresh full state
+        toast.success('Profile updated successfully');
+        return true;
+      } else {
+        const msg = response.error || 'Update failed';
+        toast.error(msg);
+        return false;
+      }
+    } catch (error: any) {
+      const msg = error.message || 'Network error';
+      console.error('Error updating profile:', error);
+      toast.error(`Update failed: ${msg}`);
+      return false;
+    }
+  };
+
+  // ✅ Add new vehicle
+  const addVehicle = async (data: any) => {
+    try {
+      const response = await api.driver.addVehicle(data);
+      if (response.success) {
+        await loadDriverProfile();
+        toast.success('Vehicle added successfully');
+        return response.data;
+      } else {
+        const msg = response.error || 'Add vehicle failed';
+        toast.error(msg);
+        return null;
+      }
+    } catch (error: any) {
+      const msg = error.message || 'Network error';
+      console.error('Error adding vehicle:', error);
+      toast.error(`Add vehicle failed: ${msg}`);
+      return null;
+    }
+  };
+
+  // ✅ Update availability (online/offline)
+  const updateAvailability = async (isOnline: boolean) => {
+    try {
+      const response = await api.driver.updateAvailability(isOnline);
+      if (response.success) {
+        await loadDriverProfile();
+        toast.success(`You are now ${isOnline ? 'online' : 'offline'}`);
+        return true;
+      } else {
+        const msg = response.error || 'Update failed';
+        toast.error(msg);
+        return false;
+      }
+    } catch (error: any) {
+      const msg = error.message || 'Network error';
+      console.error('Error updating availability:', error);
+      toast.error(`Availability update failed: ${msg}`);
+      return false;
+    }
+  };
+
+  return {
+    driverData,
+    vehicles,
+    loading,
+    error,
+    loadDriverProfile,
+    updateProfile,
+    addVehicle,
+    updateAvailability,
+  };
+};
+```
+
+`lib\api.ts`:
+
+```ts
+import { MICROSERVICES_CONFIG } from '../config/environment';
+
+// ==========================================
+// Helper Functions
+// ==========================================
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem('authToken');
+}
+
+export function setAuthToken(token: string) {
+  localStorage.setItem('authToken', token);
+}
+
+export function clearAuthToken() {
+  localStorage.removeItem('authToken');
+  localStorage.removeItem('user');
+  localStorage.removeItem('userType');
+  localStorage.removeItem('userId');
+  localStorage.removeItem('driverId');
+}
+
+export function getCurrentUser() {
+  const userStr = localStorage.getItem('user');
+  if (!userStr) return null;
+  try {
+    return JSON.parse(userStr);
+  } catch {
+    return null;
+  }
+}
+
+// ==========================================
+// API Request Functions
+// ==========================================
+
+// Generic API request
+async function makeRequest<T = any>(
+  endpoint: string,
+  method: string = 'GET',
+  body?: any,
+  service: 'user' | 'driver' | 'customer' = 'user'
+): Promise<{
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+  status?: number;
+}> {
+  try {
+    const token = getAuthToken();
+    let baseUrl = '';
+    
+    // Determine base URL based on service
+    switch (service) {
+      case 'user':
+        baseUrl = MICROSERVICES_CONFIG.USER_SERVICE.baseUrl;
+        break;
+      case 'driver':
+        baseUrl = MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl;
+        break;
+      case 'customer':
+        baseUrl = MICROSERVICES_CONFIG.CUSTOMER_SERVICE.baseUrl;
+        break;
+    }
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    if (service === 'customer' && body && method !== 'GET' && method !== 'DELETE') {
+      const currentUser = getCurrentUser();
+      if (currentUser?.id && !body.userId) {
+        body = { ...body, userId: currentUser.id };
+      }
+    }
+
+    const url = `${baseUrl}${endpoint}`;
+    const config: RequestInit = {
+      method,
+      headers,
+    };
+
+    if (body && method !== 'GET' && method !== 'DELETE') {
+      config.body = JSON.stringify(body);
+    }
+
+    console.log(`🌐 ${method} ${url}`, body ? { body } : '');
+
+    const response = await fetch(url, config);
+    const data = await response.json();
+
+    console.log(`📨 ${response.status} ${url}:`, data);
+
+    // Handle unauthorized
+    if (response.status === 401) {
+      clearAuthToken();
+      return {
+        success: false,
+        error: 'Session expired. Please login again.',
+        status: 401,
+      };
+    }
+
+    if (!response.ok) {
+      // Extract error message safely
+      let errorMsg = data.error || data.message || `HTTP ${response.status}`;
+      if (typeof errorMsg === 'object') {
+        errorMsg = errorMsg.message || JSON.stringify(errorMsg);
+      }
+      return {
+        success: false,
+        error: String(errorMsg),
+        status: response.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: data.data || data,
+      message: data.message,
+      status: response.status,
+    };
+  } catch (error: any) {
+    console.error('❌ API Error:', error);
+    
+    if (error.message.includes('Failed to fetch')) {
+      return {
+        success: false,
+        error: `Cannot connect to ${service} service.`,
+        status: 0,
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Network error',
+      status: 0,
+    };
+  }
+}
+
+// Upload function for FormData
+async function makeUploadRequest<T = any>(
+  endpoint: string,
+  formData: FormData,
+  service: 'user' | 'driver' | 'customer' = 'user'
+): Promise<{
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+  status?: number;
+}> {
+  try {
+    const token = getAuthToken();
+    let baseUrl = '';
+    
+    switch (service) {
+      case 'user':
+        baseUrl = MICROSERVICES_CONFIG.USER_SERVICE.baseUrl;
+        break;
+      case 'driver':
+        baseUrl = MICROSERVICES_CONFIG.DRIVER_SERVICE.baseUrl;
+        break;
+      case 'customer':
+        baseUrl = MICROSERVICES_CONFIG.CUSTOMER_SERVICE.baseUrl;
+        break;
+    }
+
+    const headers: HeadersInit = {};
+    
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const url = `${baseUrl}${endpoint}`;
+    
+    console.log(`📤 Upload to ${url}`);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    console.log(`📨 Upload response ${response.status}:`, data);
+
+    if (response.status === 401) {
+      clearAuthToken();
+      return {
+        success: false,
+        error: 'Session expired. Please login again.',
+        status: 401,
+      };
+    }
+
+    if (!response.ok) {
+      // Extract error message safely
+      let errorMsg = data.error || data.message || `HTTP ${response.status}`;
+      if (typeof errorMsg === 'object') {
+        errorMsg = errorMsg.message || JSON.stringify(errorMsg);
+      }
+      return {
+        success: false,
+        error: String(errorMsg),
+        status: response.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: data.data || data,
+      message: data.message,
+      status: response.status,
+    };
+  } catch (error: any) {
+    console.error('❌ Upload Error:', error);
+    
+    if (error.message.includes('Failed to fetch')) {
+      return {
+        success: false,
+        error: `Cannot connect to ${service} service.`,
+        status: 0,
+      };
+    }
+    
+    return {
+      success: false,
+      error: error.message || 'Network error',
+      status: 0,
+    };
+  }
+}
+
+// ==========================================
+// AUTH API (User Service - Port 3001)
+// ==========================================
+
+export const authApi = {
+  register: async (data: {
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    userType: 'driver' | 'customer';
+    phone?: string;
+  }) => {
+    const response = await makeRequest('/api/auth/register', 'POST', data, 'user');
+    
+    if (response.success && response.data?.tokens?.accessToken) {
+      setAuthToken(response.data.tokens.accessToken);
+      // Store user data
+      if (response.data.user) {
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        localStorage.setItem('userType', response.data.user.userType);
+        localStorage.setItem('userId', response.data.user.id);
+      }
+    }
+    return response;
+  },
+
+  login: async (data: { email: string; password: string }) => {
+    const response = await makeRequest('/api/auth/login', 'POST', data, 'user');
+    
+    if (response.success && response.data?.tokens?.accessToken) {
+      setAuthToken(response.data.tokens.accessToken);
+      // Store user data
+      if (response.data.user) {
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+        localStorage.setItem('userType', response.data.user.userType);
+        localStorage.setItem('userId', response.data.user.id);
+      }
+    }
+    return response;
+  },
+
+  logout: async () => {
+    try {
+      await makeRequest('/api/auth/logout', 'POST', undefined, 'user');
+    } catch (error) {
+      console.warn('Logout API call failed:', error);
+    } finally {
+      clearAuthToken();
+    }
+  },
+
+  getCurrentUser: async () => {
+    return makeRequest('/api/auth/profile', 'GET', undefined, 'user');
+  },
+
+   getUserById: async (userId: string) => {
+    return makeRequest(`/api/users/${userId}`, 'GET', undefined, 'user');
+  },
+};
+
+// ==========================================
+// DRIVER API (Driver Service - Port 3002) 
+// ==========================================
+
+export const driverApi = {
+  // Profile
+  getProfile: async () => {
+    return makeRequest('/api/drivers/profile', 'GET', undefined, 'driver');
+  },
+
+  createProfile: async (data: {
+    licenseNumber: string;
+    licenseExpiry: string;
+    insuranceNumber: string;
+    insuranceExpiry: string;
+  }) => {
+    return makeRequest('/api/drivers/profile', 'POST', data, 'driver');
+  },
+
+  updateProfile: async (data: {
+    licenseNumber?: string;
+    licenseExpiry?: string;
+    insuranceNumber?: string;
+    insuranceExpiry?: string;
+  }) => {
+    return makeRequest('/api/drivers/profile', 'PUT', data, 'driver');
+  },
+
+  // In driverApi object
+  updateStatus: async (data: { isOnline: boolean }) => {
+    return makeRequest('/api/drivers/status', 'PATCH', data, 'driver');
+  },
+
+  // Vehicles
+  getVehicles: async () => {
+    return makeRequest('/api/drivers/vehicles', 'GET', undefined, 'driver');
+  },
+
+  addVehicle: async (data: {
+    type: string;
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    licensePlate: string;
+    maxWeight: number;
+    maxVolume: number;
+  }) => {
+    return makeRequest('/api/drivers/vehicles', 'POST', data, 'driver');
+  },
+
+  updateVehicle: async (vehicleId: string, data: {
+    make?: string;
+    model?: string;
+    year?: number;
+    color?: string;
+    licensePlate?: string;
+    maxWeight?: number;
+    maxVolume?: number;
+    insuranceInfo?: string;
+  }) => {
+    return makeRequest(`/api/drivers/vehicles/${vehicleId}`, 'PUT', data, 'driver');
+  },
+
+  deleteVehicle: async (vehicleId: string) => {
+    return makeRequest(`/api/drivers/vehicles/${vehicleId}`, 'DELETE', undefined, 'driver');
+  },
+
+  // Uploads
+  uploadVehicleImage: async (vehicleId: string, formData: FormData) => {
+    return makeUploadRequest(`/api/drivers/vehicles/${vehicleId}/image`, formData, 'driver');
+  },
+
+  uploadProfilePicture: async (formData: FormData) => {
+    return makeUploadRequest('/api/drivers/profile-picture', formData, 'driver');
+  },
+
+  // Documents
+  uploadDocument: async (formData: FormData) => {
+    return makeUploadRequest('/api/drivers/documents', formData, 'driver');
+  },
+
+  getDocuments: async () => {
+    return makeRequest('/api/drivers/documents', 'GET', undefined, 'driver');
+  },
+
+  deleteDocument: async (documentId: string) => {
+    return makeRequest(`/api/drivers/documents/${documentId}`, 'DELETE', undefined, 'driver');
+  },
+
+  // Availability
+  updateAvailability: async (isAvailable: boolean) => {
+    return makeRequest('/api/drivers/availability', 'PUT', { isAvailable }, 'driver');
+  },
+
+  setAvailability: async (availability: any[]) => {
+    return makeRequest('/api/drivers/availability', 'PUT', { availability }, 'driver');
+  },
+
+  getAvailability: async () => {
+    return makeRequest('/api/drivers/availability', 'GET', undefined, 'driver');
+  },
+
+  // Stats
+  getStats: async () => {
+    return makeRequest('/api/drivers/stats', 'GET', undefined, 'driver');
+  },
+
+  getEarnings: async (startDate?: string, endDate?: string) => {
+    let url = '/api/drivers/earnings';
+    if (startDate || endDate) {
+      const params = new URLSearchParams();
+      if (startDate) params.append('startDate', startDate);
+      if (endDate) params.append('endDate', endDate);
+      url += `?${params.toString()}`;
+    }
+    return makeRequest(url, 'GET', undefined, 'driver');
+  },
+};
+
+// ==========================================
+// CUSTOMER API (Customer Service - Port 3003)
+// ==========================================
+
+export const customerApi = {
+  getProfile: async () => {
+    return makeRequest('/api/customers/profile', 'GET', undefined, 'customer');
+  },
+  createProfile: async (data: any) => {
+    return makeRequest('/api/customers/profile', 'POST', data, 'customer');
+  },
+  updateProfile: async (data: any) => {
+    return makeRequest('/api/customers/profile', 'PUT', data, 'customer');
+  },
+  uploadProfilePicture: async (formData: FormData) => {
+    return makeUploadRequest('/api/customers/profile-picture', formData, 'customer');
+  },
+  addAddress: async (data: any) => {
+    return makeRequest('/api/customers/addresses', 'POST', data, 'customer');
+  },
+  updateAddress: async (id: string, data: any) => {
+    return makeRequest(`/api/customers/addresses/${id}`, 'PUT', data, 'customer');
+  },
+  // Get all addresses
+  getAddresses: async () => {
+    return makeRequest('/api/customers/addresses', 'GET', undefined, 'customer');
+  },
+
+  // Delete address
+  deleteAddress: async (id: string) => {
+    return makeRequest(`/api/customers/addresses/${id}`, 'DELETE', undefined, 'customer');
+  },
+
+  // Update preferences (optional but useful)
+  updatePreferences: async (data: any) => {
+    return makeRequest('/api/customers/preferences', 'PUT', data, 'customer');
+  },
+
+  // Get stats (member since, order count, etc.)
+  getStats: async () => {
+    return makeRequest('/api/customers/stats', 'GET', undefined, 'customer');
+  },
+};
+
+// ==========================================
+// Export Default
+// ==========================================
+
+export default {
+  auth: authApi,
+  driver: driverApi,
+  customer: customerApi,
+};
+```
+
+`lib\auth-utils.ts`:
+
+```ts
+// Simple auth utilities
+export function getCurrentUser() {
+  const userStr = localStorage.getItem('user');
+  if (!userStr) return null;
+  try {
+    return JSON.parse(userStr);
+  } catch {
+    return null;
+  }
+}
+
+export function isDriver() {
+  const user = getCurrentUser();
+  return user && user.userType === 'driver';
+}
+
+export function isCustomer() {
+  const user = getCurrentUser();
+  return user && user.userType === 'customer';
+}
+
+export function isAuthenticated() {
+  return !!localStorage.getItem('authToken') && !!getCurrentUser();
+}
+```
+
+`lib\seed-data.ts`:
+
+```ts
+export async function seedInitialData() {
+  console.log('🌱 Checking if sample data needs to be seeded...');
+  
+  try {
+    // Just log sample accounts
+    console.log('📋 Sample accounts (for manual testing):');
+    console.log('   Driver: driver1@deliverymatch.com / password123');
+    console.log('   Customer: customer1@deliverymatch.com / password123');
+    console.log('');
+    console.log('ℹ️  Seed functionality is disabled. Please register new users manually.');
+    
+  } catch (error) {
+    console.error('❌ Error in seed data:', error);
+  }
+}
+```
+
+`shared\constants\app.ts`:
+
+```ts
+// Application-wide constants
+
+export const APP_NAME = 'DeliveryHub';
+
+export const VEHICLE_TYPES = [
+  { value: 'motorcycle', label: 'Motorcycle' },
+  { value: 'car', label: 'Car' },
+  { value: 'van', label: 'Van' },
+  { value: 'truck', label: 'Truck' },
+] as const;
+
+export const ORDER_STATUSES = {
+  PENDING: 'pending',
+  MATCHED: 'matched',
+  ACCEPTED: 'accepted',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+  CANCELLED: 'cancelled',
+} as const;
+
+export const PAYMENT_METHODS = {
+  CARD: 'card',
+  CASH: 'cash',
+  WALLET: 'wallet',
+} as const;
+
+export const USER_ROLES = {
+  DRIVER: 'driver',
+  CUSTOMER: 'customer',
+} as const;
+
+export const VERIFICATION_STATUS = {
+  PENDING: 'pending',
+  VERIFIED: 'verified',
+  REJECTED: 'rejected',
+} as const;
+
+export const DRIVER_STATUS = {
+  AVAILABLE: 'available',
+  BUSY: 'busy',
+  OFFLINE: 'offline',
+} as const;
+
+export const NOTIFICATION_TYPES = {
+  ORDER: 'order',
+  PAYMENT: 'payment',
+  SYSTEM: 'system',
+  MESSAGE: 'message',
+} as const;
+
+```
+
+`shared\hooks\index.ts`:
+
+```ts
+// Centralized export for all hooks
+
+export { useAuth } from './useAuth';
+export { useNotifications } from './useNotifications';
+
+```
+
+`shared\hooks\useAuth.ts`:
+
+```ts
+// Authentication hook
+
+import { useState, useEffect } from 'react';
+import { userService } from '../../services';
+import type { User } from '../../types';
+
+export function useAuth() {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    const response = await userService.getProfile();
+    if (response.success && response.data) {
+      setUser(response.data);
+    } else {
+      localStorage.removeItem('authToken');
+    }
+    setLoading(false);
+  };
+
+  const login = async (email: string, password: string) => {
+    setLoading(true);
+    setError(null);
+    
+    const response = await userService.login(email, password);
+    
+    if (response.success && response.data) {
+      setUser(response.data.user);
+      localStorage.setItem('authToken', response.data.token);
+      setLoading(false);
+      return true;
+    } else {
+      setError(response.error || 'Login failed');
+      setLoading(false);
+      return false;
+    }
+  };
+
+  const logout = async () => {
+    await userService.logout();
+    setUser(null);
+    localStorage.removeItem('authToken');
+  };
+
+  const register = async (data: any) => {
+    setLoading(true);
+    setError(null);
+    
+    const response = await userService.register(data);
+    
+    if (response.success && response.data) {
+      setUser(response.data);
+      setLoading(false);
+      return true;
+    } else {
+      setError(response.error || 'Registration failed');
+      setLoading(false);
+      return false;
+    }
+  };
+
+  return {
+    user,
+    loading,
+    error,
+    login,
+    logout,
+    register,
+    isAuthenticated: !!user,
+  };
+}
+
+```
+
+`shared\hooks\useNotifications.ts`:
+
+```ts
+// Notifications hook
+
+import { useState, useEffect } from 'react';
+import { notificationService } from '../../services';
+import type { Notification } from '../../types';
+
+export function useNotifications(userId: string | undefined) {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    loadNotifications();
+    loadUnreadCount();
+
+    // Subscribe to real-time notifications
+    const unsubscribe = notificationService.subscribeToNotifications(
+      userId,
+      (notification) => {
+        setNotifications(prev => [notification, ...prev]);
+        setUnreadCount(prev => prev + 1);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [userId]);
+
+  const loadNotifications = async () => {
+    if (!userId) return;
+    
+    const response = await notificationService.getNotifications(userId);
+    if (response.success && response.data) {
+      setNotifications(response.data.data);
+    }
+    setLoading(false);
+  };
+
+  const loadUnreadCount = async () => {
+    if (!userId) return;
+    
+    const response = await notificationService.getUnreadCount(userId);
+    if (response.success && response.data) {
+      setUnreadCount(response.data.count);
+    }
+  };
+
+  const markAsRead = async (notificationId: string) => {
+    const response = await notificationService.markAsRead(notificationId);
+    if (response.success) {
+      setNotifications(prev =>
+        prev.map(n => n.id === notificationId ? { ...n, read: true } : n)
+      );
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    }
+  };
+
+  const markAllAsRead = async () => {
+    if (!userId) return;
+    
+    const response = await notificationService.markAllAsRead(userId);
+    if (response.success) {
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      setUnreadCount(0);
+    }
+  };
+
+  const deleteNotification = async (notificationId: string) => {
+    const response = await notificationService.deleteNotification(notificationId);
+    if (response.success) {
+      setNotifications(prev => prev.filter(n => n.id !== notificationId));
+    }
+  };
+
+  return {
+    notifications,
+    unreadCount,
+    loading,
+    markAsRead,
+    markAllAsRead,
+    deleteNotification,
+    refresh: loadNotifications,
+  };
+}
+
+```
+
+`shared\utils\format.ts`:
+
+```ts
+// Formatting utilities
+
+export function formatCurrency(amount: number, currency = 'USD'): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+  }).format(amount);
+}
+
+export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions): string {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  return new Intl.DateTimeFormat('en-US', options || {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(dateObj);
+}
+
+export function formatDateTime(date: string | Date): string {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(dateObj);
+}
+
+export function formatTime(date: string | Date): string {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  return new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(dateObj);
+}
+
+export function formatDistance(meters: number): string {
+  if (meters < 1000) {
+    return `${meters.toFixed(0)} m`;
+  }
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+export function formatWeight(kg: number): string {
+  return `${kg.toFixed(1)} kg`;
+}
+
+export function formatVolume(m3: number): string {
+  return `${m3.toFixed(2)} m³`;
+}
+
+export function formatPhoneNumber(phone: string): string {
+  // Simple formatting - can be enhanced based on locale
+  const cleaned = phone.replace(/\D/g, '');
+  const match = cleaned.match(/^(\d{1})(\d{3})(\d{3})(\d{4})$/);
+  if (match) {
+    return `+${match[1]} (${match[2]}) ${match[3]}-${match[4]}`;
+  }
+  return phone;
+}
+
+export function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength) + '...';
+}
+
+export function formatDuration(minutes: number): string {
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+```
+
+`shared\utils\index.ts`:
+
+```ts
+// Centralized export for all utilities
+
+export * from './format';
+export * from './validation';
+
+```
+
+`shared\utils\validation.ts`:
+
+```ts
+// Validation utilities
+
+export function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+export function isValidPhone(phone: string): boolean {
+  const phoneRegex = /^\+?[\d\s-()]+$/;
+  return phoneRegex.test(phone) && phone.replace(/\D/g, '').length >= 10;
+}
+
+export function isValidPassword(password: string): boolean {
+  // At least 8 characters, 1 uppercase, 1 lowercase, 1 number
+  return password.length >= 8 &&
+    /[A-Z]/.test(password) &&
+    /[a-z]/.test(password) &&
+    /\d/.test(password);
+}
+
+export function isValidPostalCode(code: string): boolean {
+  // Simple validation - can be enhanced based on locale
+  return /^\d{5}(-\d{4})?$/.test(code);
+}
+
+export function isValidLicensePlate(plate: string): boolean {
+  // Basic validation - can be enhanced based on region
+  return plate.length >= 4 && plate.length <= 10 && /^[A-Z0-9-]+$/i.test(plate);
+}
+
+export function isValidWeight(kg: number): boolean {
+  return kg > 0 && kg <= 50000; // Max 50 tons
+}
+
+export function isValidVolume(m3: number): boolean {
+  return m3 > 0 && m3 <= 100; // Max 100 cubic meters
+}
+
+export function isValidCoordinates(lat: number, lng: number): boolean {
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+export function validateOrderData(data: any): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!data.pickupAddress) errors.push('Pickup address is required');
+  if (!data.deliveryAddress) errors.push('Delivery address is required');
+  if (!data.goodsType) errors.push('Goods type is required');
+  if (!isValidWeight(data.weightKg)) errors.push('Invalid weight');
+  if (!isValidVolume(data.volumeM3)) errors.push('Invalid volume');
+  if (!isValidCoordinates(data.pickupLat, data.pickupLng)) errors.push('Invalid pickup coordinates');
+  if (!isValidCoordinates(data.deliveryLat, data.deliveryLng)) errors.push('Invalid delivery coordinates');
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+```
+
+`types\index.ts`:
+
+```ts
+// Shared types across the application
+
+export interface User {
+  id: string;
+  email: string;
+  phone: string;
+  firstName: string;
+  lastName: string;
+  role: 'driver' | 'customer';
+  status: 'active' | 'inactive' | 'suspended';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Driver {
+  id: string;
+  userId: string;
+  licenseNumber: string;
+  licenseExpiry: string;
+  vehicleType: string;
+  vehiclePlate: string;
+  vehicleCapacityKg: number;
+  vehicleCapacityM3: number;
+  status: 'available' | 'busy' | 'offline';
+  rating: number;
+  totalTrips: number;
+  verificationStatus: 'pending' | 'verified' | 'rejected';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Customer {
+  id: string;
+  userId: string;
+  businessName?: string;
+  businessType?: string;
+  verificationStatus: 'pending' | 'verified' | 'rejected';
+  rating: number;
+  totalOrders: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Order {
+  id: string;
+  customerId: string;
+  driverId?: string;
+  pickupAddress: string;
+  pickupLat: number;
+  pickupLng: number;
+  deliveryAddress: string;
+  deliveryLat: number;
+  deliveryLng: number;
+  goodsType: string;
+  weightKg: number;
+  volumeM3: number;
+  distance: number;
+  price: number;
+  status: 'pending' | 'matched' | 'accepted' | 'in_progress' | 'completed' | 'cancelled';
+  scheduledPickupTime?: string;
+  actualPickupTime?: string;
+  actualDeliveryTime?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Payment {
+  id: string;
+  orderId: string;
+  amount: number;
+  currency: string;
+  paymentMethod: 'card' | 'cash' | 'wallet';
+  status: 'pending' | 'completed' | 'failed' | 'refunded';
+  transactionId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: 'order' | 'payment' | 'system' | 'message';
+  title: string;
+  message: string;
+  read: boolean;
+  data?: Record<string, any>;
+  createdAt: string;
+}
+
+export interface Location {
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+}
+
+export interface Route {
+  orderId: string;
+  currentLocation: Location;
+  estimatedArrival: string;
+  distance: number;
+  duration: number;
+}
+
+export interface MatchingResult {
+  orderId: string;
+  driverId: string;
+  score: number;
+  estimatedPickupTime: string;
+  sharedWith?: string[];
+}
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+
+// Add proper TypeScript interfaces
+export interface DriverProfile {
+  id: string;
+  userId: string;
+  licenseNumber: string;
+  licenseExpiry: string;
+  insuranceNumber: string;
+  insuranceExpiry: string;
+  vehicleType: string;
+  vehicleMake?: string;
+  vehicleModel?: string;
+  vehicleYear?: number;
+  licensePlate?: string;
+  vehicleColor?: string;
+  maxWeight?: number;
+  maxVolume?: number;
+  rating: number;
+  totalDeliveries: number;
+  totalEarnings: number;
+  completionRate: number;
+  status: 'pending' | 'active' | 'suspended' | 'inactive';
+  verificationLevel: 'none' | 'basic' | 'verified' | 'premium';
+  isOnline: boolean;
+  profileCompleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Vehicle {
+  id: string;
+  driverId: string;
+  type: string;
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+  maxWeight: number;
+  maxVolume: number;
+  imageUrl?: string;
+  isActive: boolean;
+  currentStatus: 'available' | 'in_use' | 'maintenance';
+}
+
+export interface Document {
+  id: string;
+  driverId: string;
+  type: 'license' | 'insurance' | 'registration' | 'inspection' | 'background_check';
+  name: string;
+  fileName: string;
+  fileUrl: string;
+  fileSize: number;
+  mimeType: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  expiryDate?: string;
+  rejectionReason?: string;
+}
+```
+
+`types\react.d.ts`:
+
+```ts
+declare module 'react';
+```
+
+`types\sonner.d.ts`:
+
+```ts
+declare module 'sonner' {
+  export const toast: {
+    success: (message: string, options?: any) => void;
+    error: (message: string, options?: any) => void;
+    info: (message: string, options?: any) => void;
+    warning: (message: string, options?: any) => void;
+    dismiss: () => void;
+  };
+}
+```

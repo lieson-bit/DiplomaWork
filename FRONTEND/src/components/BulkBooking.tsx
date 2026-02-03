@@ -7,6 +7,7 @@ import { Textarea } from "./ui/textarea";
 import { Badge } from "./ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
 import { Upload, Download, FileSpreadsheet, MapPin, Truck, Calculator, CheckCircle } from 'lucide-react';
+import { useLanguage } from './LanguageContext';
 
 interface BulkOrder {
   id: string;
@@ -40,6 +41,7 @@ interface OptimizationResult {
 }
 
 export function BulkBooking() {
+  const { t } = useLanguage();
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [orders, setOrders] = useState<BulkOrder[]>([]);
   const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
@@ -147,7 +149,7 @@ export function BulkBooking() {
 
   const downloadTemplate = () => {
     // Mock download functionality
-    alert('Excel template downloaded! Fill in: Pickup Address, Delivery Address, Weight (kg), Volume (m³), Category, Urgency');
+    alert(t('customer.bulk.template_downloaded') || 'Excel template downloaded! Fill in: Pickup Address, Delivery Address, Weight (kg), Volume (m³), Category, Urgency');
   };
 
   if (step === 4) {
@@ -156,30 +158,38 @@ export function BulkBooking() {
         <CardHeader>
           <CardTitle className="text-center text-green-600 flex items-center justify-center gap-2">
             <CheckCircle className="h-6 w-6" />
-            Bulk Booking Confirmed!
+            {t('customer.bulk.booking_confirmed') || 'Bulk Booking Confirmed!'}
           </CardTitle>
         </CardHeader>
         <CardContent className="text-center space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div>
               <p className="text-2xl text-blue-600">{optimization?.totalOrders}</p>
-              <p className="text-sm text-gray-600">Orders Placed</p>
+              <p className="text-sm text-gray-600">
+                {t('customer.bulk.orders_placed') || 'Orders Placed'}
+              </p>
             </div>
             <div>
               <p className="text-2xl text-green-600">{optimization?.requiredVehicles}</p>
-              <p className="text-sm text-gray-600">Vehicles Assigned</p>
+              <p className="text-sm text-gray-600">
+                {t('customer.bulk.vehicles_assigned') || 'Vehicles Assigned'}
+              </p>
             </div>
             <div>
               <p className="text-2xl text-purple-600">${optimization?.totalCost}</p>
-              <p className="text-sm text-gray-600">Total Cost</p>
+              <p className="text-sm text-gray-600">
+                {t('customer.bulk.total_cost') || 'Total Cost'}
+              </p>
             </div>
             <div>
               <p className="text-2xl text-orange-600">{optimization?.fuelSavings}%</p>
-              <p className="text-sm text-gray-600">Fuel Savings</p>
+              <p className="text-sm text-gray-600">
+                {t('customer.bulk.fuel_savings') || 'Fuel Savings'}
+              </p>
             </div>
           </div>
           <Button onClick={() => {setStep(1); setOrders([]); setOptimization(null); setUploadedFile(null)}}>
-            Upload Another Batch
+            {t('customer.bulk.upload_another_batch') || 'Upload Another Batch'}
           </Button>
         </CardContent>
       </Card>
@@ -193,39 +203,53 @@ export function BulkBooking() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Calculator className="h-5 w-5" />
-              Optimization Results
+              {t('customer.bulk.optimization_results') || 'Optimization Results'}
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
               <div className="text-center">
                 <p className="text-2xl text-blue-600">{optimization.totalOrders}</p>
-                <p className="text-sm text-gray-600">Total Orders</p>
+                <p className="text-sm text-gray-600">
+                  {t('customer.bulk.total_orders') || 'Total Orders'}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-2xl text-green-600">{optimization.requiredVehicles}</p>
-                <p className="text-sm text-gray-600">Vehicles Needed</p>
+                <p className="text-sm text-gray-600">
+                  {t('customer.bulk.vehicles_needed') || 'Vehicles Needed'}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-2xl text-purple-600">{optimization.totalDistance} km</p>
-                <p className="text-sm text-gray-600">Total Distance</p>
+                <p className="text-sm text-gray-600">
+                  {t('customer.bulk.total_distance') || 'Total Distance'}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-2xl text-orange-600">${optimization.totalCost}</p>
-                <p className="text-sm text-gray-600">Total Cost</p>
+                <p className="text-sm text-gray-600">
+                  {t('customer.bulk.total_cost') || 'Total Cost'}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-2xl text-emerald-600">{optimization.fuelSavings}%</p>
-                <p className="text-sm text-gray-600">Fuel Savings</p>
+                <p className="text-sm text-gray-600">
+                  {t('customer.bulk.fuel_savings') || 'Fuel Savings'}
+                </p>
               </div>
               <div className="text-center">
                 <p className="text-2xl text-cyan-600">{optimization.co2Reduction} kg</p>
-                <p className="text-sm text-gray-600">CO₂ Reduced</p>
+                <p className="text-sm text-gray-600">
+                  {t('customer.bulk.co2_reduced') || 'CO₂ Reduced'}
+                </p>
               </div>
             </div>
 
             <div className="space-y-4">
-              <h4 className="font-medium">Optimized Routes</h4>
+              <h4 className="font-medium">
+                {t('customer.bulk.optimized_routes') || 'Optimized Routes'}
+              </h4>
               {optimization.routes.map((route, index) => (
                 <Card key={route.driverId}>
                   <CardContent className="pt-6">
@@ -247,8 +271,10 @@ export function BulkBooking() {
                         ))}
                       </div>
                       <div className="text-sm">
-                        <span className="text-gray-600">Utilization: </span>
-                        <span className="font-medium text-blue-600">{route.utilization}%</span>
+                        <span className="text-gray-600">
+                          {t('customer.bulk.utilization') || 'Utilization'}: 
+                        </span>
+                        <span className="font-medium text-blue-600"> {route.utilization}%</span>
                       </div>
                     </div>
                   </CardContent>
@@ -260,10 +286,10 @@ export function BulkBooking() {
 
         <div className="flex justify-between">
           <Button variant="outline" onClick={() => setStep(2)}>
-            Back to Review
+            {t('customer.bulk.back_to_review') || 'Back to Review'}
           </Button>
           <Button onClick={handleConfirmBooking} className="bg-green-600 hover:bg-green-700">
-            Confirm Booking
+            {t('customer.bulk.confirm_booking') || 'Confirm Booking'}
           </Button>
         </div>
       </div>
@@ -275,21 +301,25 @@ export function BulkBooking() {
       <div className="space-y-6">
         <Card>
           <CardHeader>
-            <CardTitle>Review Orders ({orders.length})</CardTitle>
-            <p className="text-gray-600">Review and edit your bulk orders before optimization</p>
+            <CardTitle>
+              {t('customer.bulk.review_orders', { count: orders.length.toString() }) || `Review Orders (${orders.length})`}
+            </CardTitle>
+            <p className="text-gray-600">
+              {t('customer.bulk.review_description') || 'Review and edit your bulk orders before optimization'}
+            </p>
           </CardHeader>
           <CardContent>
             <div className="rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Order ID</TableHead>
-                    <TableHead>Pickup</TableHead>
-                    <TableHead>Delivery</TableHead>
-                    <TableHead>Weight</TableHead>
-                    <TableHead>Volume</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Cost</TableHead>
+                    <TableHead>{t('customer.bulk.order_id') || 'Order ID'}</TableHead>
+                    <TableHead>{t('customer.bulk.pickup') || 'Pickup'}</TableHead>
+                    <TableHead>{t('customer.bulk.delivery') || 'Delivery'}</TableHead>
+                    <TableHead>{t('customer.bulk.weight') || 'Weight'}</TableHead>
+                    <TableHead>{t('customer.bulk.volume') || 'Volume'}</TableHead>
+                    <TableHead>{t('customer.bulk.category') || 'Category'}</TableHead>
+                    <TableHead>{t('customer.bulk.cost') || 'Cost'}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -311,23 +341,35 @@ export function BulkBooking() {
             </div>
 
             <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <h4 className="font-medium text-blue-900 mb-2">Summary</h4>
+              <h4 className="font-medium text-blue-900 mb-2">
+                {t('customer.bulk.summary') || 'Summary'}
+              </h4>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
-                  <span className="text-blue-700">Total Orders:</span>
+                  <span className="text-blue-700">
+                    {t('customer.bulk.total_orders') || 'Total Orders'}:
+                  </span>
                   <p className="font-medium">{orders.length}</p>
                 </div>
                 <div>
-                  <span className="text-blue-700">Total Weight:</span>
+                  <span className="text-blue-700">
+                    {t('customer.bulk.total_weight') || 'Total Weight'}:
+                  </span>
                   <p className="font-medium">{orders.reduce((sum, order) => sum + order.weight, 0)} kg</p>
                 </div>
                 <div>
-                  <span className="text-blue-700">Total Volume:</span>
+                  <span className="text-blue-700">
+                    {t('customer.bulk.total_volume') || 'Total Volume'}:
+                  </span>
                   <p className="font-medium">{orders.reduce((sum, order) => sum + order.volume, 0)} m³</p>
                 </div>
                 <div>
-                  <span className="text-blue-700">Estimated Cost:</span>
-                  <p className="font-medium text-green-600">${orders.reduce((sum, order) => sum + order.estimatedCost, 0)}</p>
+                  <span className="text-blue-700">
+                    {t('customer.bulk.estimated_cost') || 'Estimated Cost'}:
+                  </span>
+                  <p className="font-medium text-green-600">
+                    ${orders.reduce((sum, order) => sum + order.estimatedCost, 0)}
+                  </p>
                 </div>
               </div>
             </div>
@@ -336,11 +378,11 @@ export function BulkBooking() {
 
         <div className="flex justify-between">
           <Button variant="outline" onClick={() => setStep(1)}>
-            Upload Different File
+            {t('customer.bulk.upload_different_file') || 'Upload Different File'}
           </Button>
           <Button onClick={handleOptimize} className="bg-blue-600 hover:bg-blue-700">
             <Calculator className="mr-2 h-4 w-4" />
-            Optimize Routes
+            {t('customer.bulk.optimize_routes') || 'Optimize Routes'}
           </Button>
         </div>
       </div>
@@ -352,30 +394,36 @@ export function BulkBooking() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <FileSpreadsheet className="h-5 w-5" />
-          Bulk Order Upload
+          {t('customer.bulk.title') || 'Bulk Order Upload'}
         </CardTitle>
-        <p className="text-gray-600">Upload multiple orders at once using an Excel file</p>
+        <p className="text-gray-600">
+          {t('customer.bulk.subtitle') || 'Upload multiple orders at once using an Excel file'}
+        </p>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Download Template */}
         <div className="border-2 border-dashed border-blue-200 rounded-lg p-6 text-center">
           <Download className="mx-auto h-8 w-8 text-blue-500 mb-3" />
-          <h4 className="font-medium mb-2">Need a template?</h4>
+          <h4 className="font-medium mb-2">
+            {t('customer.bulk.need_template') || 'Need a template?'}
+          </h4>
           <p className="text-sm text-gray-600 mb-4">
-            Download our Excel template with the required format
+            {t('customer.bulk.template_description') || 'Download our Excel template with the required format'}
           </p>
           <Button variant="outline" onClick={downloadTemplate}>
             <Download className="mr-2 h-4 w-4" />
-            Download Template
+            {t('customer.bulk.download_template') || 'Download Template'}
           </Button>
         </div>
 
         {/* File Upload */}
         <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
           <Upload className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-          <h4 className="text-lg font-medium mb-2">Upload your Excel file</h4>
+          <h4 className="text-lg font-medium mb-2">
+            {t('customer.bulk.upload_excel_file') || 'Upload your Excel file'}
+          </h4>
           <p className="text-gray-600 mb-4">
-            Support for .xlsx, .xls files up to 10MB
+            {t('customer.bulk.file_support') || 'Support for .xlsx, .xls files up to 10MB'}
           </p>
           <input
             type="file"
@@ -386,44 +434,52 @@ export function BulkBooking() {
           />
           <label htmlFor="file-upload">
             <Button className="bg-blue-600 hover:bg-blue-700">
-              Choose File
+              {t('customer.bulk.choose_file') || 'Choose File'}
             </Button>
           </label>
           {uploadedFile && (
             <div className="mt-4 p-3 bg-green-50 rounded-lg">
               <p className="text-green-800">
-                Uploaded: {uploadedFile.name}
+                {t('customer.bulk.uploaded', { filename: uploadedFile.name }) || `Uploaded: ${uploadedFile.name}`}
               </p>
-              <p className="text-sm text-green-600">Processing...</p>
+              <p className="text-sm text-green-600">
+                {t('customer.bulk.processing') || 'Processing...'}
+              </p>
             </div>
           )}
         </div>
 
         {/* Required Format */}
         <div className="space-y-3">
-          <h4 className="font-medium">Required Excel Format:</h4>
+          <h4 className="font-medium">
+            {t('customer.bulk.required_excel_format') || 'Required Excel Format:'}
+          </h4>
           <div className="bg-gray-50 p-4 rounded-lg">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div>
-                <h5 className="font-medium mb-2">Required Columns:</h5>
+                <h5 className="font-medium mb-2">
+                  {t('customer.bulk.required_columns') || 'Required Columns:'}
+                </h5>
                 <ul className="space-y-1 text-gray-600">
-                  <li>• Pickup Address</li>
-                  <li>• Delivery Address</li>
-                  <li>• Weight (kg)</li>
-                  <li>• Volume (m³)</li>
-                  <li>• Category</li>
-                  <li>• Urgency (standard/urgent)</li>
+                  <li>• {t('customer.bulk.column_pickup') || 'Pickup Address'}</li>
+                  <li>• {t('customer.bulk.column_delivery') || 'Delivery Address'}</li>
+                  <li>• {t('customer.bulk.column_weight') || 'Weight (kg)'}</li>
+                  <li>• {t('customer.bulk.column_volume') || 'Volume (m³)'}</li>
+                  <li>• {t('customer.bulk.column_category') || 'Category'}</li>
+                  <li>• {t('customer.bulk.column_urgency') || 'Urgency (standard/urgent)'}</li>
                 </ul>
               </div>
               <div>
-                <h5 className="font-medium mb-2">Supported Categories:</h5>
+                <h5 className="font-medium mb-2">
+                  {t('customer.bulk.supported_categories') || 'Supported Categories:'}
+                </h5>
                 <ul className="space-y-1 text-gray-600">
-                  <li>• Documents</li>
-                  <li>• Furniture</li>
-                  <li>• Construction</li>
-                  <li>• Electronics</li>
-                  <li>• Food & Beverages</li>
-                  <li>• Other</li>
+                  <li>• {t('customer.bulk.category_documents') || 'Documents'}</li>
+                  <li>• {t('customer.bulk.category_furniture') || 'Furniture'}</li>
+                  <li>• {t('customer.bulk.category_construction') || 'Construction'}</li>
+                  <li>• {t('customer.bulk.category_electronics') || 'Electronics'}</li>
+                  <li>• {t('customer.bulk.category_food') || 'Food & Beverages'}</li>
+                  <li>• {t('customer.bulk.category_other') || 'Other'}</li>
                 </ul>
               </div>
             </div>
@@ -432,13 +488,15 @@ export function BulkBooking() {
 
         {/* Benefits */}
         <div className="bg-blue-50 p-4 rounded-lg">
-          <h4 className="font-medium text-blue-900 mb-2">Bulk Booking Benefits:</h4>
+          <h4 className="font-medium text-blue-900 mb-2">
+            {t('customer.bulk.benefits_title') || 'Bulk Booking Benefits:'}
+          </h4>
           <ul className="space-y-1 text-sm text-blue-700">
-            <li>• Automatic route optimization</li>
-            <li>• Volume discounts available</li>
-            <li>• Efficient vehicle utilization</li>
-            <li>• Reduced delivery costs</li>
-            <li>• Environmental impact reduction</li>
+            <li>• {t('customer.bulk.benefit_1') || 'Automatic route optimization'}</li>
+            <li>• {t('customer.bulk.benefit_2') || 'Volume discounts available'}</li>
+            <li>• {t('customer.bulk.benefit_3') || 'Efficient vehicle utilization'}</li>
+            <li>• {t('customer.bulk.benefit_4') || 'Reduced delivery costs'}</li>
+            <li>• {t('customer.bulk.benefit_5') || 'Environmental impact reduction'}</li>
           </ul>
         </div>
       </CardContent>

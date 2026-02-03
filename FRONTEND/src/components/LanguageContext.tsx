@@ -5,7 +5,7 @@ export type Language = 'en' | 'ru';
 interface LanguageContextType {
   language: Language;
   setLanguage: (language: Language) => void;
-  t: (key: string) => string;
+  t: (key: string, variables?: Record<string, string>) => string;
 }
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
@@ -428,7 +428,225 @@ const translations = {
     'status.processing': 'Processing',
     'status.failed': 'Failed',
     'status.active': 'Active',
-    'status.inactive': 'Inactive'
+    'status.inactive': 'Inactive',
+
+    // CUSTOMER BOOKING
+    'customer.booking.title': 'Delivery Price Calculator',
+    'customer.booking.subtitle': 'Get instant price estimates for your delivery',
+    'customer.booking.price_estimate': 'Fill in all fields to see price estimate',
+    'customer.booking.pickup_address': 'Pickup Address',
+    'customer.booking.delivery_address': 'Delivery Address',
+    'customer.booking.item_category': 'Item Category',
+    'customer.booking.weight': 'Weight (kg)',
+    'customer.booking.volume': 'Volume (m³)',
+    'customer.booking.urgency': 'Delivery Urgency',
+    'customer.booking.special_requirements': 'Special Requirements',
+    'customer.booking.fragile': 'Fragile items',
+    'customer.booking.refrigerated': 'Refrigerated',
+    'customer.booking.oversized': 'Oversized',
+    'customer.booking.hazardous': 'Hazardous',
+    'customer.booking.book_delivery': 'Book Delivery for ${amount}',
+    'customer.booking.calculating': 'Calculating...',
+
+    // BULK BOOKING
+    'customer.bulk.title': 'Bulk Order Upload',
+    'customer.bulk.subtitle': 'Upload multiple orders at once using an Excel file',
+    'customer.bulk.download_template': 'Download Template',
+    'customer.bulk.choose_file': 'Choose File',
+    'customer.bulk.upload_success': 'Uploaded: ${filename}',
+    'customer.bulk.processing': 'Processing...',
+    'customer.bulk.review_orders': 'Review Orders (${count})',
+    'customer.bulk.optimize_routes': 'Optimize Routes',
+    'customer.bulk.confirm_booking': 'Confirm Booking',
+    // 'customer.bulk.orders_placed': 'Orders Placed', // Removed duplicate key
+    'customer.bulk.vehicles_assigned': 'Vehicles Assigned',
+    'customer.bulk.total_cost': 'Total Cost',
+    'customer.bulk.fuel_savings': 'Fuel Savings',
+
+    // ORDER TRACKING
+    'customer.tracking.my_orders': 'My Orders',
+    'customer.tracking.your_orders': 'Your Orders',
+    'customer.tracking.progress': 'Progress',
+    'customer.tracking.eta': 'ETA: ${time}',
+    'customer.tracking.driver_info': 'Driver Information',
+    'customer.tracking.pickup_address': 'Pickup Address',
+    'customer.tracking.delivery_address': 'Delivery Address',
+    'customer.tracking.order_timeline': 'Order Timeline',
+    'customer.tracking.mark_delivered': 'Mark as Delivered',
+    'customer.tracking.rate_driver': 'Rate Driver',
+
+    // MATCHING ENGINE
+    'customer.matching.title': 'Driver Matching Engine',
+    'customer.matching.subtitle': 'Find the best drivers based on your requirements',
+    'customer.matching.find_drivers': 'Find Drivers',
+    'customer.matching.location': 'Pickup Location',
+    'customer.matching.weight': 'Weight (kg)',
+    'customer.matching.volume': 'Volume (m³)',
+    'customer.matching.category': 'Category',
+    'customer.matching.radius': 'Search Radius (km)',
+    'customer.matching.matched_drivers': 'Matched Drivers (${count})',
+    'customer.matching.compatibility_score': 'Compatibility Score: ${score}%',
+
+    // NOTIFICATIONS
+    'customer.notifications.title': 'Notifications',
+    'customer.notifications.all': 'All',
+    'customer.notifications.unread': 'Unread',
+    'customer.notifications.orders': 'Orders',
+    'customer.notifications.payments': 'Payments',
+    'customer.notifications.system': 'System',
+    'customer.notifications.settings': 'Settings',
+    'customer.notifications.no_notifications': 'No notifications',
+    'customer.notifications.no_unread': 'All caught up! No unread notifications.',
+    'customer.notifications.mark_all_read': 'Mark All Read',
+
+    // CUSTOMER PROFILE TABS
+    'customer.profile.tab.personal': 'Personal',
+    'customer.profile.tab.addresses': 'Addresses',
+    'customer.profile.tab.payment': 'Payment',
+    'customer.profile.tab.preferences': 'Preferences',
+    'customer.profile.tab.stats': 'Statistics',
+    'customer.profile.no_profile': 'No Profile Found',
+    'customer.profile.complete_onboarding': 'Complete onboarding to create your customer profile',
+    'customer.profile.go_to_onboarding': 'Go to Onboarding',
+
+    // ADDITIONAL CUSTOMER UI KEYS
+    'customer.dashboard.title': 'Customer Dashboard',
+    'customer.dashboard.welcome': 'Welcome back, Customer!',
+    'customer.dashboard.active_orders': 'Active Orders',
+    'customer.dashboard.completed_orders': 'Completed Orders',
+    'customer.dashboard.total_spent': 'Total Spent',
+    'customer.dashboard.create_order': 'Create New Order',
+    'customer.dashboard.view_all': 'View All Orders',
+    'customer.dashboard.no_orders': 'No active orders',
+    'customer.dashboard.get_started': 'Create your first delivery order',
+
+    // ORDER STATUS
+    'customer.order_status.pending': 'Pending',
+    'customer.order_status.matched': 'Matched',
+    'customer.order_status.accepted': 'Accepted',
+    'customer.order_status.in_progress': 'In Progress',
+    'customer.order_status.completed': 'Completed',
+    'customer.order_status.cancelled': 'Cancelled',
+
+    // PAYMENT METHODS
+    'customer.payment.methods.card': 'Credit Card',
+    'customer.payment.methods.cash': 'Cash',
+    'customer.payment.methods.wallet': 'Wallet',
+    'customer.payment.status.pending': 'Pending',
+    'customer.payment.status.completed': 'Completed',
+    'customer.payment.status.failed': 'Failed',
+    'customer.payment.status.refunded': 'Refunded',
+
+    // ADDITIONAL COMMON CUSTOMER UI
+    'customer.common.save': 'Save',
+    'customer.common.cancel': 'Cancel',
+    'customer.common.edit': 'Edit',
+    'customer.common.delete': 'Delete',
+    'customer.common.confirm': 'Confirm',
+    'customer.common.yes': 'Yes',
+    'customer.common.no': 'No',
+    'customer.common.loading': 'Loading...',
+    'customer.common.error': 'Error',
+    'customer.common.success': 'Success',
+    'customer.common.warning': 'Warning',
+    'customer.common.info': 'Information',
+
+    // SUPPORT & HELP
+    'customer.support.title': 'Support Center',
+    'customer.support.faq': 'Frequently Asked Questions',
+    'customer.support.contact_us': 'Contact Us',
+    'customer.support.live_chat': 'Live Chat',
+    'customer.support.help_center': 'Help Center',
+
+    // REVIEWS & RATINGS
+    'customer.reviews.title': 'My Reviews',
+    'customer.reviews.leave_review': 'Leave a Review',
+    'customer.reviews.driver_rating': 'Driver Rating',
+    'customer.reviews.service_rating': 'Service Rating',
+    'customer.reviews.submit_review': 'Submit Review',
+
+    // SETTINGS
+    'customer.settings.title': 'Settings',
+    'customer.settings.account': 'Account Settings',
+    'customer.settings.notifications': 'Notification Settings',
+    'customer.settings.privacy': 'Privacy Settings',
+    'customer.booking.category_documents': 'Documents & Small Packages',
+    'customer.booking.category_furniture': 'Furniture & Appliances',
+    'customer.booking.category_construction': 'Construction Materials',
+    'customer.booking.category_food': 'Food & Beverages',
+    'customer.booking.category_electronics': 'Electronics & Fragile Items',
+    'customer.booking.category_other': 'Other',
+    'customer.booking.price_calculated_success': 'Price calculated successfully!',
+    'customer.booking.price_calculation_failed': 'Failed to calculate price',
+    'customer.booking.service_connection_failed': 'Failed to connect to pricing service',
+    'customer.booking.ready_to_book': 'Ready to book! Estimated price: $${price}',
+    'customer.booking.estimated_price': 'Estimated Price',
+    'customer.booking.distance': 'Distance',
+    'customer.booking.estimated_time': 'Est. time',
+    'customer.booking.confidence_interval': 'Confidence interval: $${low} - $${high}',
+    'customer.booking.fill_all_fields_to_see_price': 'Fill in all fields to see price estimate',
+    'customer.booking.pickup_address_placeholder': 'Enter pickup address',
+    'customer.booking.delivery_address_placeholder': 'Enter delivery address',
+    'customer.booking.select_category': 'Select category',
+    'customer.booking.weight_placeholder': 'e.g., 5.5',
+    'customer.booking.volume_placeholder': 'e.g., 0.5',
+    'customer.booking.urgency_standard': 'Standard (same day)',
+    'customer.booking.urgency_urgent': 'Urgent (within 2 hours)',
+    'customer.booking.urgency_scheduled': 'Scheduled (next day)',
+    'customer.booking.fill_all_fields_to_book': 'Fill all fields to see price',
+    'customer.booking.price_updates_automatically': 'Price updates automatically as you fill the form',
+    'customer.booking.ai_powered_prediction': 'Using AI-powered delivery cost prediction with 81% accuracy',
+    'customer.bulk.template_downloaded': 'Excel template downloaded! Fill in: Pickup Address, Delivery Address, Weight (kg), Volume (m³), Category, Urgency',
+    'customer.bulk.booking_confirmed': 'Bulk Booking Confirmed!',
+    'customer.bulk.orders_placed': 'Orders Placed',
+    'customer.bulk.upload_another_batch': 'Upload Another Batch',
+    'customer.bulk.optimization_results': 'Optimization Results',
+    'customer.bulk.total_orders': 'Total Orders',
+    'customer.bulk.vehicles_needed': 'Vehicles Needed',
+    'customer.bulk.total_distance': 'Total Distance',
+    'customer.bulk.co2_reduced': 'CO₂ Reduced',
+    'customer.bulk.optimized_routes': 'Optimized Routes',
+    'customer.bulk.utilization': 'Utilization',
+    'customer.bulk.back_to_review': 'Back to Review',
+    'customer.bulk.review_description': 'Review and edit your bulk orders before optimization',
+    'customer.bulk.order_id': 'Order ID',
+    'customer.bulk.pickup': 'Pickup',
+    'customer.bulk.delivery': 'Delivery',
+    'customer.bulk.weight': 'Weight',
+    'customer.bulk.volume': 'Volume',
+    'customer.bulk.category': 'Category',
+    'customer.bulk.cost': 'Cost',
+    'customer.bulk.summary': 'Summary',
+    'customer.bulk.total_weight': 'Total Weight',
+    'customer.bulk.total_volume': 'Total Volume',
+    'customer.bulk.estimated_cost': 'Estimated Cost',
+    'customer.bulk.upload_different_file': 'Upload Different File',
+    'customer.bulk.need_template': 'Need a template?',
+    'customer.bulk.template_description': 'Download our Excel template with the required format',
+    'customer.bulk.upload_excel_file': 'Upload your Excel file',
+    'customer.bulk.file_support': 'Support for .xlsx, .xls files up to 10MB',
+    'customer.bulk.uploaded': 'Uploaded: ${filename}',
+    'customer.bulk.required_excel_format': 'Required Excel Format:',
+    'customer.bulk.required_columns': 'Required Columns:',
+    'customer.bulk.column_pickup': 'Pickup Address',
+    'customer.bulk.column_delivery': 'Delivery Address',
+    'customer.bulk.column_weight': 'Weight (kg)',
+    'customer.bulk.column_volume': 'Volume (m³)',
+    'customer.bulk.column_category': 'Category',
+    'customer.bulk.column_urgency': 'Urgency (standard/urgent)',
+    'customer.bulk.supported_categories': 'Supported Categories:',
+    'customer.bulk.category_documents': 'Documents',
+    'customer.bulk.category_furniture': 'Furniture',
+    'customer.bulk.category_construction': 'Construction',
+    'customer.bulk.category_electronics': 'Electronics',
+    'customer.bulk.category_food': 'Food & Beverages',
+    'customer.bulk.category_other': 'Other',
+    'customer.bulk.benefits_title': 'Bulk Booking Benefits:',
+    'customer.bulk.benefit_1': 'Automatic route optimization',
+    'customer.bulk.benefit_2': 'Volume discounts available',
+    'customer.bulk.benefit_3': 'Efficient vehicle utilization',
+    'customer.bulk.benefit_4': 'Reduced delivery costs',
+    'customer.bulk.benefit_5': 'Environmental impact reduction',
   },
   
   ru: {
@@ -847,15 +1065,245 @@ const translations = {
     'status.processing': 'Обработка',
     'status.failed': 'Неудача',
     'status.active': 'Активный',
-    'status.inactive': 'Неактивный'
+    'status.inactive': 'Неактивный',
+    // =============== CUSTOMER UI TRANSLATIONS ===============
+    // CUSTOMER BOOKING
+    'customer.booking.title': 'Калькулятор стоимости доставки',
+    'customer.booking.subtitle': 'Получите мгновенную оценку стоимости вашей доставки',
+    'customer.booking.price_estimate': 'Заполните все поля для оценки стоимости',
+    'customer.booking.pickup_address': 'Адрес забора',
+    'customer.booking.delivery_address': 'Адрес доставки',
+    'customer.booking.item_category': 'Категория товара',
+    'customer.booking.weight': 'Вес (кг)',
+    'customer.booking.volume': 'Объём (м³)',
+    'customer.booking.urgency': 'Срочность доставки',
+    'customer.booking.special_requirements': 'Особые требования',
+    'customer.booking.fragile': 'Хрупкие предметы',
+    'customer.booking.refrigerated': 'Охлаждаемые',
+    'customer.booking.oversized': 'Крупногабаритные',
+    'customer.booking.hazardous': 'Опасные грузы',
+    'customer.booking.book_delivery': 'Забронировать доставку за ${amount}',
+    'customer.booking.fill_all_fields': 'Заполните все поля для отображения цены',
+    'customer.booking.calculating': 'Расчёт...',
+
+    // BULK BOOKING
+    'customer.bulk.title': 'Массовая загрузка заказов',
+    'customer.bulk.subtitle': 'Загрузите несколько заказов одновременно с помощью файла Excel',
+    'customer.bulk.download_template': 'Скачать шаблон',
+    'customer.bulk.choose_file': 'Выбрать файл',
+    'customer.bulk.upload_success': 'Загружено: ${filename}',
+    'customer.bulk.processing': 'Обработка...',
+    'customer.bulk.review_orders': 'Просмотреть заказы (${count})',
+    'customer.bulk.optimize_routes': 'Оптимизировать маршруты',
+    'customer.bulk.confirm_booking': 'Подтвердить бронирование',
+    'customer.bulk.orders_placed': 'Заказов размещено',
+    'customer.bulk.vehicles_assigned': 'Транспорта назначено',
+    'customer.bulk.total_cost': 'Общая стоимость',
+    'customer.bulk.fuel_savings': 'Экономия топлива',
+
+    // ORDER TRACKING
+    'customer.tracking.my_orders': 'Мои заказы',
+    'customer.tracking.your_orders': 'Ваши заказы',
+    'customer.tracking.progress': 'Прогресс',
+    'customer.tracking.eta': 'Время прибытия: ${time}',
+    'customer.tracking.driver_info': 'Информация о водителе',
+    'customer.tracking.pickup_address': 'Адрес забора',
+    'customer.tracking.delivery_address': 'Адрес доставки',
+    'customer.tracking.order_timeline': 'Временная шкала заказа',
+    'customer.tracking.mark_delivered': 'Отметить как доставленное',
+    'customer.tracking.rate_driver': 'Оценить водителя',
+
+    // MATCHING ENGINE
+    'customer.matching.title': 'Система подбора водителей',
+    'customer.matching.subtitle': 'Найдите лучших водителей на основе ваших требований',
+    'customer.matching.find_drivers': 'Найти водителей',
+    'customer.matching.location': 'Место забора',
+    'customer.matching.weight': 'Вес (кг)',
+    'customer.matching.volume': 'Объём (м³)',
+    'customer.matching.category': 'Категория',
+    'customer.matching.radius': 'Радиус поиска (км)',
+    'customer.matching.matched_drivers': 'Подходящие водители (${count})',
+    'customer.matching.compatibility_score': 'Совместимость: ${score}%',
+
+    // NOTIFICATIONS
+    'customer.notifications.title': 'Уведомления',
+    'customer.notifications.all': 'Все',
+    'customer.notifications.unread': 'Непрочитанные',
+    'customer.notifications.orders': 'Заказы',
+    'customer.notifications.payments': 'Платежи',
+    'customer.notifications.system': 'Система',
+    'customer.notifications.settings': 'Настройки',
+    'customer.notifications.no_notifications': 'Нет уведомлений',
+    'customer.notifications.no_unread': 'Все прочитано! Нет непрочитанных уведомлений.',
+    'customer.notifications.mark_all_read': 'Отметить все как прочитанные',
+
+    // CUSTOMER PROFILE TABS
+    'customer.profile.tab.personal': 'Личное',
+    'customer.profile.tab.addresses': 'Адреса',
+    'customer.profile.tab.payment': 'Платежи',
+    'customer.profile.tab.preferences': 'Предпочтения',
+    'customer.profile.tab.stats': 'Статистика',
+    'customer.profile.no_profile': 'Профиль не найден',
+    'customer.profile.complete_onboarding': 'Завершите регистрацию для создания профиля клиента',
+    'customer.profile.go_to_onboarding': 'Перейти к регистрации',
+
+    // ADDITIONAL CUSTOMER UI KEYS
+    'customer.dashboard.title': 'Панель клиента',
+    'customer.dashboard.welcome': 'Добро пожаловать, клиент!',
+    'customer.dashboard.active_orders': 'Активные заказы',
+    'customer.dashboard.completed_orders': 'Завершённые заказы',
+    'customer.dashboard.total_spent': 'Всего потрачено',
+    'customer.dashboard.create_order': 'Создать новый заказ',
+    'customer.dashboard.view_all': 'Просмотреть все заказы',
+    'customer.dashboard.no_orders': 'Нет активных заказов',
+    'customer.dashboard.get_started': 'Создайте свой первый заказ на доставку',
+
+    // ORDER STATUS
+    'customer.order_status.pending': 'Ожидание',
+    'customer.order_status.matched': 'Подобран',
+    'customer.order_status.accepted': 'Принят',
+    'customer.order_status.in_progress': 'В процессе',
+    'customer.order_status.completed': 'Завершён',
+    'customer.order_status.cancelled': 'Отменён',
+
+    // PAYMENT METHODS
+    'customer.payment.methods.card': 'Кредитная карта',
+    'customer.payment.methods.cash': 'Наличные',
+    'customer.payment.methods.wallet': 'Кошелёк',
+    'customer.payment.status.pending': 'Ожидание',
+    'customer.payment.status.completed': 'Завершён',
+    'customer.payment.status.failed': 'Неудача',
+    'customer.payment.status.refunded': 'Возвращён',
+
+    // ADDITIONAL COMMON CUSTOMER UI
+    'customer.common.save': 'Сохранить',
+    'customer.common.cancel': 'Отмена',
+    'customer.common.edit': 'Редактировать',
+    'customer.common.delete': 'Удалить',
+    'customer.common.confirm': 'Подтвердить',
+    'customer.common.yes': 'Да',
+    'customer.common.no': 'Нет',
+    'customer.common.loading': 'Загрузка...',
+    'customer.common.error': 'Ошибка',
+    'customer.common.success': 'Успех',
+    'customer.common.warning': 'Предупреждение',
+    'customer.common.info': 'Информация',
+
+    // SUPPORT & HELP
+    'customer.support.title': 'Центр поддержки',
+    'customer.support.faq': 'Часто задаваемые вопросы',
+    'customer.support.contact_us': 'Свяжитесь с нами',
+    'customer.support.live_chat': 'Онлайн-чат',
+    'customer.support.help_center': 'Центр помощи',
+
+    // REVIEWS & RATINGS
+    'customer.reviews.title': 'Мои отзывы',
+    'customer.reviews.leave_review': 'Оставить отзыв',
+    'customer.reviews.driver_rating': 'Оценка водителя',
+    'customer.reviews.service_rating': 'Оценка сервиса',
+    'customer.reviews.submit_review': 'Отправить отзыв',
+
+    // SETTINGS
+    'customer.settings.title': 'Настройки',
+    'customer.settings.account': 'Настройки аккаунта',
+    'customer.settings.notifications': 'Настройки уведомлений',
+    'customer.settings.privacy': 'Настройки конфиденциальности',
+    'customer.booking.category_documents': 'Документы и мелкие посылки',
+    'customer.booking.category_furniture': 'Мебель и бытовая техника',
+    'customer.booking.category_construction': 'Строительные материалы',
+    'customer.booking.category_food': 'Продукты и напитки',
+    'customer.booking.category_electronics': 'Электроника и хрупкие предметы',
+    'customer.booking.category_other': 'Другое',
+    'customer.booking.price_calculated_success': 'Стоимость успешно рассчитана!',
+    'customer.booking.price_calculation_failed': 'Не удалось рассчитать стоимость',
+    'customer.booking.service_connection_failed': 'Не удалось подключиться к сервису расчета стоимости',
+    'customer.booking.ready_to_book': 'Готово к бронированию! Примерная цена: $${price}',
+    'customer.booking.estimated_price': 'Примерная цена',
+    'customer.booking.distance': 'Расстояние',
+    'customer.booking.estimated_time': 'Примерное время',
+    'customer.booking.confidence_interval': 'Доверительный интервал: $${low} - $${high}',
+    'customer.booking.fill_all_fields_to_see_price': 'Заполните все поля для отображения цены',
+    'customer.booking.pickup_address_placeholder': 'Введите адрес забора',
+    'customer.booking.delivery_address_placeholder': 'Введите адрес доставки',
+    'customer.booking.select_category': 'Выберите категорию',
+    'customer.booking.weight_placeholder': 'напр., 5.5',
+    'customer.booking.volume_placeholder': 'напр., 0.5',
+    'customer.booking.urgency_standard': 'Стандарт (в тот же день)',
+    'customer.booking.urgency_urgent': 'Срочно (в течение 2 часов)',
+    'customer.booking.urgency_scheduled': 'По расписанию (на следующий день)',
+    'customer.booking.fill_all_fields_to_book': 'Заполните все поля для отображения цены',
+    'customer.booking.price_updates_automatically': 'Цена обновляется автоматически по мере заполнения формы',
+    'customer.booking.ai_powered_prediction': 'Используется ИИ-прогнозирование стоимости доставки с точностью 81%',
+    'customer.bulk.template_downloaded': 'Шаблон Excel загружен! Заполните: Адрес забора, Адрес доставки, Вес (кг), Объём (м³), Категория, Срочность',
+    'customer.bulk.booking_confirmed': 'Массовое бронирование подтверждено!',
+    'customer.bulk.upload_another_batch': 'Загрузить другую партию',
+    'customer.bulk.optimization_results': 'Результаты оптимизации',
+    'customer.bulk.total_orders': 'Всего заказов',
+    'customer.bulk.vehicles_needed': 'Нужно транспорта',
+    'customer.bulk.total_distance': 'Общее расстояние',
+    'customer.bulk.co2_reduced': 'CO₂ снижено',
+    'customer.bulk.optimized_routes': 'Оптимизированные маршруты',
+    'customer.bulk.utilization': 'Загрузка',
+    'customer.bulk.back_to_review': 'Назад к просмотру',
+    'customer.bulk.review_description': 'Просмотрите и отредактируйте массовые заказы перед оптимизацией',
+    'customer.bulk.order_id': 'ID заказа',
+    'customer.bulk.pickup': 'Забор',
+    'customer.bulk.delivery': 'Доставка',
+    'customer.bulk.weight': 'Вес',
+    'customer.bulk.volume': 'Объём',
+    'customer.bulk.category': 'Категория',
+    'customer.bulk.cost': 'Стоимость',
+    'customer.bulk.summary': 'Сводка',
+    'customer.bulk.total_weight': 'Общий вес',
+    'customer.bulk.total_volume': 'Общий объём',
+    'customer.bulk.estimated_cost': 'Примерная стоимость',
+    'customer.bulk.upload_different_file': 'Загрузить другой файл',
+    'customer.bulk.need_template': 'Нужен шаблон?',
+    'customer.bulk.template_description': 'Скачайте наш шаблон Excel с нужным форматом',
+    'customer.bulk.upload_excel_file': 'Загрузите файл Excel',
+    'customer.bulk.file_support': 'Поддержка файлов .xlsx, .xls до 10 МБ',
+    'customer.bulk.uploaded': 'Загружено: ${filename}',
+    'customer.bulk.required_excel_format': 'Требуемый формат Excel:',
+    'customer.bulk.required_columns': 'Обязательные колонки:',
+    'customer.bulk.column_pickup': 'Адрес забора',
+    'customer.bulk.column_delivery': 'Адрес доставки',
+    'customer.bulk.column_weight': 'Вес (кг)',
+    'customer.bulk.column_volume': 'Объём (м³)',
+    'customer.bulk.column_category': 'Категория',
+    'customer.bulk.column_urgency': 'Срочность (стандартная/срочная)',
+    'customer.bulk.supported_categories': 'Поддерживаемые категории:',
+    'customer.bulk.category_documents': 'Документы',
+    'customer.bulk.category_furniture': 'Мебель',
+    'customer.bulk.category_construction': 'Строительные материалы',
+    'customer.bulk.category_electronics': 'Электроника',
+    'customer.bulk.category_food': 'Продукты и напитки',
+    'customer.bulk.category_other': 'Другое',
+    'customer.bulk.benefits_title': 'Преимущества массового бронирования:',
+    'customer.bulk.benefit_1': 'Автоматическая оптимизация маршрутов',
+    'customer.bulk.benefit_2': 'Доступны скидки за объём',
+    'customer.bulk.benefit_3': 'Эффективная загрузка транспорта',
+    'customer.bulk.benefit_4': 'Снижение стоимости доставки',
+    'customer.bulk.benefit_5': 'Снижение воздействия на окружающую среду',
   }
 };
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<Language>('en');
 
-  const t = (key: string): string => {
-    return translations[language][key] || key;
+  // Update the t function in your LanguageContext.tsx
+  const t = (key: string, variables?: Record<string, string>): string => {
+    let translation = translations[language][key] || key;
+
+    // Replace variables if provided
+    if (variables) {
+      Object.keys(variables).forEach(variable => {
+        const placeholder = `\${${variable}}`;
+        const value = variables[variable];
+        translation = translation.replace(placeholder, value);
+      });
+    }
+
+    return translation;
   };
 
   return (
@@ -871,4 +1319,128 @@ export function useLanguage() {
     throw new Error('useLanguage must be used within a LanguageProvider');
   }
   return context;
+}
+
+// Add this function after the useLanguage hook
+export function useCustomerTranslations() {
+  const { t } = useLanguage();
+  
+  return {
+    // Helper to easily access customer translations
+    booking: {
+      title: () => t('customer.booking.title'),
+      subtitle: () => t('customer.booking.subtitle'),
+      price_estimate: () => t('customer.booking.price_estimate'),
+      pickup_address: () => t('customer.booking.pickup_address'),
+      delivery_address: () => t('customer.booking.delivery_address'),
+      item_category: () => t('customer.booking.item_category'),
+      weight: () => t('customer.booking.weight'),
+      volume: () => t('customer.booking.volume'),
+      urgency: () => t('customer.booking.urgency'),
+      special_requirements: () => t('customer.booking.special_requirements'),
+      fragile: () => t('customer.booking.fragile'),
+      refrigerated: () => t('customer.booking.refrigerated'),
+      oversized: () => t('customer.booking.oversized'),
+      hazardous: () => t('customer.booking.hazardous'),
+      book_delivery: (amount: string) => t('customer.booking.book_delivery', { amount }),
+      fill_all_fields: () => t('customer.booking.fill_all_fields'),
+      calculating: () => t('customer.booking.calculating'),
+    },
+    
+    bulk: {
+      title: () => t('customer.bulk.title'),
+      subtitle: () => t('customer.bulk.subtitle'),
+      download_template: () => t('customer.bulk.download_template'),
+      choose_file: () => t('customer.bulk.choose_file'),
+      upload_success: (filename: string) => t('customer.bulk.upload_success', { filename }),
+      processing: () => t('customer.bulk.processing'),
+      review_orders: (count: string) => t('customer.bulk.review_orders', { count }),
+      optimize_routes: () => t('customer.bulk.optimize_routes'),
+      confirm_booking: () => t('customer.bulk.confirm_booking'),
+      booking_confirmed: () => t('customer.bulk.booking_confirmed'),
+      orders_placed: () => t('customer.bulk.orders_placed'),
+      vehicles_assigned: () => t('customer.bulk.vehicles_assigned'),
+      total_cost: () => t('customer.bulk.total_cost'),
+      fuel_savings: () => t('customer.bulk.fuel_savings'),
+    },
+    
+    tracking: {
+      my_orders: () => t('customer.tracking.my_orders'),
+      your_orders: () => t('customer.tracking.your_orders'),
+      progress: () => t('customer.tracking.progress'),
+      eta: (time: string) => t('customer.tracking.eta', { time }),
+      driver_info: () => t('customer.tracking.driver_info'),
+      pickup_address: () => t('customer.tracking.pickup_address'),
+      delivery_address: () => t('customer.tracking.delivery_address'),
+      order_timeline: () => t('customer.tracking.order_timeline'),
+      mark_delivered: () => t('customer.tracking.mark_delivered'),
+      rate_driver: () => t('customer.tracking.rate_driver'),
+    },
+    
+    matching: {
+      title: () => t('customer.matching.title'),
+      subtitle: () => t('customer.matching.subtitle'),
+      find_drivers: () => t('customer.matching.find_drivers'),
+      location: () => t('customer.matching.location'),
+      weight: () => t('customer.matching.weight'),
+      volume: () => t('customer.matching.volume'),
+      category: () => t('customer.matching.category'),
+      radius: () => t('customer.matching.radius'),
+      matched_drivers: (count: string) => t('customer.matching.matched_drivers', { count }),
+      compatibility_score: (score: string) => t('customer.matching.compatibility_score', { score }),
+    },
+    
+    notifications: {
+      title: () => t('customer.notifications.title'),
+      all: () => t('customer.notifications.all'),
+      unread: () => t('customer.notifications.unread'),
+      orders: () => t('customer.notifications.orders'),
+      payments: () => t('customer.notifications.payments'),
+      system: () => t('customer.notifications.system'),
+      settings: () => t('customer.notifications.settings'),
+      no_notifications: () => t('customer.notifications.no_notifications'),
+      no_unread: () => t('customer.notifications.no_unread'),
+      mark_all_read: () => t('customer.notifications.mark_all_read'),
+    },
+    
+    profile: {
+      tabs: {
+        personal: () => t('customer.profile.tab.personal'),
+        addresses: () => t('customer.profile.tab.addresses'),
+        payment: () => t('customer.profile.tab.payment'),
+        preferences: () => t('customer.profile.tab.preferences'),
+        stats: () => t('customer.profile.tab.stats'),
+      },
+      no_profile: () => t('customer.profile.no_profile'),
+      complete_onboarding: () => t('customer.profile.complete_onboarding'),
+      go_to_onboarding: () => t('customer.profile.go_to_onboarding'),
+    },
+    
+    dashboard: {
+      title: () => t('customer.dashboard.title'),
+      welcome: () => t('customer.dashboard.welcome'),
+      active_orders: () => t('customer.dashboard.active_orders'),
+      completed_orders: () => t('customer.dashboard.completed_orders'),
+      total_spent: () => t('customer.dashboard.total_spent'),
+      create_order: () => t('customer.dashboard.create_order'),
+      view_all: () => t('customer.dashboard.view_all'),
+      no_orders: () => t('customer.dashboard.no_orders'),
+      get_started: () => t('customer.dashboard.get_started'),
+    },
+    
+    common: {
+      save: () => t('customer.common.save'),
+      cancel: () => t('customer.common.cancel'),
+      edit: () => t('customer.common.edit'),
+      delete: () => t('customer.common.delete'),
+      confirm: () => t('customer.common.confirm'),
+      yes: () => t('customer.common.yes'),
+      no: () => t('customer.common.no'),
+      loading: () => t('customer.common.loading'),
+      error: () => t('customer.common.error'),
+      success: () => t('customer.common.success'),
+      warning: () => t('customer.common.warning'),
+      info: () => t('customer.common.info'),
+    },
+  };
 }
