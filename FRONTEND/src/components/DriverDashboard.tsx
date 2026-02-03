@@ -12,6 +12,7 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { driverApi } from '../src/lib/api';
 import { useDriverProfile } from '../src/hooks/useDriverProfile';
 import { toast } from 'sonner';
+import { useLanguage } from './LanguageContext';
 
 interface Vehicle {
   id: string;
@@ -55,6 +56,7 @@ interface LocationCoords {
 }
 
 export function DriverDashboard() {
+  const { t } = useLanguage();
   const [isOnline, setIsOnline] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState('');
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -65,7 +67,7 @@ export function DriverDashboard() {
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   
   // Location state
-  const [currentLocation, setCurrentLocation] = useState<string>('Downtown Area');
+  const [currentLocation, setCurrentLocation] = useState<string>(t('driver.dashboard.default_location') || 'Downtown Area');
   const [locationCoords, setLocationCoords] = useState<LocationCoords | null>(null);
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -142,7 +144,7 @@ export function DriverDashboard() {
 
     } catch (error: any) {
       console.error('❌ Error loading dashboard data:', error);
-      toast.error('Failed to load dashboard data. Using sample data.');
+      toast.error(t('driver.dashboard.load_failed') || 'Failed to load dashboard data. Using sample data.');
 
       // Fallback to sample data
       const sampleVehicle: Vehicle = {
@@ -181,7 +183,7 @@ export function DriverDashboard() {
       // Try to get precise location from browser
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         if (!navigator.geolocation) {
-          reject(new Error('Geolocation not supported'));
+          reject(new Error(t('driver.dashboard.geolocation_not_supported') || 'Geolocation not supported'));
           return;
         }
 
@@ -213,23 +215,24 @@ export function DriverDashboard() {
       } catch (geocodeError) {
         console.warn('Reverse geocoding failed:', geocodeError);
         // Return coordinates if reverse geocoding fails
-        return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+        return t('driver.dashboard.coordinates', { lat: latitude.toFixed(4), lng: longitude.toFixed(4) }) || 
+          `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
       }
 
     } catch (error: any) {
       console.warn('Could not get precise location:', error);
       
-      let errorMessage = 'Unable to get location';
+      let errorMessage = t('driver.dashboard.location_unavailable') || 'Unable to get location';
       if (error.code === error.PERMISSION_DENIED) {
-        errorMessage = 'Location permission denied. Please enable location services in your browser settings.';
+        errorMessage = t('driver.dashboard.permission_denied') || 'Location permission denied. Please enable location services in your browser settings.';
       } else if (error.code === error.TIMEOUT) {
-        errorMessage = 'Location request timed out.';
+        errorMessage = t('driver.dashboard.location_timeout') || 'Location request timed out.';
       } else if (error.code === error.POSITION_UNAVAILABLE) {
-        errorMessage = 'Location information is unavailable.';
+        errorMessage = t('driver.dashboard.location_unavailable_detail') || 'Location information is unavailable.';
       }
       
       setLocationError(errorMessage);
-      return "Downtown Area"; // Fallback location
+      return t('driver.dashboard.default_location') || "Downtown Area"; // Fallback location
     } finally {
       setGettingLocation(false);
     }
@@ -243,7 +246,7 @@ export function DriverDashboard() {
       );
       
       if (!response.ok) {
-        throw new Error('Reverse geocoding failed');
+        throw new Error(t('driver.dashboard.reverse_geocoding_failed') || 'Reverse geocoding failed');
       }
       
       const data = await response.json();
@@ -257,7 +260,8 @@ export function DriverDashboard() {
         return data.display_name;
       }
       
-      return `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+      return t('driver.dashboard.coordinates', { lat: latitude.toFixed(4), lng: longitude.toFixed(4) }) || 
+        `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
     } catch (error) {
       console.error('Reverse geocoding error:', error);
       throw error;
@@ -282,7 +286,11 @@ export function DriverDashboard() {
 
       if (response.success) {
         setIsOnline(value);
-        toast.success(`You are now ${value ? 'online and available for orders' : 'offline'}`);
+        toast.success(
+          value 
+            ? t('driver.dashboard.now_online') || 'You are now online and available for orders'
+            : t('driver.dashboard.now_offline') || 'You are now offline'
+        );
         
         // Update driver data if needed
         if (driverData) {
@@ -290,7 +298,7 @@ export function DriverDashboard() {
           driverData.currentLocation = location;
         }
       } else {
-        toast.error(response.error || 'Failed to update status');
+        toast.error(response.error || t('driver.dashboard.update_failed') || 'Failed to update status');
       }
     } catch (error: any) {
       console.error('Error updating status:', error);
@@ -299,18 +307,21 @@ export function DriverDashboard() {
       try {
         const fallbackResponse = await driverApi.updateStatus({ 
           isOnline: value, 
-          location: "Downtown Area" 
+          location: t('driver.dashboard.default_location') || "Downtown Area" 
         });
         
         if (fallbackResponse.success) {
           setIsOnline(value);
-          toast.warning(`You are now ${value ? 'online' : 'offline'} (using approximate location)`);
-          setCurrentLocation("Downtown Area");
+          toast.warning(
+            t('driver.dashboard.status_updated_approximate', { status: value ? t('driver.dashboard.online') : t('driver.dashboard.offline') }) || 
+            `You are now ${value ? 'online' : 'offline'} (using approximate location)`
+          );
+          setCurrentLocation(t('driver.dashboard.default_location') || "Downtown Area");
         } else {
-          toast.error('Failed to update status');
+          toast.error(t('driver.dashboard.update_failed') || 'Failed to update status');
         }
       } catch (fallbackError) {
-        toast.error('Network error. Please check your connection.');
+        toast.error(t('driver.dashboard.network_error') || 'Network error. Please check your connection.');
       }
     } finally {
       setGettingLocation(false);
@@ -331,15 +342,15 @@ export function DriverDashboard() {
         
         if (response.success) {
           setCurrentLocation(newLocation);
-          toast.success('Location updated');
+          toast.success(t('driver.dashboard.location_updated') || 'Location updated');
         }
       } else {
         setCurrentLocation(newLocation);
-        toast.success('Location refreshed');
+        toast.success(t('driver.dashboard.location_refreshed') || 'Location refreshed');
       }
     } catch (error) {
       console.error('Error refreshing location:', error);
-      toast.error('Failed to refresh location');
+      toast.error(t('driver.dashboard.location_refresh_failed') || 'Failed to refresh location');
     } finally {
       setGettingLocation(false);
     }
@@ -347,7 +358,7 @@ export function DriverDashboard() {
 
   const openInMaps = () => {
     if (!locationCoords) {
-      toast.error('No location coordinates available');
+      toast.error(t('driver.dashboard.no_coordinates') || 'No location coordinates available');
       return;
     }
     
@@ -372,7 +383,7 @@ export function DriverDashboard() {
       const response = await driverApi.uploadVehicleImage(vehicleId, formData);
       
       if (response.success) {
-        toast.success('Vehicle image uploaded successfully');
+        toast.success(t('driver.dashboard.vehicle_image_uploaded') || 'Vehicle image uploaded successfully');
         console.log('✅ Vehicle image upload response:', response.data);
         
         // Clear image error for this vehicle
@@ -383,11 +394,17 @@ export function DriverDashboard() {
           await loadDashboardData();
         }, 1000);
       } else {
-        toast.error(`Failed to upload image: ${response.error}`);
+        toast.error(
+          t('driver.dashboard.image_upload_failed', { error: response.error }) || 
+          `Failed to upload image: ${response.error}`
+        );
       }
     } catch (error: any) {
       console.error('Error uploading vehicle image:', error);
-      toast.error(`Error: ${error.message}`);
+      toast.error(
+        t('driver.dashboard.upload_error', { message: error.message }) || 
+        `Error: ${error.message}`
+      );
     } finally {
       setUploadingVehiclePic(null);
     }
@@ -414,7 +431,9 @@ export function DriverDashboard() {
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
+          <p className="text-gray-600">
+            {t('driver.dashboard.loading') || 'Loading dashboard...'}
+          </p>
         </div>
       </div>
     );
@@ -426,7 +445,9 @@ export function DriverDashboard() {
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Driver Status</CardTitle>
+            <CardTitle>
+              {t('driver.dashboard.status') || 'Driver Status'}
+            </CardTitle>
             
             <div className="flex items-center space-x-4">
               {/* Location refresh button */}
@@ -436,14 +457,16 @@ export function DriverDashboard() {
                 onClick={refreshLocation}
                 disabled={gettingLocation}
                 className="flex items-center space-x-1"
-                title="Refresh location"
+                title={t('driver.dashboard.refresh_location') || 'Refresh location'}
               >
                 {gettingLocation ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
                 ) : (
                   <Navigation className="h-4 w-4" />
                 )}
-                <span className="hidden sm:inline">Refresh</span>
+                <span className="hidden sm:inline">
+                  {t('driver.dashboard.refresh') || 'Refresh'}
+                </span>
               </Button>
               
               {/* Online/Offline button */}
@@ -457,18 +480,21 @@ export function DriverDashboard() {
                     ? 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg' 
                     : ''
                 }`}
-                aria-label={isOnline ? "Go offline" : "Go online"}
+                aria-label={isOnline 
+                  ? t('driver.dashboard.go_offline') || "Go offline" 
+                  : t('driver.dashboard.go_online') || "Go online"
+                }
               >
                 {isOnline ? (
                   <>
                     <Wifi className="h-4 w-4" />
-                    <span>Online</span>
+                    <span>{t('driver.dashboard.online') || 'Online'}</span>
                     <div className="ml-1 w-2 h-2 rounded-full bg-white animate-pulse"></div>
                   </>
                 ) : (
                   <>
                     <WifiOff className="h-4 w-4" />
-                    <span>Offline</span>
+                    <span>{t('driver.dashboard.offline') || 'Offline'}</span>
                   </>
                 )}
               </Button>
@@ -483,7 +509,10 @@ export function DriverDashboard() {
               <div className="flex items-center space-x-3">
                 <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
                 <span className="text-sm font-medium">
-                  {isOnline ? 'Available for orders' : 'Unavailable for orders'}
+                  {isOnline 
+                    ? t('driver.dashboard.available_for_orders') || 'Available for orders'
+                    : t('driver.dashboard.unavailable_for_orders') || 'Unavailable for orders'
+                  }
                 </span>
               </div>
               
@@ -501,12 +530,16 @@ export function DriverDashboard() {
               
               <div className="flex items-center space-x-2">
                 <Star className="h-4 w-4 text-yellow-500 flex-shrink-0" />
-                <span className="text-sm">{stats?.rating?.toFixed(1) || 0} Rating</span>
+                <span className="text-sm">
+                  {stats?.rating?.toFixed(1) || 0} {t('driver.dashboard.rating') || 'Rating'}
+                </span>
               </div>
               
               <div className="flex items-center space-x-2">
                 <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                <span className="text-sm">{stats?.totalDeliveries || 0} Deliveries</span>
+                <span className="text-sm">
+                  {stats?.totalDeliveries || 0} {t('driver.dashboard.deliveries') || 'Deliveries'}
+                </span>
               </div>
             </div>
             
@@ -515,9 +548,17 @@ export function DriverDashboard() {
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="text-sm text-gray-600">
-                    <p>Coordinates: {locationCoords.latitude.toFixed(6)}, {locationCoords.longitude.toFixed(6)}</p>
+                    <p>
+                      {t('driver.dashboard.coordinates_with_values', { 
+                        lat: locationCoords.latitude.toFixed(6), 
+                        lng: locationCoords.longitude.toFixed(6) 
+                      }) || `Coordinates: ${locationCoords.latitude.toFixed(6)}, ${locationCoords.longitude.toFixed(6)}`}
+                    </p>
                     {locationCoords.accuracy && (
-                      <p className="text-xs">Accuracy: ±{Math.round(locationCoords.accuracy)} meters</p>
+                      <p className="text-xs">
+                        {t('driver.dashboard.accuracy', { meters: Math.round(locationCoords.accuracy) }) || 
+                         `Accuracy: ±${Math.round(locationCoords.accuracy)} meters`}
+                      </p>
                     )}
                   </div>
                   
@@ -529,7 +570,7 @@ export function DriverDashboard() {
                       className="flex items-center space-x-1"
                     >
                       <Compass className="h-3 w-3" />
-                      <span>Open in Maps</span>
+                      <span>{t('driver.dashboard.open_in_maps') || 'Open in Maps'}</span>
                     </Button>
                     
                     {isOnline && (
@@ -545,7 +586,7 @@ export function DriverDashboard() {
                         ) : (
                           <RefreshCw className="h-3 w-3" />
                         )}
-                        <span>Update Status</span>
+                        <span>{t('driver.dashboard.update_status') || 'Update Status'}</span>
                       </Button>
                     )}
                   </div>
@@ -559,14 +600,16 @@ export function DriverDashboard() {
       {/* Vehicle Selection */}
       <Card>
         <CardHeader>
-          <CardTitle>Active Vehicle</CardTitle>
+          <CardTitle>{t('driver.dashboard.active_vehicle') || 'Active Vehicle'}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center space-x-4">
-            <Label htmlFor="vehicle-select" className="font-medium">Select Vehicle:</Label>
+            <Label htmlFor="vehicle-select" className="font-medium">
+              {t('driver.dashboard.select_vehicle') || 'Select Vehicle'}:
+            </Label>
             <Select value={selectedVehicle} onValueChange={setSelectedVehicle}>
               <SelectTrigger className="w-[250px]">
-                <SelectValue placeholder="Choose vehicle" />
+                <SelectValue placeholder={t('driver.dashboard.choose_vehicle') || 'Choose vehicle'} />
               </SelectTrigger>
               <SelectContent>
                 {vehicles.map((vehicle: Vehicle) => (
@@ -607,7 +650,7 @@ export function DriverDashboard() {
                       <button
                         onClick={() => window.open(currentVehicleImageUrl, '_blank')}
                         className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
-                        title="Open image in new tab"
+                        title={t('driver.dashboard.open_image') || 'Open image in new tab'}
                       >
                         <Eye className="h-4 w-4" />
                       </button>
@@ -616,7 +659,7 @@ export function DriverDashboard() {
                         <button
                           onClick={() => handleRetryImage(currentVehicle.id)}
                           className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
-                          title="Refresh image"
+                          title={t('driver.dashboard.refresh_image') || 'Refresh image'}
                         >
                           <RefreshCw className="h-4 w-4" />
                         </button>
@@ -627,18 +670,18 @@ export function DriverDashboard() {
                       {hasVehiclePicError ? (
                         <>
                           <AlertTriangle className="h-12 w-12 mb-2 text-red-400" />
-                          <span>Image failed to load</span>
+                          <span>{t('driver.dashboard.image_failed') || 'Image failed to load'}</span>
                           <button
                             onClick={() => handleRetryImage(currentVehicle.id)}
                             className="mt-2 text-sm text-blue-600 hover:text-blue-800"
                           >
-                            Retry
+                            {t('driver.dashboard.retry') || 'Retry'}
                           </button>
                         </>
                       ) : (
                         <>
                           <Truck className="h-12 w-12 mb-2" />
-                          <span>No vehicle image</span>
+                          <span>{t('driver.dashboard.no_vehicle_image') || 'No vehicle image'}</span>
                         </>
                       )}
                     </div>
@@ -667,12 +710,15 @@ export function DriverDashboard() {
                     {uploadingVehiclePic === currentVehicle.id ? (
                       <>
                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Uploading...
+                        {t('driver.dashboard.uploading') || 'Uploading...'}
                       </>
                     ) : (
                       <>
                         <Upload className="mr-2 h-4 w-4" />
-                        {currentVehicleImageUrl ? 'Update Vehicle Photo' : 'Upload Vehicle Photo'}
+                        {currentVehicleImageUrl 
+                          ? t('driver.dashboard.update_vehicle_photo') || 'Update Vehicle Photo'
+                          : t('driver.dashboard.upload_vehicle_photo') || 'Upload Vehicle Photo'
+                        }
                       </>
                     )}
                   </Button>
@@ -688,7 +734,7 @@ export function DriverDashboard() {
                   <p className="text-gray-600">{currentVehicle.licensePlate}</p>
                   {currentVehicle.color && (
                     <p className="text-sm text-gray-500">
-                      Color: {currentVehicle.color}
+                      {t('driver.dashboard.color') || 'Color'}: {currentVehicle.color}
                     </p>
                   )}
                 </div>
@@ -697,7 +743,9 @@ export function DriverDashboard() {
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2">
                       <Weight className="h-4 w-4 text-gray-500" />
-                      <span className="font-medium">Max Weight</span>
+                      <span className="font-medium">
+                        {t('driver.dashboard.max_weight') || 'Max Weight'}
+                      </span>
                     </div>
                     <p className="text-lg">{currentVehicle.maxWeight} kg</p>
                   </div>
@@ -705,14 +753,18 @@ export function DriverDashboard() {
                   <div className="space-y-1">
                     <div className="flex items-center space-x-2">
                       <Package className="h-4 w-4 text-gray-500" />
-                      <span className="font-medium">Max Volume</span>
+                      <span className="font-medium">
+                        {t('driver.dashboard.max_volume') || 'Max Volume'}
+                      </span>
                     </div>
                     <p className="text-lg">{currentVehicle.maxVolume} m³</p>
                   </div>
                 </div>
                 
                 <div>
-                  <h4 className="font-medium mb-2">Vehicle Type</h4>
+                  <h4 className="font-medium mb-2">
+                    {t('driver.dashboard.vehicle_type') || 'Vehicle Type'}
+                  </h4>
                   <Badge variant="secondary" className="text-sm px-3 py-1">
                     {currentVehicle.type}
                   </Badge>
@@ -720,7 +772,9 @@ export function DriverDashboard() {
                 
                 {currentVehicle.categories && currentVehicle.categories.length > 0 && (
                   <div>
-                    <h4 className="font-medium mb-2">Capabilities</h4>
+                    <h4 className="font-medium mb-2">
+                      {t('driver.dashboard.capabilities') || 'Capabilities'}
+                    </h4>
                     <div className="flex flex-wrap gap-2">
                       {currentVehicle.categories.map((category: string) => (
                         <Badge key={category} variant="outline">
@@ -734,7 +788,10 @@ export function DriverDashboard() {
                 <div className="flex items-center">
                   <div className={`w-3 h-3 rounded-full mr-2 ${currentVehicle.isActive ? 'bg-green-500' : 'bg-gray-400'}`}></div>
                   <span className="text-sm">
-                    {currentVehicle.isActive ? 'Vehicle Active' : 'Vehicle Inactive'}
+                    {currentVehicle.isActive 
+                      ? t('driver.dashboard.vehicle_active') || 'Vehicle Active'
+                      : t('driver.dashboard.vehicle_inactive') || 'Vehicle Inactive'
+                    }
                   </span>
                 </div>
               </div>
@@ -742,13 +799,17 @@ export function DriverDashboard() {
           ) : (
             <div className="text-center py-8">
               <Truck className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900">No Vehicles</h3>
-              <p className="text-gray-600 mt-1">Add a vehicle in your profile to get started</p>
+              <h3 className="text-lg font-medium text-gray-900">
+                {t('driver.dashboard.no_vehicles_title') || 'No Vehicles'}
+              </h3>
+              <p className="text-gray-600 mt-1">
+                {t('driver.dashboard.no_vehicles_desc') || 'Add a vehicle in your profile to get started'}
+              </p>
               <Button 
                 className="mt-4"
                 onClick={() => window.location.href = '/driver-profile?tab=vehicle'}
               >
-                Go to Vehicle Setup
+                {t('driver.dashboard.go_to_vehicle_setup') || 'Go to Vehicle Setup'}
               </Button>
             </div>
           )}
@@ -758,25 +819,35 @@ export function DriverDashboard() {
       {/* Stats Overview */}
       <Card>
         <CardHeader>
-          <CardTitle>Driver Statistics</CardTitle>
+          <CardTitle>
+            {t('driver.dashboard.driver_statistics') || 'Driver Statistics'}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div className="text-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
               <p className="text-3xl font-bold text-blue-600">{stats?.totalDeliveries || 0}</p>
-              <p className="text-gray-600">Total Deliveries</p>
+              <p className="text-gray-600">
+                {t('driver.dashboard.total_deliveries') || 'Total Deliveries'}
+              </p>
             </div>
             <div className="text-center p-4 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition">
               <p className="text-3xl font-bold text-yellow-600">{stats?.rating?.toFixed(1) || 0}</p>
-              <p className="text-gray-600">Average Rating</p>
+              <p className="text-gray-600">
+                {t('driver.dashboard.average_rating') || 'Average Rating'}
+              </p>
             </div>
             <div className="text-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition">
               <p className="text-3xl font-bold text-green-600">${(stats?.totalEarnings || 0).toLocaleString()}</p>
-              <p className="text-gray-600">Total Earnings</p>
+              <p className="text-gray-600">
+                {t('driver.dashboard.total_earnings') || 'Total Earnings'}
+              </p>
             </div>
             <div className="text-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
               <p className="text-3xl font-bold text-purple-600">{stats?.completionRate || 0}%</p>
-              <p className="text-gray-600">Completion Rate</p>
+              <p className="text-gray-600">
+                {t('driver.dashboard.completion_rate') || 'Completion Rate'}
+              </p>
             </div>
           </div>
         </CardContent>
@@ -786,7 +857,9 @@ export function DriverDashboard() {
       {pendingOrders.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Available Orders Near You</CardTitle>
+            <CardTitle>
+              {t('driver.dashboard.available_orders') || 'Available Orders Near You'}
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -794,8 +867,12 @@ export function DriverDashboard() {
                 <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50 transition">
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <h4 className="font-medium">Order #{order.id}</h4>
-                      <p className="text-sm text-gray-600">Customer: {order.customer}</p>
+                      <h4 className="font-medium">
+                        {t('driver.dashboard.order', { id: order.id }) || `Order #${order.id}`}
+                      </h4>
+                      <p className="text-sm text-gray-600">
+                        {t('driver.dashboard.customer', { name: order.customer }) || `Customer: ${order.customer}`}
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className="text-lg font-semibold text-green-600">{order.payment}</p>
@@ -807,14 +884,18 @@ export function DriverDashboard() {
                     <div className="flex items-start space-x-2">
                       <MapPin className="h-4 w-4 text-green-500 mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium">Pickup:</p>
+                        <p className="text-sm font-medium">
+                          {t('driver.dashboard.pickup') || 'Pickup'}:
+                        </p>
                         <p className="text-sm text-gray-600">{order.pickup}</p>
                       </div>
                     </div>
                     <div className="flex items-start space-x-2">
                       <MapPin className="h-4 w-4 text-red-500 mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium">Delivery:</p>
+                        <p className="text-sm font-medium">
+                          {t('driver.dashboard.delivery') || 'Delivery'}:
+                        </p>
                         <p className="text-sm text-gray-600">{order.delivery}</p>
                       </div>
                     </div>
@@ -825,13 +906,18 @@ export function DriverDashboard() {
                       <span className="text-sm text-gray-600">{order.weight}</span>
                       <span className="text-sm text-gray-600">{order.volume}</span>
                       <Badge variant={order.urgency === 'urgent' ? 'destructive' : 'secondary'}>
-                        {order.urgency}
+                        {order.urgency === 'urgent' 
+                          ? t('driver.dashboard.urgent') || 'urgent'
+                          : t('driver.dashboard.normal') || 'normal'
+                        }
                       </Badge>
                     </div>
                     <div className="space-x-2">
-                      <Button variant="outline" size="sm">View Details</Button>
+                      <Button variant="outline" size="sm">
+                        {t('driver.dashboard.view_details') || 'View Details'}
+                      </Button>
                       <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-                        Accept Order
+                        {t('driver.dashboard.accept_order') || 'Accept Order'}
                       </Button>
                     </div>
                   </div>
