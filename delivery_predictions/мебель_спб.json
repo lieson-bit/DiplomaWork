@@ -1,0 +1,67 @@
+{
+  "success": true,
+  "price_breakdown": {
+    "base_price_rub": 187.8124542236328,
+    "adjustments": [
+      {
+        "name": "Тариф van_medium",
+        "amount": 217.0,
+        "percentage": 10.0
+      },
+      {
+        "name": "Срочность: Стандартная (сегодня)",
+        "amount": 0.0,
+        "percentage": 0.0
+      },
+      {
+        "name": "Особое требование: Хрупкий груз",
+        "amount": 56.34373626708985,
+        "percentage": 30.000000000000004
+      },
+      {
+        "name": "Вес: 85 кг",
+        "amount": 39.44061538696289,
+        "percentage": 21.0
+      },
+      {
+        "name": "Объем: 4.5 м³",
+        "amount": 37.56249084472656,
+        "percentage": 20.0
+      }
+    ],
+    "total_adjustment_rub": 350.3468424987793,
+    "final_price_rub": 538.1592967224121,
+    "final_price_usd": 5.979547741360135,
+    "confidence_interval": {
+      "lower_bound_rub": 457.4354022140503,
+      "upper_bound_rub": 618.883191230774,
+      "percentage": 15.0
+    }
+  },
+  "delivery_details": {
+    "origin": "Невский проспект, Санкт-Петербург",
+    "destination": "Петропавловская крепость, Санкт-Петербург",
+    "distance_km": 5.425,
+    "distance_text": "5.4 km",
+    "duration_minutes": 14.3,
+    "duration_text": "14 mins",
+    "recommended_vehicle": "van_medium",
+    "item_category": "Мебель и бытовая техника",
+    "weight_kg": 85,
+    "volume_m3": 4.5,
+    "urgency": "Стандартная (сегодня)",
+    "special_requirement": "Хрупкий груз"
+  },
+  "weather_data": {
+    "temperature": -10.53,
+    "feels_like": -17.53,
+    "humidity": 82,
+    "conditions": "scattered clouds"
+  },
+  "timestamp": "2026-02-03T14:50:02.338085",
+  "model_info": {
+    "model_type": "XGBoost",
+    "r2_score": 0.8117,
+    "confidence_level": "15.0%"
+  }
+}

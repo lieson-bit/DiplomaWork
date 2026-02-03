@@ -1,0 +1,57 @@
+{
+  "success": true,
+  "price_breakdown": {
+    "base_price_rub": 187.8124542236328,
+    "adjustments": [
+      {
+        "name": "Тариф motorcycle",
+        "amount": 52.60500000000001,
+        "percentage": 10.0
+      },
+      {
+        "name": "Срочность: Срочная (в течение 2 часов)",
+        "amount": 93.9062271118164,
+        "percentage": 50.0
+      },
+      {
+        "name": "Вес: 2.5 кг",
+        "amount": -53.52654945373535,
+        "percentage": -28.5
+      }
+    ],
+    "total_adjustment_rub": 92.98467765808107,
+    "final_price_rub": 280.7971318817139,
+    "final_price_usd": 3.1199681320190433,
+    "confidence_interval": {
+      "lower_bound_rub": 238.6775620994568,
+      "upper_bound_rub": 322.91670166397097,
+      "percentage": 15.0
+    }
+  },
+  "delivery_details": {
+    "origin": "ул. Тверская, 7, Москва",
+    "destination": "Красная площадь, Москва",
+    "distance_km": 3.507,
+    "distance_text": "3.5 km",
+    "duration_minutes": 9.566666666666666,
+    "duration_text": "9 mins",
+    "recommended_vehicle": "motorcycle",
+    "item_category": "Документы и мелкие посылки",
+    "weight_kg": 2.5,
+    "volume_m3": null,
+    "urgency": "Срочная (в течение 2 часов)",
+    "special_requirement": "Нет особых требований"
+  },
+  "weather_data": {
+    "temperature": -16.3,
+    "feels_like": -23.28,
+    "humidity": 92,
+    "conditions": "overcast clouds"
+  },
+  "timestamp": "2026-02-03T14:49:56.363172",
+  "model_info": {
+    "model_type": "XGBoost",
+    "r2_score": 0.8117,
+    "confidence_level": "15.0%"
+  }
+}

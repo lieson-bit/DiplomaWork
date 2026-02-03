@@ -1,0 +1,67 @@
+{
+  "success": true,
+  "price_breakdown": {
+    "base_price_rub": 187.8124542236328,
+    "adjustments": [
+      {
+        "name": "Тариф car_hatchback",
+        "amount": 276.10200000000003,
+        "percentage": 10.0
+      },
+      {
+        "name": "Срочность: Стандартная (сегодня)",
+        "amount": 0.0,
+        "percentage": 0.0
+      },
+      {
+        "name": "Особое требование: Охлаждаемый",
+        "amount": 93.9062271118164,
+        "percentage": 50.0
+      },
+      {
+        "name": "Вес: 35 кг",
+        "amount": -16.903120880126956,
+        "percentage": -9.000000000000002
+      },
+      {
+        "name": "Объем: 1.2 м³",
+        "amount": -15.024996337890625,
+        "percentage": -8.0
+      }
+    ],
+    "total_adjustment_rub": 338.08010989379886,
+    "final_price_rub": 525.8925641174317,
+    "final_price_usd": 5.843250712415908,
+    "confidence_interval": {
+      "lower_bound_rub": 447.00867949981694,
+      "upper_bound_rub": 604.7764487350464,
+      "percentage": 15.0
+    }
+  },
+  "delivery_details": {
+    "origin": "улица Ленина, 1, Казань",
+    "destination": "Казанский Кремль, Казань",
+    "distance_km": 15.339,
+    "distance_text": "15.3 km",
+    "duration_minutes": 30.183333333333334,
+    "duration_text": "30 mins",
+    "recommended_vehicle": "car_hatchback",
+    "item_category": "Продукты питания и напитки",
+    "weight_kg": 35,
+    "volume_m3": 1.2,
+    "urgency": "Стандартная (сегодня)",
+    "special_requirement": "Охлаждаемый"
+  },
+  "weather_data": {
+    "temperature": -19.54,
+    "feels_like": -24.73,
+    "humidity": 93,
+    "conditions": "broken clouds"
+  },
+  "timestamp": "2026-02-03T14:50:06.447484",
+  "model_info": {
+    "model_type": "XGBoost",
+    "r2_score": 0.8117,
+    "confidence_level": "15.0%"
+  }
+}
