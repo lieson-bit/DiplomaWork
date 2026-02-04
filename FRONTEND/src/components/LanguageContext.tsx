@@ -835,7 +835,12 @@ const translations = {
     'driver.profile.account_verification': 'Account Verification',
     'driver.profile.driver': 'Driver',
     'driver.profile.not_available': 'Not available',
-    'driver.profile.go_to_onboarding': 'Go to Onboarding',
+    'driver.profile.go_to_onboarding': 'Go to Onboarding',    
+    'driver.profile.common.status': 'Status',
+    'driver.profile.common.expires': 'Expires',
+    'driver.profile.common.upload': 'Upload',
+    'driver.profile.common.reupload': 'Re-upload',
+
   },
   
   ru: {
@@ -1663,7 +1668,11 @@ const translations = {
     'driver.profile.driver': 'Водитель',
     'driver.profile.not_available': 'Недоступно',
     'driver.profile.go_to_onboarding': 'Перейти к регистрации',
-
+    'driver.profile.common.status' : 'Статус',
+    'driver.profile.common.expired' : 'Истекло',
+    'driver.profile.common.valid' : 'Действительно',
+    'driver.profile.common.upload' : 'Загрузить',
+    'driver.profile.common.reupload' : 'Перезагрузить',
   }
 };
 
