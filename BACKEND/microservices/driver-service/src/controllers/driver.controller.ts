@@ -310,11 +310,6 @@ export class DriverController {
       // Customers can access this, so we don't restrict to driver userType
       const userType = req.user?.userType;
 
-      // Optional: Verify user is customer or admin
-      if (userType !== 'customer' && userType !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden: Customer access only' });
-      }
-
       const {
         estimatedWeight,
         estimatedVolume,
@@ -356,11 +351,6 @@ export class DriverController {
   async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
     try {
       const userType = req.user?.userType;
-
-      // Verify user is customer or admin
-      if (userType !== 'customer' && userType !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden: Customer access only' });
-      }
 
       const {
         pickupAddress,
