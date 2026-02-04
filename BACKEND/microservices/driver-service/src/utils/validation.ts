@@ -23,6 +23,32 @@ export const validationSchemas = {
     }),
   },
 
+  matchDrivers: Joi.object({
+    pickupAddress: Joi.string().required(),
+    pickupLat: Joi.number().min(-90).max(90).optional(),
+    pickupLng: Joi.number().min(-180).max(180).optional(),
+    dropoffAddress: Joi.string().optional(),
+    dropoffLat: Joi.number().min(-90).max(90).optional(),
+    dropoffLng: Joi.number().min(-180).max(180).optional(),
+    weight: Joi.number().positive().required(),
+    volume: Joi.number().positive().required(),
+    vehicleType: Joi.string()
+      .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+      .optional(),
+    urgency: Joi.string().valid('normal', 'urgent', 'express').default('normal'),
+    maxDistance: Joi.number().positive().default(20), // km
+  }),
+
+  discoverDrivers: Joi.object({
+    vehicleType: Joi.string()
+      .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+      .optional(),
+    estimatedWeight: Joi.number().positive().optional(),
+    estimatedVolume: Joi.number().positive().optional(),
+    limit: Joi.number().integer().min(1).max(50).default(20),
+    page: Joi.number().integer().min(1).default(1),
+  }),
+
   // Vehicle validation
   vehicle: {
     create: Joi.object({

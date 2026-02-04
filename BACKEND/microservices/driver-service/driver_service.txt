@@ -30,6 +30,8 @@ src
 ├── services
 │   ├── document.service.ts
 │   ├── driver.service.ts
+│   ├── location.service.ts
+│   ├── matching.service.ts
 │   └── upload.service.ts
 ├── types
 │   ├── express.d.ts
@@ -248,6 +250,7 @@ import { Request, Response, NextFunction } from 'express';
 import { driverService } from '../services/driver.service';
 import { uploadService } from '../services/upload.service';
 import { logger } from '../utils/logger';
+import { matchingService } from '../services/matching.service';
 
 export class DriverController {
   async createProfile(req: Request, res: Response, next: NextFunction) {
@@ -546,6 +549,104 @@ export class DriverController {
       });
     } catch (error: any) {
       logger.error('Update status error:', error);
+      next(error);
+    }
+  }
+
+  async discoverDrivers(req: Request, res: Response, next: NextFunction) {
+    try {
+      // Customers can access this, so we don't restrict to driver userType
+      const userType = req.user?.userType;
+
+      // Optional: Verify user is customer or admin
+      if (userType !== 'customer' && userType !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden: Customer access only' });
+      }
+
+      const {
+        estimatedWeight,
+        estimatedVolume,
+        vehicleType,
+        limit = 20,
+        page = 1
+      } = req.query;
+
+      // Validate and cast vehicleType
+      const validVehicleTypes = ['motorbike', 'small_van', 'medium_truck', 'large_truck'];
+      const typedVehicleType = vehicleType && validVehicleTypes.includes(vehicleType as string)
+        ? vehicleType as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck'
+        : undefined;
+
+      const drivers = await driverService.discoverAvailableDrivers({
+        estimatedWeight: estimatedWeight ? parseFloat(estimatedWeight as string) : undefined,
+        estimatedVolume: estimatedVolume ? parseFloat(estimatedVolume as string) : undefined,
+        vehicleType: typedVehicleType,
+        limit: parseInt(limit as string),
+        page: parseInt(page as string)
+      });
+
+      res.json({
+        success: true,
+        data: drivers,
+        pagination: {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          total: drivers.length,
+          hasNext: drivers.length === parseInt(limit as string)
+        }
+      });
+    } catch (error: any) {
+      logger.error('Discover drivers error:', error);
+      next(error);
+    }
+  }
+
+  async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userType = req.user?.userType;
+
+      // Verify user is customer or admin
+      if (userType !== 'customer' && userType !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden: Customer access only' });
+      }
+
+      const {
+        pickupAddress,
+        pickupLat,
+        pickupLng,
+        weight,
+        volume,
+        vehicleType,
+        urgency,
+        maxDistance
+      } = req.body;
+
+      // Validate required fields
+      if (!pickupAddress || !weight || !volume) {
+        return res.status(400).json({ 
+          error: 'Missing required fields: pickupAddress, weight, volume' 
+        });
+      }
+
+      const orderRequirements = {
+        pickupAddress,
+        pickupCoords: pickupLat && pickupLng ? { lat: parseFloat(pickupLat), lng: parseFloat(pickupLng) } : undefined,
+        weight: parseFloat(weight),
+        volume: parseFloat(volume),
+        vehicleType,
+        urgency: urgency as 'normal' | 'urgent' | 'express',
+        maxDistance: maxDistance ? parseFloat(maxDistance) : undefined
+      };
+
+      const matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
+
+      res.json({
+        success: true,
+        data: matchedDrivers,
+        count: matchedDrivers.length
+      });
+    } catch (error: any) {
+      logger.error('Find matching drivers error:', error);
       next(error);
     }
   }
@@ -2403,12 +2504,26 @@ import {
   StatusRequest,
    DriverMetrics
 } from '../types';
+import { ensurePool } from '../config/database';
+import { DriverInfo } from './matching.service';
 
 export interface CreateDriverProfileInput {
   licenseNumber?: string;
   licenseExpiry?: Date;
   insuranceNumber?: string;
   insuranceExpiry?: Date;
+}
+
+export interface DiscoverDriversParams {
+  pickupLocation?: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  estimatedWeight?: number;
+  estimatedVolume?: number;
+  vehicleType?: string;
+  radius?: number;
+  limit?: number;
+  page?: number;
 }
 
 export class DriverService {
@@ -2486,6 +2601,123 @@ export class DriverService {
     };
   }
 
+  // Add this method to DriverService class
+  async discoverAvailableDrivers(params: {
+    estimatedWeight?: number;
+    estimatedVolume?: number;
+    vehicleType?: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+    limit?: number;
+    page?: number;
+  }): Promise<DriverInfo[]> {
+    const pool = await ensurePool();
+    
+    let query = `
+      SELECT 
+        d.id as driver_id,
+        d.user_id,
+        d.rating,
+        d.total_deliveries,
+        d.completion_rate,
+        d.status as driver_status,
+        d.verification_level,
+        d.is_online,
+        d.current_location,
+        d.profile_completed,
+        
+        v.id as vehicle_id,
+        v.type as vehicle_type,
+        v.make,
+        v.model,
+        v.year,
+        v.color,
+        v.license_plate,
+        v.max_weight,
+        v.max_volume,
+        v.image_url,
+        v.current_status as vehicle_status
+        
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.id = v.driver_id AND v.is_active = TRUE
+      WHERE d.status = 'active'
+        AND d.is_online = TRUE
+        AND d.verification_level IN ('verified', 'premium')
+        AND v.current_status = 'available'
+    `;
+  
+    const values: any[] = [];
+  
+    // Add filters
+    if (params.vehicleType) {
+      query += ` AND v.type = ?`;
+      values.push(params.vehicleType);
+    }
+  
+    if (params.estimatedWeight) {
+      query += ` AND v.max_weight >= ?`;
+      values.push(params.estimatedWeight);
+    }
+  
+    if (params.estimatedVolume) {
+      query += ` AND v.max_volume >= ?`;
+      values.push(params.estimatedVolume);
+    }
+  
+    // Add pagination
+    const offset = ((params.page || 1) - 1) * (params.limit || 20);
+    query += ` LIMIT ? OFFSET ?`;
+    values.push(params.limit || 20, offset);
+  
+    try {
+      const [rows] = await pool.execute(query, values);
+      const drivers = rows as any[];
+    
+      // Group vehicles by driver
+      const driversMap = new Map();
+      
+      for (const row of drivers) {
+        if (!driversMap.has(row.driver_id)) {
+          driversMap.set(row.driver_id, {
+            driverId: row.driver_id,
+            userId: row.user_id,
+            rating: row.rating,
+            totalDeliveries: row.total_deliveries,
+            completionRate: row.completion_rate,
+            status: row.driver_status,
+            verificationLevel: row.verification_level,
+            isOnline: Boolean(row.is_online),
+            currentLocation: row.current_location,
+            profileCompleted: Boolean(row.profile_completed),
+            vehicles: []
+          });
+        }
+      
+        if (row.vehicle_id) {
+          const driverData = driversMap.get(row.driver_id);
+          driverData.vehicles.push({
+            id: row.vehicle_id,
+            type: row.vehicle_type,
+            make: row.make,
+            model: row.model,
+            year: row.year,
+            color: row.color,
+            licensePlate: row.license_plate,
+            maxWeight: parseFloat(row.max_weight.toString()),
+            maxVolume: parseFloat(row.max_volume.toString()),
+            imageUrl: row.image_url,
+            status: row.vehicle_status
+          });
+        }
+      }
+    
+      // Convert map to array
+      return Array.from(driversMap.values());
+      
+    } catch (error: any) {
+      logger.error('Error discovering drivers:', error);
+      throw new Error('Failed to discover available drivers');
+    }
+  }
+
   async updateDriverProfile(userId: string, data: UpdateDriverRequest): Promise<Driver | null> {
     const driver = await this.driverRepository.findByUserId(userId);
     if (!driver) {
@@ -2506,10 +2738,10 @@ export class DriverService {
   }
 
   async uploadProfilePicture(userId: string, file: Express.Multer.File): Promise<ProfilePicture> {
-  const driver = await this.driverRepository.findByUserId(userId);
-  if (!driver) {
-    throw new Error('Driver profile not found');
-  }
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
 
   // 🔥 CRITICAL FIX: Delete existing profile picture FIRST
   const existingPicture = await this.profilePictureRepository.findByDriverId(driver.id);
@@ -2925,6 +3157,415 @@ export class DriverService {
 }
 
 export const driverService = new DriverService();
+```
+
+`services\location.service.ts`:
+
+```ts
+import axios from 'axios';
+import { logger } from '../utils/logger';
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+export interface DistanceMatrixResponse {
+  distance: {
+    text: string;  // e.g., "1.2 km"
+    value: number; // in meters
+  };
+  duration: {
+    text: string;  // e.g., "15 mins"
+    value: number; // in seconds
+  };
+  status: string;
+}
+
+export class LocationService {
+  private distanceMatrixApiKey: string;
+  private geocodingApiUrl: string = 'https://nominatim.openstreetmap.org/search';
+
+  constructor() {
+    this.distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
+      "NFLqNsgalupmIuzDS6zKuprvodMgjdaGAxBtGYNpOT9TUwnCnC4Z9Do6T2drMT4Y";
+  }
+
+  /**
+   * Convert address to coordinates using OpenStreetMap Nominatim (free)
+   */
+  async geocodeAddress(address: string): Promise<Coordinates | null> {
+    try {
+      // Rate limiting: Nominatim requires max 1 request per second
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const response = await axios.get(this.geocodingApiUrl, {
+        params: {
+          q: address,
+          format: 'json',
+          limit: 1,
+          addressdetails: 1
+        },
+        headers: {
+          'User-Agent': 'Delivery-App/1.0 (your-email@example.com)'
+        }
+      });
+
+      if (response.data && response.data.length > 0) {
+        return {
+          lat: parseFloat(response.data[0].lat),
+          lng: parseFloat(response.data[0].lon)
+        };
+      }
+      
+      logger.warn(`Geocoding failed for address: ${address}`);
+      return null;
+    } catch (error: any) {
+      logger.error('Geocoding error:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get distance and duration between two addresses using DistanceMatrix.ai
+   */
+  async getDistanceAndTime(
+    origin: string, 
+    destination: string,
+    mode: string = 'driving'
+  ): Promise<DistanceMatrixResponse | null> {
+    try {
+      const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
+        params: {
+          origins: origin,
+          destinations: destination,
+          mode: mode,
+          key: this.distanceMatrixApiKey
+        }
+      });
+
+      if (response.data.status === 'OK' && response.data.rows[0].elements[0].status === 'OK') {
+        const element = response.data.rows[0].elements[0];
+        return {
+          distance: element.distance,
+          duration: element.duration,
+          status: 'OK'
+        };
+      } else {
+        logger.warn(`Distance matrix failed: ${response.data.status}`);
+        return null;
+      }
+    } catch (error: any) {
+      logger.error('Distance matrix error:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get distance and time between coordinates
+   */
+  async getDistanceAndTimeFromCoords(
+    originCoords: Coordinates,
+    destinationCoords: Coordinates,
+    mode: string = 'driving'
+  ): Promise<DistanceMatrixResponse | null> {
+    const origin = `${originCoords.lat},${originCoords.lng}`;
+    const destination = `${destinationCoords.lat},${destinationCoords.lng}`;
+    
+    return this.getDistanceAndTime(origin, destination, mode);
+  }
+
+  /**
+   * Batch process distances for multiple drivers
+   */
+  async getDistancesForDrivers(
+    pickupAddress: string,
+    drivers: Array<{ driverId: string; currentLocation: string }>
+  ): Promise<Map<string, DistanceMatrixResponse>> {
+    const results = new Map<string, DistanceMatrixResponse>();
+    
+    // Process in batches to avoid rate limiting
+    const batchSize = 5;
+    for (let i = 0; i < drivers.length; i += batchSize) {
+      const batch = drivers.slice(i, i + batchSize);
+      
+      await Promise.all(batch.map(async (driver) => {
+        try {
+          const distanceInfo = await this.getDistanceAndTime(
+            driver.currentLocation,
+            pickupAddress
+          );
+          
+          if (distanceInfo) {
+            results.set(driver.driverId, distanceInfo);
+          }
+        } catch (error) {
+          logger.error(`Failed to get distance for driver ${driver.driverId}:`, error);
+        }
+      }));
+
+      // Add delay between batches to respect rate limits
+      if (i + batchSize < drivers.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    return results;
+  }
+}
+
+export const locationService = new LocationService();
+```
+
+`services\matching.service.ts`:
+
+```ts
+import { logger } from '../utils/logger';
+import { driverService } from './driver.service';
+import { locationService, DistanceMatrixResponse } from './location.service';
+
+export interface OrderRequirements {
+  pickupAddress: string;
+  pickupCoords?: { lat: number; lng: number };
+  dropoffAddress?: string;
+  dropoffCoords?: { lat: number; lng: number };
+  weight: number;
+  volume: number;
+  vehicleType?: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  urgency?: 'normal' | 'urgent' | 'express';
+  maxDistance?: number; // in km
+}
+
+export interface VehicleInfo {
+  id: string;
+  type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  make: string;
+  model: string;
+  imageUrl?: string;
+  maxWeight: number;
+  maxVolume: number;
+  licensePlate: string;
+  color: string;
+  status?: string;
+  year?: number;
+}
+
+export interface DriverInfo {
+  driverId: string;
+  userId: string;
+  rating: number;
+  totalDeliveries: number;
+  completionRate: number;
+  verificationLevel: string;
+  isOnline: boolean;
+  currentLocation: string;
+  profileCompleted: boolean;
+  user: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+  };
+  vehicles: Array<{
+    id: string;
+    type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    licensePlate: string;
+    maxWeight: number;
+    maxVolume: number;
+    imageUrl?: string;
+    status: string;
+  }>;
+}
+
+export interface MatchedDriver extends DriverInfo {
+  distanceInfo?: {
+    distance: {
+      text: string;
+      value: number; // meters
+    };
+    duration: {
+      text: string;
+      value: number; // seconds
+    };
+  };
+  matchScore: number;
+  suitability: 'excellent' | 'good' | 'fair' | 'poor';
+  estimatedArrival: string; // Formatted arrival time
+}
+
+export class MatchingService {
+  async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
+    try {
+      // Step 1: Get available drivers based on capacity
+      const drivers = await driverService.discoverAvailableDrivers({
+        estimatedWeight: order.weight,
+        estimatedVolume: order.volume,
+        vehicleType: order.vehicleType,
+        limit: 50 // Get more drivers initially for filtering
+      });
+
+      if (drivers.length === 0) {
+        return [];
+      }
+
+      // Step 2: Get distances and times for all drivers
+      const distances = await locationService.getDistancesForDrivers(
+        order.pickupAddress,
+        drivers.map(d => ({
+          driverId: d.driverId,
+          currentLocation: d.currentLocation
+        }))
+      );
+
+      // Step 3: Filter drivers by max distance if specified
+      let filteredDrivers = drivers;
+      if (order.maxDistance) {
+        filteredDrivers = drivers.filter(driver => {
+          const distanceInfo = distances.get(driver.driverId);
+          if (!distanceInfo) return false;
+          
+          const distanceKm = distanceInfo.distance.value / 1000;
+          return distanceKm <= order.maxDistance!;
+        });
+      }
+
+      // Step 4: Apply matching algorithm with distance scoring
+      const scoredDrivers = filteredDrivers.map(driver => {
+        const distanceInfo = distances.get(driver.driverId);
+        const primaryVehicle = driver.vehicles[0];
+        
+        let score = this.calculateBaseScore(driver);
+        
+        // Distance score (closer is better)
+        if (distanceInfo) {
+          const distanceScore = this.calculateDistanceScore(distanceInfo);
+          score = (score * 0.4) + (distanceScore * 0.6);
+        }
+
+        // Vehicle suitability score
+        const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
+        score = (score * 0.5) + (vehicleScore * 0.5);
+
+        // Urgency factor
+        if (order.urgency === 'express') {
+          // Prioritize closer drivers more heavily for express orders
+          score = distanceInfo ? (score * 0.3) + (this.calculateDistanceScore(distanceInfo) * 0.7) : score;
+        }
+
+        return {
+          ...driver,
+          distanceInfo,
+          matchScore: Math.round(score),
+          suitability: this.getSuitabilityLevel(score),
+          estimatedArrival: this.formatEstimatedArrival(distanceInfo?.duration.value)
+        };
+      });
+
+      // Step 5: Sort by match score (highest first)
+      return scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
+
+    } catch (error: any) {
+      logger.error('Matching service error:', error);
+      throw new Error('Failed to find matching drivers');
+    }
+  }
+
+  private calculateBaseScore(driver: DriverInfo): number {
+    let score = 100;
+
+    // Rating score (higher rating is better)
+    const ratingScore = driver.rating * 20; // Convert 0-5 to 0-100
+    score = (score * 0.6) + (ratingScore * 0.4);
+
+    // Completion rate score
+    const completionScore = driver.completionRate * 100;
+    score = (score * 0.7) + (completionScore * 0.3);
+
+    // Experience score (more deliveries is better, but capped)
+    const experienceScore = Math.min(100, driver.totalDeliveries / 100);
+    score = (score * 0.8) + (experienceScore * 0.2);
+
+    // Verification level bonus
+    const verificationBonus = driver.verificationLevel === 'premium' ? 10 : 0;
+    score += verificationBonus;
+
+    return Math.min(100, score);
+  }
+
+  private calculateDistanceScore(distanceInfo: DistanceMatrixResponse): number {
+    const distanceKm = distanceInfo.distance.value / 1000;
+    const durationMins = distanceInfo.duration.value / 60;
+    
+    // Score based on distance and time
+    // Closer distances get higher scores
+    const distanceScore = Math.max(0, 100 - (distanceKm * 5)); // Lose 5 points per km
+    const timeScore = Math.max(0, 100 - (durationMins * 2)); // Lose 2 points per minute
+    
+    return (distanceScore * 0.6) + (timeScore * 0.4);
+  }
+
+  private calculateVehicleSuitability(
+    vehicle: VehicleInfo | undefined, 
+    order: OrderRequirements
+  ): number {
+    if (!vehicle) return 0;
+    
+    let score = 100;
+
+    // Weight capacity score
+    const weightUtilization = order.weight / vehicle.maxWeight;
+    if (weightUtilization > 1) return 0; // Cannot carry
+    
+    const weightScore = 100 - (weightUtilization * 50);
+    score = (score * 0.4) + (weightScore * 0.6);
+
+    // Volume capacity score
+    const volumeUtilization = order.volume / vehicle.maxVolume;
+    if (volumeUtilization > 1) return 0; // Cannot fit
+    
+    const volumeScore = 100 - (volumeUtilization * 50);
+    score = (score * 0.4) + (volumeScore * 0.6);
+
+    // Vehicle type preference - FIXED TYPE
+    const typeScores: Record<'motorbike' | 'small_van' | 'medium_truck' | 'large_truck', number> = {
+      'motorbike': order.weight < 10 && order.volume < 0.5 ? 100 : 70,
+      'small_van': order.weight < 100 && order.volume < 5 ? 100 : 85,
+      'medium_truck': order.weight < 500 && order.volume < 20 ? 100 : 90,
+      'large_truck': 100
+    };
+    
+    const typeScore = typeScores[vehicle.type] || 75;
+    score = (score * 0.5) + (typeScore * 0.5);
+
+    return score;
+  }
+
+  private getSuitabilityLevel(score: number): 'excellent' | 'good' | 'fair' | 'poor' {
+    if (score >= 90) return 'excellent';
+    if (score >= 75) return 'good';
+    if (score >= 60) return 'fair';
+    return 'poor';
+  }
+
+  private formatEstimatedArrival(durationSeconds?: number): string {
+    if (!durationSeconds) return 'N/A';
+    
+    const minutes = Math.ceil(durationSeconds / 60);
+    
+    if (minutes < 60) {
+      return `${minutes} min${minutes !== 1 ? 's' : ''}`;
+    } else {
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    }
+  }
+}
+
+export const matchingService = new MatchingService();
 ```
 
 `services\upload.service.ts`:

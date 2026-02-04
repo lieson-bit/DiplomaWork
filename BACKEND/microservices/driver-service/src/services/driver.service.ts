@@ -25,12 +25,26 @@ import {
   StatusRequest,
    DriverMetrics
 } from '../types';
+import { ensurePool } from '../config/database';
+import { DriverInfo } from './matching.service';
 
 export interface CreateDriverProfileInput {
   licenseNumber?: string;
   licenseExpiry?: Date;
   insuranceNumber?: string;
   insuranceExpiry?: Date;
+}
+
+export interface DiscoverDriversParams {
+  pickupLocation?: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  estimatedWeight?: number;
+  estimatedVolume?: number;
+  vehicleType?: string;
+  radius?: number;
+  limit?: number;
+  page?: number;
 }
 
 export class DriverService {
@@ -108,6 +122,123 @@ export class DriverService {
     };
   }
 
+  // Add this method to DriverService class
+  async discoverAvailableDrivers(params: {
+    estimatedWeight?: number;
+    estimatedVolume?: number;
+    vehicleType?: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+    limit?: number;
+    page?: number;
+  }): Promise<DriverInfo[]> {
+    const pool = await ensurePool();
+    
+    let query = `
+      SELECT 
+        d.id as driver_id,
+        d.user_id,
+        d.rating,
+        d.total_deliveries,
+        d.completion_rate,
+        d.status as driver_status,
+        d.verification_level,
+        d.is_online,
+        d.current_location,
+        d.profile_completed,
+        
+        v.id as vehicle_id,
+        v.type as vehicle_type,
+        v.make,
+        v.model,
+        v.year,
+        v.color,
+        v.license_plate,
+        v.max_weight,
+        v.max_volume,
+        v.image_url,
+        v.current_status as vehicle_status
+        
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.id = v.driver_id AND v.is_active = TRUE
+      WHERE d.status = 'active'
+        AND d.is_online = TRUE
+        AND d.verification_level IN ('verified', 'premium')
+        AND v.current_status = 'available'
+    `;
+  
+    const values: any[] = [];
+  
+    // Add filters
+    if (params.vehicleType) {
+      query += ` AND v.type = ?`;
+      values.push(params.vehicleType);
+    }
+  
+    if (params.estimatedWeight) {
+      query += ` AND v.max_weight >= ?`;
+      values.push(params.estimatedWeight);
+    }
+  
+    if (params.estimatedVolume) {
+      query += ` AND v.max_volume >= ?`;
+      values.push(params.estimatedVolume);
+    }
+  
+    // Add pagination
+    const offset = ((params.page || 1) - 1) * (params.limit || 20);
+    query += ` LIMIT ? OFFSET ?`;
+    values.push(params.limit || 20, offset);
+  
+    try {
+      const [rows] = await pool.execute(query, values);
+      const drivers = rows as any[];
+    
+      // Group vehicles by driver
+      const driversMap = new Map();
+      
+      for (const row of drivers) {
+        if (!driversMap.has(row.driver_id)) {
+          driversMap.set(row.driver_id, {
+            driverId: row.driver_id,
+            userId: row.user_id,
+            rating: row.rating,
+            totalDeliveries: row.total_deliveries,
+            completionRate: row.completion_rate,
+            status: row.driver_status,
+            verificationLevel: row.verification_level,
+            isOnline: Boolean(row.is_online),
+            currentLocation: row.current_location,
+            profileCompleted: Boolean(row.profile_completed),
+            vehicles: []
+          });
+        }
+      
+        if (row.vehicle_id) {
+          const driverData = driversMap.get(row.driver_id);
+          driverData.vehicles.push({
+            id: row.vehicle_id,
+            type: row.vehicle_type,
+            make: row.make,
+            model: row.model,
+            year: row.year,
+            color: row.color,
+            licensePlate: row.license_plate,
+            maxWeight: parseFloat(row.max_weight.toString()),
+            maxVolume: parseFloat(row.max_volume.toString()),
+            imageUrl: row.image_url,
+            status: row.vehicle_status
+          });
+        }
+      }
+    
+      // Convert map to array
+      return Array.from(driversMap.values());
+      
+    } catch (error: any) {
+      logger.error('Error discovering drivers:', error);
+      throw new Error('Failed to discover available drivers');
+    }
+  }
+
   async updateDriverProfile(userId: string, data: UpdateDriverRequest): Promise<Driver | null> {
     const driver = await this.driverRepository.findByUserId(userId);
     if (!driver) {
@@ -128,10 +259,10 @@ export class DriverService {
   }
 
   async uploadProfilePicture(userId: string, file: Express.Multer.File): Promise<ProfilePicture> {
-  const driver = await this.driverRepository.findByUserId(userId);
-  if (!driver) {
-    throw new Error('Driver profile not found');
-  }
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
 
   // 🔥 CRITICAL FIX: Delete existing profile picture FIRST
   const existingPicture = await this.profilePictureRepository.findByDriverId(driver.id);

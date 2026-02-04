@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { driverService } from '../services/driver.service';
 import { uploadService } from '../services/upload.service';
 import { logger } from '../utils/logger';
+import { matchingService } from '../services/matching.service';
 
 export class DriverController {
   async createProfile(req: Request, res: Response, next: NextFunction) {
@@ -300,6 +301,104 @@ export class DriverController {
       });
     } catch (error: any) {
       logger.error('Update status error:', error);
+      next(error);
+    }
+  }
+
+  async discoverDrivers(req: Request, res: Response, next: NextFunction) {
+    try {
+      // Customers can access this, so we don't restrict to driver userType
+      const userType = req.user?.userType;
+
+      // Optional: Verify user is customer or admin
+      if (userType !== 'customer' && userType !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden: Customer access only' });
+      }
+
+      const {
+        estimatedWeight,
+        estimatedVolume,
+        vehicleType,
+        limit = 20,
+        page = 1
+      } = req.query;
+
+      // Validate and cast vehicleType
+      const validVehicleTypes = ['motorbike', 'small_van', 'medium_truck', 'large_truck'];
+      const typedVehicleType = vehicleType && validVehicleTypes.includes(vehicleType as string)
+        ? vehicleType as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck'
+        : undefined;
+
+      const drivers = await driverService.discoverAvailableDrivers({
+        estimatedWeight: estimatedWeight ? parseFloat(estimatedWeight as string) : undefined,
+        estimatedVolume: estimatedVolume ? parseFloat(estimatedVolume as string) : undefined,
+        vehicleType: typedVehicleType,
+        limit: parseInt(limit as string),
+        page: parseInt(page as string)
+      });
+
+      res.json({
+        success: true,
+        data: drivers,
+        pagination: {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          total: drivers.length,
+          hasNext: drivers.length === parseInt(limit as string)
+        }
+      });
+    } catch (error: any) {
+      logger.error('Discover drivers error:', error);
+      next(error);
+    }
+  }
+
+  async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userType = req.user?.userType;
+
+      // Verify user is customer or admin
+      if (userType !== 'customer' && userType !== 'admin') {
+        return res.status(403).json({ error: 'Forbidden: Customer access only' });
+      }
+
+      const {
+        pickupAddress,
+        pickupLat,
+        pickupLng,
+        weight,
+        volume,
+        vehicleType,
+        urgency,
+        maxDistance
+      } = req.body;
+
+      // Validate required fields
+      if (!pickupAddress || !weight || !volume) {
+        return res.status(400).json({ 
+          error: 'Missing required fields: pickupAddress, weight, volume' 
+        });
+      }
+
+      const orderRequirements = {
+        pickupAddress,
+        pickupCoords: pickupLat && pickupLng ? { lat: parseFloat(pickupLat), lng: parseFloat(pickupLng) } : undefined,
+        weight: parseFloat(weight),
+        volume: parseFloat(volume),
+        vehicleType,
+        urgency: urgency as 'normal' | 'urgent' | 'express',
+        maxDistance: maxDistance ? parseFloat(maxDistance) : undefined
+      };
+
+      const matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
+
+      res.json({
+        success: true,
+        data: matchedDrivers,
+        count: matchedDrivers.length
+      });
+    } catch (error: any) {
+      logger.error('Find matching drivers error:', error);
       next(error);
     }
   }
