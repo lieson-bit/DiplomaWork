@@ -122,7 +122,7 @@ export class DriverService {
     };
   }
 
-  // Add this method to DriverService class
+  // In your discoverAvailableDrivers method, update it to include user information:
   async discoverAvailableDrivers(params: {
     estimatedWeight?: number;
     estimatedVolume?: number;
@@ -191,9 +191,10 @@ export class DriverService {
     try {
       const [rows] = await pool.execute(query, values);
       const drivers = rows as any[];
-    
-      // Group vehicles by driver
+      
+      // Group vehicles by driver and fetch user info for each driver
       const driversMap = new Map();
+      const userPromises: Promise<any>[] = [];
       
       for (const row of drivers) {
         if (!driversMap.has(row.driver_id)) {
@@ -208,8 +209,29 @@ export class DriverService {
             isOnline: Boolean(row.is_online),
             currentLocation: row.current_location,
             profileCompleted: Boolean(row.profile_completed),
-            vehicles: []
+            vehicles: [],
+            user: null // Placeholder for user data
           });
+          
+          // Fetch user info for this driver
+          userPromises.push(
+            httpClient.getUser(row.user_id)
+              .then(userInfo => ({
+                driverId: row.driver_id,
+                userInfo
+              }))
+              .catch(error => {
+                logger.error(`Failed to fetch user info for ${row.user_id}:`, error);
+                return {
+                  driverId: row.driver_id,
+                  userInfo: {
+                    firstName: 'Unknown',
+                    lastName: 'Driver',
+                    phone: 'N/A'
+                  }
+                };
+              })
+          );
         }
       
         if (row.vehicle_id) {
@@ -229,9 +251,28 @@ export class DriverService {
           });
         }
       }
-    
-      // Convert map to array
-      return Array.from(driversMap.values());
+      
+      // Wait for all user info to be fetched
+      const userResults = await Promise.all(userPromises);
+      
+      // Update drivers with user info
+      userResults.forEach(result => {
+        const driverData = driversMap.get(result.driverId);
+        if (driverData && result.userInfo) {
+          driverData.user = {
+            firstName: result.userInfo.firstName || 'Unknown',
+            lastName: result.userInfo.lastName || 'Driver',
+            phone: result.userInfo.phone || 'N/A'
+          };
+        }
+      });
+      
+      // Filter out drivers without user info (optional)
+      const validDrivers = Array.from(driversMap.values()).filter(driver => 
+        driver.user !== null
+      );
+      
+      return validDrivers;
       
     } catch (error: any) {
       logger.error('Error discovering drivers:', error);

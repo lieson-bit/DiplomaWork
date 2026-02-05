@@ -38,7 +38,7 @@ export interface DriverInfo {
   isOnline: boolean;
   currentLocation: string;
   profileCompleted: boolean;
-  user: {
+  user?: { 
     firstName: string;
     lastName: string;
     phone: string;
@@ -76,80 +76,152 @@ export interface MatchedDriver extends DriverInfo {
 
 export class MatchingService {
   async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
-    try {
-      // Step 1: Get available drivers based on capacity
-      const drivers = await driverService.discoverAvailableDrivers({
-        estimatedWeight: order.weight,
-        estimatedVolume: order.volume,
-        vehicleType: order.vehicleType,
-        limit: 50 // Get more drivers initially for filtering
-      });
-
-      if (drivers.length === 0) {
-        return [];
-      }
-
-      // Step 2: Get distances and times for all drivers
-      const distances = await locationService.getDistancesForDrivers(
-        order.pickupAddress,
-        drivers.map(d => ({
-          driverId: d.driverId,
-          currentLocation: d.currentLocation
-        }))
-      );
-
-      // Step 3: Filter drivers by max distance if specified
-      let filteredDrivers = drivers;
-      if (order.maxDistance) {
-        filteredDrivers = drivers.filter(driver => {
-          const distanceInfo = distances.get(driver.driverId);
-          if (!distanceInfo) return false;
-          
-          const distanceKm = distanceInfo.distance.value / 1000;
-          return distanceKm <= order.maxDistance!;
+      try {
+        logger.info('🚗 Starting driver matching process');
+        logger.info('Order requirements:', {
+          pickupAddress: order.pickupAddress,
+          weight: order.weight,
+          volume: order.volume,
+          vehicleType: order.vehicleType,
+          maxDistance: order.maxDistance
         });
+    
+        // Step 1: Get available drivers based on capacity
+        const drivers = await driverService.discoverAvailableDrivers({
+          estimatedWeight: order.weight,
+          estimatedVolume: order.volume,
+          vehicleType: order.vehicleType,
+          limit: 20
+        });
+    
+        logger.info(`📊 Found ${drivers.length} drivers meeting capacity requirements`);
+    
+        if (drivers.length === 0) {
+          logger.info('❌ No drivers found with required capacity');
+          return [];
+        }
+    
+        // Log driver details
+        drivers.forEach((driver, index) => {
+          logger.info(`Driver ${index + 1}: ${driver.driverId}, Location: ${driver.currentLocation}`);
+        });
+    
+        // Step 2: Filter out drivers without valid locations
+        const driversWithLocations = drivers.filter(driver => {
+          if (!driver.currentLocation || driver.currentLocation.trim() === '') {
+            logger.warn(`⚠ Driver ${driver.driverId} has no location`);
+            return false;
+          }
+          return true;
+        });
+    
+        if (driversWithLocations.length === 0) {
+          logger.warn('❌ No drivers have valid locations');
+          return [];
+        }
+    
+        logger.info(`📍 Processing ${driversWithLocations.length} drivers with locations`);
+    
+        // Step 3: Get distances and times for all drivers
+        logger.info('📏 Calculating distances...');
+        const distances = await locationService.getDistancesForDrivers(
+          order.pickupAddress,
+          driversWithLocations.map(d => ({
+            driverId: d.driverId,
+            currentLocation: d.currentLocation
+          }))
+        );
+    
+        logger.info(`✅ Got distances for ${distances.size} drivers`);
+    
+        // Log distances
+        distances.forEach((distance, driverId) => {
+          logger.info(`   ${driverId}: ${distance.distance.text} in ${distance.duration.text}`);
+        });
+    
+        // Step 4: Filter drivers by max distance if specified
+        let filteredDrivers = driversWithLocations;
+        if (order.maxDistance) {
+          filteredDrivers = driversWithLocations.filter(driver => {
+            const distanceInfo = distances.get(driver.driverId);
+            if (!distanceInfo) {
+              logger.warn(`   ${driver.driverId}: No distance info`);
+              return false;
+            }
+            
+            const distanceKm = distanceInfo.distance.value / 1000;
+            const withinRange = distanceKm <= order.maxDistance!;
+            logger.info(`   ${driver.driverId}: ${distanceKm.toFixed(2)}km (max: ${order.maxDistance}km) - ${withinRange ? '✅' : '❌'}`);
+            return withinRange;
+          });
+        }
+    
+        logger.info(`🎯 ${filteredDrivers.length} drivers within ${order.maxDistance || 'any'} km range`);
+    
+        if (filteredDrivers.length === 0) {
+          logger.info('❌ No drivers within the specified distance range');
+          return [];
+        }
+    
+        // Step 5: Apply matching algorithm with distance scoring
+        logger.info('🧮 Calculating match scores...');
+        const scoredDrivers = filteredDrivers.map(driver => {
+          const distanceInfo = distances.get(driver.driverId);
+          const primaryVehicle = driver.vehicles[0];
+        
+          let score = this.calculateBaseScore(driver);
+        
+          // Distance score (closer is better)
+          if (distanceInfo) {
+            const distanceScore = this.calculateDistanceScore(distanceInfo);
+            score = (score * 0.4) + (distanceScore * 0.6);
+          }
+      
+          // Vehicle suitability score
+          const vehicleScore = primaryVehicle ? 
+            this.calculateVehicleSuitability(primaryVehicle, order) : 0;
+          score = (score * 0.5) + (vehicleScore * 0.5);
+      
+          // Urgency factor
+          if (order.urgency === 'express') {
+            score = distanceInfo ? (score * 0.3) + (this.calculateDistanceScore(distanceInfo) * 0.7) : score;
+          }
+      
+          // Add user fallback if missing
+          const userInfo = driver.user || {
+            firstName: 'Driver',
+            lastName: '# ' + driver.driverId.substring(0, 4),
+            phone: 'Not available'
+          };
+      
+          const suitability = this.getSuitabilityLevel(score);
+          logger.info(`   ${driver.driverId}: Score=${Math.round(score)}, ${suitability}`);
+      
+          return {
+            ...driver,
+            user: userInfo,
+            distanceInfo,
+            matchScore: Math.round(score),
+            suitability,
+            estimatedArrival: this.formatEstimatedArrival(distanceInfo?.duration.value)
+          };
+        });
+    
+        // Step 6: Sort by match score (highest first)
+        const sortedDrivers = scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
+    
+        logger.info(`✅ Returning ${sortedDrivers.length} matched drivers`);
+        return sortedDrivers;
+    
+      } catch (error: any) {
+        logger.error('❌ Matching service error:', error);
+        logger.error('Error details:', {
+          message: error.message,
+          stack: error.stack
+        });
+        throw new Error('Failed to find matching drivers');
       }
-
-      // Step 4: Apply matching algorithm with distance scoring
-      const scoredDrivers = filteredDrivers.map(driver => {
-        const distanceInfo = distances.get(driver.driverId);
-        const primaryVehicle = driver.vehicles[0];
-        
-        let score = this.calculateBaseScore(driver);
-        
-        // Distance score (closer is better)
-        if (distanceInfo) {
-          const distanceScore = this.calculateDistanceScore(distanceInfo);
-          score = (score * 0.4) + (distanceScore * 0.6);
-        }
-
-        // Vehicle suitability score
-        const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
-        score = (score * 0.5) + (vehicleScore * 0.5);
-
-        // Urgency factor
-        if (order.urgency === 'express') {
-          // Prioritize closer drivers more heavily for express orders
-          score = distanceInfo ? (score * 0.3) + (this.calculateDistanceScore(distanceInfo) * 0.7) : score;
-        }
-
-        return {
-          ...driver,
-          distanceInfo,
-          matchScore: Math.round(score),
-          suitability: this.getSuitabilityLevel(score),
-          estimatedArrival: this.formatEstimatedArrival(distanceInfo?.duration.value)
-        };
-      });
-
-      // Step 5: Sort by match score (highest first)
-      return scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
-
-    } catch (error: any) {
-      logger.error('Matching service error:', error);
-      throw new Error('Failed to find matching drivers');
     }
-  }
 
   private calculateBaseScore(driver: DriverInfo): number {
     let score = 100;

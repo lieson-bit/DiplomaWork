@@ -6,6 +6,19 @@ import { upload } from '../services/upload.service';
 
 const router = express.Router();
 
+router.post(
+  '/drivers/match',
+  validate(validationSchemas.matchDrivers),
+  driverController.findMatchingDrivers
+);
+
+// Route for simple discovery (without distance calculations)
+router.get(
+  '/drivers/available',
+  validate(validationSchemas.discoverDrivers),
+  driverController.discoverDrivers
+);
+
 // Apply authentication to all routes
 router.use(authenticate);
 router.use(authorizeDriver);
@@ -92,22 +105,5 @@ router.get(
 router.get('/drivers/stats', driverController.getStats);
 router.get('/drivers/verification-status', driverController.getVerificationStatus);
 router.post('/drivers/metrics', driverController.recordMetrics);
-
-// Add these routes after authentication but before authorizeDriver
-// (so customers can access them)
-
-// Route for customers to find matching drivers
-router.post(
-  '/drivers/match',
-  validate(validationSchemas.matchDrivers),
-  driverController.findMatchingDrivers
-);
-
-// Route for simple discovery (without distance calculations)
-router.get(
-  '/drivers/available',
-  validate(validationSchemas.discoverDrivers),
-  driverController.discoverDrivers
-);
 
 export default router;

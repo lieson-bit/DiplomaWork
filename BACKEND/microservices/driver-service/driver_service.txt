@@ -558,11 +558,6 @@ export class DriverController {
       // Customers can access this, so we don't restrict to driver userType
       const userType = req.user?.userType;
 
-      // Optional: Verify user is customer or admin
-      if (userType !== 'customer' && userType !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden: Customer access only' });
-      }
-
       const {
         estimatedWeight,
         estimatedVolume,
@@ -604,11 +599,6 @@ export class DriverController {
   async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
     try {
       const userType = req.user?.userType;
-
-      // Verify user is customer or admin
-      if (userType !== 'customer' && userType !== 'admin') {
-        return res.status(403).json({ error: 'Forbidden: Customer access only' });
-      }
 
       const {
         pickupAddress,
@@ -2157,6 +2147,19 @@ import { upload } from '../services/upload.service';
 
 const router = express.Router();
 
+router.post(
+  '/drivers/match',
+  validate(validationSchemas.matchDrivers),
+  driverController.findMatchingDrivers
+);
+
+// Route for simple discovery (without distance calculations)
+router.get(
+  '/drivers/available',
+  validate(validationSchemas.discoverDrivers),
+  driverController.discoverDrivers
+);
+
 // Apply authentication to all routes
 router.use(authenticate);
 router.use(authorizeDriver);
@@ -2230,6 +2233,13 @@ router.patch(
   '/drivers/status',
   validate(validationSchemas.status),
   driverController.updateStatus
+);
+
+router.get(
+  '/drivers/discover',
+  authenticate, // Still need authentication
+  validate(validationSchemas.discoverDrivers),
+  driverController.discoverDrivers
 );
 
 // Stats and verification routes
@@ -2601,7 +2611,7 @@ export class DriverService {
     };
   }
 
-  // Add this method to DriverService class
+  // In your discoverAvailableDrivers method, update it to include user information:
   async discoverAvailableDrivers(params: {
     estimatedWeight?: number;
     estimatedVolume?: number;
@@ -2670,9 +2680,10 @@ export class DriverService {
     try {
       const [rows] = await pool.execute(query, values);
       const drivers = rows as any[];
-    
-      // Group vehicles by driver
+      
+      // Group vehicles by driver and fetch user info for each driver
       const driversMap = new Map();
+      const userPromises: Promise<any>[] = [];
       
       for (const row of drivers) {
         if (!driversMap.has(row.driver_id)) {
@@ -2687,8 +2698,29 @@ export class DriverService {
             isOnline: Boolean(row.is_online),
             currentLocation: row.current_location,
             profileCompleted: Boolean(row.profile_completed),
-            vehicles: []
+            vehicles: [],
+            user: null // Placeholder for user data
           });
+          
+          // Fetch user info for this driver
+          userPromises.push(
+            httpClient.getUser(row.user_id)
+              .then(userInfo => ({
+                driverId: row.driver_id,
+                userInfo
+              }))
+              .catch(error => {
+                logger.error(`Failed to fetch user info for ${row.user_id}:`, error);
+                return {
+                  driverId: row.driver_id,
+                  userInfo: {
+                    firstName: 'Unknown',
+                    lastName: 'Driver',
+                    phone: 'N/A'
+                  }
+                };
+              })
+          );
         }
       
         if (row.vehicle_id) {
@@ -2708,9 +2740,28 @@ export class DriverService {
           });
         }
       }
-    
-      // Convert map to array
-      return Array.from(driversMap.values());
+      
+      // Wait for all user info to be fetched
+      const userResults = await Promise.all(userPromises);
+      
+      // Update drivers with user info
+      userResults.forEach(result => {
+        const driverData = driversMap.get(result.driverId);
+        if (driverData && result.userInfo) {
+          driverData.user = {
+            firstName: result.userInfo.firstName || 'Unknown',
+            lastName: result.userInfo.lastName || 'Driver',
+            phone: result.userInfo.phone || 'N/A'
+          };
+        }
+      });
+      
+      // Filter out drivers without user info (optional)
+      const validDrivers = Array.from(driversMap.values()).filter(driver => 
+        driver.user !== null
+      );
+      
+      return validDrivers;
       
     } catch (error: any) {
       logger.error('Error discovering drivers:', error);
@@ -3184,7 +3235,8 @@ export interface DistanceMatrixResponse {
 
 export class LocationService {
   private distanceMatrixApiKey: string;
-  private geocodingApiUrl: string = 'https://nominatim.openstreetmap.org/search';
+  private cache = new Map<string, { coords: Coordinates; timestamp: number }>();
+  private cacheTTL = 24 * 60 * 60 * 1000; // 24 hours
 
   constructor() {
     this.distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
@@ -3192,33 +3244,208 @@ export class LocationService {
   }
 
   /**
-   * Convert address to coordinates using OpenStreetMap Nominatim (free)
+   * Get distance and duration between two addresses using DistanceMatrix.ai
+   * DistanceMatrix.ai can handle addresses directly - no need for geocoding first!
+   */
+  async getDistanceAndTime(
+    origin: string, 
+    destination: string,
+    mode: string = 'driving'
+  ): Promise<DistanceMatrixResponse | null> {
+    try {
+      logger.info(`Getting distance from "${origin}" to "${destination}"`);
+      
+      const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
+        params: {
+          origins: origin,
+          destinations: destination,
+          mode: mode,
+          key: this.distanceMatrixApiKey
+        },
+        timeout: 10000 // 10 second timeout
+      });
+
+      logger.info('Distance matrix response status:', response.data.status);
+      
+      if (response.data.status === 'OK' && 
+          response.data.rows && 
+          response.data.rows[0] && 
+          response.data.rows[0].elements && 
+          response.data.rows[0].elements[0] &&
+          response.data.rows[0].elements[0].status === 'OK') {
+        
+        const element = response.data.rows[0].elements[0];
+        logger.info(`Distance: ${element.distance.text}, Duration: ${element.duration.text}`);
+        
+        return {
+          distance: element.distance,
+          duration: element.duration,
+          status: 'OK'
+        };
+      } else {
+        const errorStatus = response.data.rows?.[0]?.elements?.[0]?.status || response.data.status;
+        logger.warn(`Distance matrix failed: ${errorStatus}`);
+        logger.warn('Response data:', response.data);
+        return null;
+      }
+    } catch (error: any) {
+      logger.error('Distance matrix error:', error.message);
+      if (error.response) {
+        logger.error('Error response data:', error.response.data);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Batch process distances for multiple drivers
+   * DistanceMatrix.ai can handle multiple origins/destinations in one request!
+   */
+  async getDistancesForDrivers(
+    pickupAddress: string,
+    drivers: Array<{ driverId: string; currentLocation: string }>
+  ): Promise<Map<string, DistanceMatrixResponse>> {
+    const results = new Map<string, DistanceMatrixResponse>();
+    
+    if (drivers.length === 0) {
+      return results;
+    }
+
+    try {
+      // Group drivers into batches (DistanceMatrix.ai has limits)
+      const batchSize = 10; // Safe batch size
+      const batches = [];
+      
+      for (let i = 0; i < drivers.length; i += batchSize) {
+        batches.push(drivers.slice(i, i + batchSize));
+      }
+
+      for (const batch of batches) {
+        // Extract driver locations
+        const origins = batch.map(d => d.currentLocation);
+        
+        logger.info(`Processing batch of ${batch.length} drivers`);
+        logger.info('Origins:', origins);
+        logger.info('Destination:', pickupAddress);
+
+        // Make a single request for all drivers in this batch
+        const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
+          params: {
+            origins: origins.join('|'), // Multiple origins separated by |
+            destinations: pickupAddress,
+            mode: 'driving',
+            key: this.distanceMatrixApiKey
+          },
+          timeout: 15000 // 15 second timeout for batch
+        });
+
+        if (response.data.status === 'OK' && response.data.rows) {
+          response.data.rows.forEach((row: any, index: number) => {
+            const driver = batch[index];
+            if (!driver) return;
+            
+            const element = row.elements?.[0];
+            if (element && element.status === 'OK') {
+              results.set(driver.driverId, {
+                distance: element.distance,
+                duration: element.duration,
+                status: 'OK'
+              });
+              logger.info(`Driver ${driver.driverId}: ${element.distance.text}, ${element.duration.text}`);
+            } else {
+              logger.warn(`No distance for driver ${driver.driverId}: ${element?.status || 'no data'}`);
+            }
+          });
+        } else {
+          logger.warn(`Batch request failed: ${response.data.status}`);
+        }
+
+        // Add delay between batches to avoid rate limiting
+        if (batches.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      logger.info(`Successfully got distances for ${results.size} out of ${drivers.length} drivers`);
+      return results;
+
+    } catch (error: any) {
+      logger.error('Batch distance calculation error:', error.message);
+      
+      // Fallback: Try individual requests if batch fails
+      logger.info('Trying individual requests as fallback...');
+      await this.getDistancesIndividually(pickupAddress, drivers, results);
+      
+      return results;
+    }
+  }
+
+  /**
+   * Fallback method: Get distances one by one
+   */
+  private async getDistancesIndividually(
+    pickupAddress: string,
+    drivers: Array<{ driverId: string; currentLocation: string }>,
+    results: Map<string, DistanceMatrixResponse>
+  ): Promise<void> {
+    for (const driver of drivers) {
+      try {
+        const distanceInfo = await this.getDistanceAndTime(
+          driver.currentLocation,
+          pickupAddress
+        );
+        
+        if (distanceInfo) {
+          results.set(driver.driverId, distanceInfo);
+        }
+        
+        // Add delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (error) {
+        logger.error(`Individual distance failed for driver ${driver.driverId}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Simple geocoding using OpenWeatherMap (optional - only if needed)
    */
   async geocodeAddress(address: string): Promise<Coordinates | null> {
     try {
-      // Rate limiting: Nominatim requires max 1 request per second
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Check cache first
+      const cached = this.cache.get(address);
+      if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
+        return cached.coords;
+      }
 
-      const response = await axios.get(this.geocodingApiUrl, {
+      // Try OpenWeatherMap geocoding
+      const weatherApiKey = process.env.WEATHER_API_KEY || 'your_openweather_api_key';
+      const response = await axios.get('http://api.openweathermap.org/geo/1.0/direct', {
         params: {
           q: address,
-          format: 'json',
           limit: 1,
-          addressdetails: 1
+          appid: weatherApiKey
         },
-        headers: {
-          'User-Agent': 'Delivery-App/1.0 (your-email@example.com)'
-        }
+        timeout: 5000
       });
 
       if (response.data && response.data.length > 0) {
-        return {
-          lat: parseFloat(response.data[0].lat),
-          lng: parseFloat(response.data[0].lon)
+        const coords = {
+          lat: response.data[0].lat,
+          lng: response.data[0].lon
         };
+        
+        // Cache the result
+        this.cache.set(address, {
+          coords,
+          timestamp: Date.now()
+        });
+        
+        logger.info(`Geocoded "${address}" to ${coords.lat},${coords.lng}`);
+        return coords;
       }
-      
-      logger.warn(`Geocoding failed for address: ${address}`);
+
+      logger.warn(`Geocoding failed for: ${address}`);
       return null;
     } catch (error: any) {
       logger.error('Geocoding error:', error.message);
@@ -3227,42 +3454,7 @@ export class LocationService {
   }
 
   /**
-   * Get distance and duration between two addresses using DistanceMatrix.ai
-   */
-  async getDistanceAndTime(
-    origin: string, 
-    destination: string,
-    mode: string = 'driving'
-  ): Promise<DistanceMatrixResponse | null> {
-    try {
-      const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
-        params: {
-          origins: origin,
-          destinations: destination,
-          mode: mode,
-          key: this.distanceMatrixApiKey
-        }
-      });
-
-      if (response.data.status === 'OK' && response.data.rows[0].elements[0].status === 'OK') {
-        const element = response.data.rows[0].elements[0];
-        return {
-          distance: element.distance,
-          duration: element.duration,
-          status: 'OK'
-        };
-      } else {
-        logger.warn(`Distance matrix failed: ${response.data.status}`);
-        return null;
-      }
-    } catch (error: any) {
-      logger.error('Distance matrix error:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Get distance and time between coordinates
+   * Get distance using coordinates (if you have them)
    */
   async getDistanceAndTimeFromCoords(
     originCoords: Coordinates,
@@ -3273,44 +3465,6 @@ export class LocationService {
     const destination = `${destinationCoords.lat},${destinationCoords.lng}`;
     
     return this.getDistanceAndTime(origin, destination, mode);
-  }
-
-  /**
-   * Batch process distances for multiple drivers
-   */
-  async getDistancesForDrivers(
-    pickupAddress: string,
-    drivers: Array<{ driverId: string; currentLocation: string }>
-  ): Promise<Map<string, DistanceMatrixResponse>> {
-    const results = new Map<string, DistanceMatrixResponse>();
-    
-    // Process in batches to avoid rate limiting
-    const batchSize = 5;
-    for (let i = 0; i < drivers.length; i += batchSize) {
-      const batch = drivers.slice(i, i + batchSize);
-      
-      await Promise.all(batch.map(async (driver) => {
-        try {
-          const distanceInfo = await this.getDistanceAndTime(
-            driver.currentLocation,
-            pickupAddress
-          );
-          
-          if (distanceInfo) {
-            results.set(driver.driverId, distanceInfo);
-          }
-        } catch (error) {
-          logger.error(`Failed to get distance for driver ${driver.driverId}:`, error);
-        }
-      }));
-
-      // Add delay between batches to respect rate limits
-      if (i + batchSize < drivers.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-    
-    return results;
   }
 }
 
@@ -3360,7 +3514,7 @@ export interface DriverInfo {
   isOnline: boolean;
   currentLocation: string;
   profileCompleted: boolean;
-  user: {
+  user?: { 
     firstName: string;
     lastName: string;
     phone: string;
@@ -3398,80 +3552,152 @@ export interface MatchedDriver extends DriverInfo {
 
 export class MatchingService {
   async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
-    try {
-      // Step 1: Get available drivers based on capacity
-      const drivers = await driverService.discoverAvailableDrivers({
-        estimatedWeight: order.weight,
-        estimatedVolume: order.volume,
-        vehicleType: order.vehicleType,
-        limit: 50 // Get more drivers initially for filtering
-      });
-
-      if (drivers.length === 0) {
-        return [];
-      }
-
-      // Step 2: Get distances and times for all drivers
-      const distances = await locationService.getDistancesForDrivers(
-        order.pickupAddress,
-        drivers.map(d => ({
-          driverId: d.driverId,
-          currentLocation: d.currentLocation
-        }))
-      );
-
-      // Step 3: Filter drivers by max distance if specified
-      let filteredDrivers = drivers;
-      if (order.maxDistance) {
-        filteredDrivers = drivers.filter(driver => {
-          const distanceInfo = distances.get(driver.driverId);
-          if (!distanceInfo) return false;
-          
-          const distanceKm = distanceInfo.distance.value / 1000;
-          return distanceKm <= order.maxDistance!;
+      try {
+        logger.info('🚗 Starting driver matching process');
+        logger.info('Order requirements:', {
+          pickupAddress: order.pickupAddress,
+          weight: order.weight,
+          volume: order.volume,
+          vehicleType: order.vehicleType,
+          maxDistance: order.maxDistance
         });
+    
+        // Step 1: Get available drivers based on capacity
+        const drivers = await driverService.discoverAvailableDrivers({
+          estimatedWeight: order.weight,
+          estimatedVolume: order.volume,
+          vehicleType: order.vehicleType,
+          limit: 20
+        });
+    
+        logger.info(`📊 Found ${drivers.length} drivers meeting capacity requirements`);
+    
+        if (drivers.length === 0) {
+          logger.info('❌ No drivers found with required capacity');
+          return [];
+        }
+    
+        // Log driver details
+        drivers.forEach((driver, index) => {
+          logger.info(`Driver ${index + 1}: ${driver.driverId}, Location: ${driver.currentLocation}`);
+        });
+    
+        // Step 2: Filter out drivers without valid locations
+        const driversWithLocations = drivers.filter(driver => {
+          if (!driver.currentLocation || driver.currentLocation.trim() === '') {
+            logger.warn(`⚠ Driver ${driver.driverId} has no location`);
+            return false;
+          }
+          return true;
+        });
+    
+        if (driversWithLocations.length === 0) {
+          logger.warn('❌ No drivers have valid locations');
+          return [];
+        }
+    
+        logger.info(`📍 Processing ${driversWithLocations.length} drivers with locations`);
+    
+        // Step 3: Get distances and times for all drivers
+        logger.info('📏 Calculating distances...');
+        const distances = await locationService.getDistancesForDrivers(
+          order.pickupAddress,
+          driversWithLocations.map(d => ({
+            driverId: d.driverId,
+            currentLocation: d.currentLocation
+          }))
+        );
+    
+        logger.info(`✅ Got distances for ${distances.size} drivers`);
+    
+        // Log distances
+        distances.forEach((distance, driverId) => {
+          logger.info(`   ${driverId}: ${distance.distance.text} in ${distance.duration.text}`);
+        });
+    
+        // Step 4: Filter drivers by max distance if specified
+        let filteredDrivers = driversWithLocations;
+        if (order.maxDistance) {
+          filteredDrivers = driversWithLocations.filter(driver => {
+            const distanceInfo = distances.get(driver.driverId);
+            if (!distanceInfo) {
+              logger.warn(`   ${driver.driverId}: No distance info`);
+              return false;
+            }
+            
+            const distanceKm = distanceInfo.distance.value / 1000;
+            const withinRange = distanceKm <= order.maxDistance!;
+            logger.info(`   ${driver.driverId}: ${distanceKm.toFixed(2)}km (max: ${order.maxDistance}km) - ${withinRange ? '✅' : '❌'}`);
+            return withinRange;
+          });
+        }
+    
+        logger.info(`🎯 ${filteredDrivers.length} drivers within ${order.maxDistance || 'any'} km range`);
+    
+        if (filteredDrivers.length === 0) {
+          logger.info('❌ No drivers within the specified distance range');
+          return [];
+        }
+    
+        // Step 5: Apply matching algorithm with distance scoring
+        logger.info('🧮 Calculating match scores...');
+        const scoredDrivers = filteredDrivers.map(driver => {
+          const distanceInfo = distances.get(driver.driverId);
+          const primaryVehicle = driver.vehicles[0];
+        
+          let score = this.calculateBaseScore(driver);
+        
+          // Distance score (closer is better)
+          if (distanceInfo) {
+            const distanceScore = this.calculateDistanceScore(distanceInfo);
+            score = (score * 0.4) + (distanceScore * 0.6);
+          }
+      
+          // Vehicle suitability score
+          const vehicleScore = primaryVehicle ? 
+            this.calculateVehicleSuitability(primaryVehicle, order) : 0;
+          score = (score * 0.5) + (vehicleScore * 0.5);
+      
+          // Urgency factor
+          if (order.urgency === 'express') {
+            score = distanceInfo ? (score * 0.3) + (this.calculateDistanceScore(distanceInfo) * 0.7) : score;
+          }
+      
+          // Add user fallback if missing
+          const userInfo = driver.user || {
+            firstName: 'Driver',
+            lastName: '# ' + driver.driverId.substring(0, 4),
+            phone: 'Not available'
+          };
+      
+          const suitability = this.getSuitabilityLevel(score);
+          logger.info(`   ${driver.driverId}: Score=${Math.round(score)}, ${suitability}`);
+      
+          return {
+            ...driver,
+            user: userInfo,
+            distanceInfo,
+            matchScore: Math.round(score),
+            suitability,
+            estimatedArrival: this.formatEstimatedArrival(distanceInfo?.duration.value)
+          };
+        });
+    
+        // Step 6: Sort by match score (highest first)
+        const sortedDrivers = scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
+    
+        logger.info(`✅ Returning ${sortedDrivers.length} matched drivers`);
+        return sortedDrivers;
+    
+      } catch (error: any) {
+        logger.error('❌ Matching service error:', error);
+        logger.error('Error details:', {
+          message: error.message,
+          stack: error.stack
+        });
+        throw new Error('Failed to find matching drivers');
       }
-
-      // Step 4: Apply matching algorithm with distance scoring
-      const scoredDrivers = filteredDrivers.map(driver => {
-        const distanceInfo = distances.get(driver.driverId);
-        const primaryVehicle = driver.vehicles[0];
-        
-        let score = this.calculateBaseScore(driver);
-        
-        // Distance score (closer is better)
-        if (distanceInfo) {
-          const distanceScore = this.calculateDistanceScore(distanceInfo);
-          score = (score * 0.4) + (distanceScore * 0.6);
-        }
-
-        // Vehicle suitability score
-        const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
-        score = (score * 0.5) + (vehicleScore * 0.5);
-
-        // Urgency factor
-        if (order.urgency === 'express') {
-          // Prioritize closer drivers more heavily for express orders
-          score = distanceInfo ? (score * 0.3) + (this.calculateDistanceScore(distanceInfo) * 0.7) : score;
-        }
-
-        return {
-          ...driver,
-          distanceInfo,
-          matchScore: Math.round(score),
-          suitability: this.getSuitabilityLevel(score),
-          estimatedArrival: this.formatEstimatedArrival(distanceInfo?.duration.value)
-        };
-      });
-
-      // Step 5: Sort by match score (highest first)
-      return scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
-
-    } catch (error: any) {
-      logger.error('Matching service error:', error);
-      throw new Error('Failed to find matching drivers');
     }
-  }
 
   private calculateBaseScore(driver: DriverInfo): number {
     let score = 100;
@@ -4438,6 +4664,32 @@ export const validationSchemas = {
       currentLocation: Joi.string().max(255).optional(),
     }),
   },
+
+  matchDrivers: Joi.object({
+    pickupAddress: Joi.string().required(),
+    pickupLat: Joi.number().min(-90).max(90).optional(),
+    pickupLng: Joi.number().min(-180).max(180).optional(),
+    dropoffAddress: Joi.string().optional(),
+    dropoffLat: Joi.number().min(-90).max(90).optional(),
+    dropoffLng: Joi.number().min(-180).max(180).optional(),
+    weight: Joi.number().positive().required(),
+    volume: Joi.number().positive().required(),
+    vehicleType: Joi.string()
+      .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+      .optional(),
+    urgency: Joi.string().valid('normal', 'urgent', 'express').default('normal'),
+    maxDistance: Joi.number().positive().default(20), // km
+  }),
+
+  discoverDrivers: Joi.object({
+    vehicleType: Joi.string()
+      .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+      .optional(),
+    estimatedWeight: Joi.number().positive().optional(),
+    estimatedVolume: Joi.number().positive().optional(),
+    limit: Joi.number().integer().min(1).max(50).default(20),
+    page: Joi.number().integer().min(1).default(1),
+  }),
 
   // Vehicle validation
   vehicle: {

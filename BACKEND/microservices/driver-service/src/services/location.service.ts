@@ -20,7 +20,8 @@ export interface DistanceMatrixResponse {
 
 export class LocationService {
   private distanceMatrixApiKey: string;
-  private geocodingApiUrl: string = 'https://nominatim.openstreetmap.org/search';
+  private cache = new Map<string, { coords: Coordinates; timestamp: number }>();
+  private cacheTTL = 24 * 60 * 60 * 1000; // 24 hours
 
   constructor() {
     this.distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
@@ -28,33 +29,208 @@ export class LocationService {
   }
 
   /**
-   * Convert address to coordinates using OpenStreetMap Nominatim (free)
+   * Get distance and duration between two addresses using DistanceMatrix.ai
+   * DistanceMatrix.ai can handle addresses directly - no need for geocoding first!
+   */
+  async getDistanceAndTime(
+    origin: string, 
+    destination: string,
+    mode: string = 'driving'
+  ): Promise<DistanceMatrixResponse | null> {
+    try {
+      logger.info(`Getting distance from "${origin}" to "${destination}"`);
+      
+      const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
+        params: {
+          origins: origin,
+          destinations: destination,
+          mode: mode,
+          key: this.distanceMatrixApiKey
+        },
+        timeout: 10000 // 10 second timeout
+      });
+
+      logger.info('Distance matrix response status:', response.data.status);
+      
+      if (response.data.status === 'OK' && 
+          response.data.rows && 
+          response.data.rows[0] && 
+          response.data.rows[0].elements && 
+          response.data.rows[0].elements[0] &&
+          response.data.rows[0].elements[0].status === 'OK') {
+        
+        const element = response.data.rows[0].elements[0];
+        logger.info(`Distance: ${element.distance.text}, Duration: ${element.duration.text}`);
+        
+        return {
+          distance: element.distance,
+          duration: element.duration,
+          status: 'OK'
+        };
+      } else {
+        const errorStatus = response.data.rows?.[0]?.elements?.[0]?.status || response.data.status;
+        logger.warn(`Distance matrix failed: ${errorStatus}`);
+        logger.warn('Response data:', response.data);
+        return null;
+      }
+    } catch (error: any) {
+      logger.error('Distance matrix error:', error.message);
+      if (error.response) {
+        logger.error('Error response data:', error.response.data);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Batch process distances for multiple drivers
+   * DistanceMatrix.ai can handle multiple origins/destinations in one request!
+   */
+  async getDistancesForDrivers(
+    pickupAddress: string,
+    drivers: Array<{ driverId: string; currentLocation: string }>
+  ): Promise<Map<string, DistanceMatrixResponse>> {
+    const results = new Map<string, DistanceMatrixResponse>();
+    
+    if (drivers.length === 0) {
+      return results;
+    }
+
+    try {
+      // Group drivers into batches (DistanceMatrix.ai has limits)
+      const batchSize = 10; // Safe batch size
+      const batches = [];
+      
+      for (let i = 0; i < drivers.length; i += batchSize) {
+        batches.push(drivers.slice(i, i + batchSize));
+      }
+
+      for (const batch of batches) {
+        // Extract driver locations
+        const origins = batch.map(d => d.currentLocation);
+        
+        logger.info(`Processing batch of ${batch.length} drivers`);
+        logger.info('Origins:', origins);
+        logger.info('Destination:', pickupAddress);
+
+        // Make a single request for all drivers in this batch
+        const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
+          params: {
+            origins: origins.join('|'), // Multiple origins separated by |
+            destinations: pickupAddress,
+            mode: 'driving',
+            key: this.distanceMatrixApiKey
+          },
+          timeout: 15000 // 15 second timeout for batch
+        });
+
+        if (response.data.status === 'OK' && response.data.rows) {
+          response.data.rows.forEach((row: any, index: number) => {
+            const driver = batch[index];
+            if (!driver) return;
+            
+            const element = row.elements?.[0];
+            if (element && element.status === 'OK') {
+              results.set(driver.driverId, {
+                distance: element.distance,
+                duration: element.duration,
+                status: 'OK'
+              });
+              logger.info(`Driver ${driver.driverId}: ${element.distance.text}, ${element.duration.text}`);
+            } else {
+              logger.warn(`No distance for driver ${driver.driverId}: ${element?.status || 'no data'}`);
+            }
+          });
+        } else {
+          logger.warn(`Batch request failed: ${response.data.status}`);
+        }
+
+        // Add delay between batches to avoid rate limiting
+        if (batches.length > 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      logger.info(`Successfully got distances for ${results.size} out of ${drivers.length} drivers`);
+      return results;
+
+    } catch (error: any) {
+      logger.error('Batch distance calculation error:', error.message);
+      
+      // Fallback: Try individual requests if batch fails
+      logger.info('Trying individual requests as fallback...');
+      await this.getDistancesIndividually(pickupAddress, drivers, results);
+      
+      return results;
+    }
+  }
+
+  /**
+   * Fallback method: Get distances one by one
+   */
+  private async getDistancesIndividually(
+    pickupAddress: string,
+    drivers: Array<{ driverId: string; currentLocation: string }>,
+    results: Map<string, DistanceMatrixResponse>
+  ): Promise<void> {
+    for (const driver of drivers) {
+      try {
+        const distanceInfo = await this.getDistanceAndTime(
+          driver.currentLocation,
+          pickupAddress
+        );
+        
+        if (distanceInfo) {
+          results.set(driver.driverId, distanceInfo);
+        }
+        
+        // Add delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (error) {
+        logger.error(`Individual distance failed for driver ${driver.driverId}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Simple geocoding using OpenWeatherMap (optional - only if needed)
    */
   async geocodeAddress(address: string): Promise<Coordinates | null> {
     try {
-      // Rate limiting: Nominatim requires max 1 request per second
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Check cache first
+      const cached = this.cache.get(address);
+      if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
+        return cached.coords;
+      }
 
-      const response = await axios.get(this.geocodingApiUrl, {
+      // Try OpenWeatherMap geocoding
+      const weatherApiKey = process.env.WEATHER_API_KEY || 'your_openweather_api_key';
+      const response = await axios.get('http://api.openweathermap.org/geo/1.0/direct', {
         params: {
           q: address,
-          format: 'json',
           limit: 1,
-          addressdetails: 1
+          appid: weatherApiKey
         },
-        headers: {
-          'User-Agent': 'Delivery-App/1.0 (your-email@example.com)'
-        }
+        timeout: 5000
       });
 
       if (response.data && response.data.length > 0) {
-        return {
-          lat: parseFloat(response.data[0].lat),
-          lng: parseFloat(response.data[0].lon)
+        const coords = {
+          lat: response.data[0].lat,
+          lng: response.data[0].lon
         };
+        
+        // Cache the result
+        this.cache.set(address, {
+          coords,
+          timestamp: Date.now()
+        });
+        
+        logger.info(`Geocoded "${address}" to ${coords.lat},${coords.lng}`);
+        return coords;
       }
-      
-      logger.warn(`Geocoding failed for address: ${address}`);
+
+      logger.warn(`Geocoding failed for: ${address}`);
       return null;
     } catch (error: any) {
       logger.error('Geocoding error:', error.message);
@@ -63,42 +239,7 @@ export class LocationService {
   }
 
   /**
-   * Get distance and duration between two addresses using DistanceMatrix.ai
-   */
-  async getDistanceAndTime(
-    origin: string, 
-    destination: string,
-    mode: string = 'driving'
-  ): Promise<DistanceMatrixResponse | null> {
-    try {
-      const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
-        params: {
-          origins: origin,
-          destinations: destination,
-          mode: mode,
-          key: this.distanceMatrixApiKey
-        }
-      });
-
-      if (response.data.status === 'OK' && response.data.rows[0].elements[0].status === 'OK') {
-        const element = response.data.rows[0].elements[0];
-        return {
-          distance: element.distance,
-          duration: element.duration,
-          status: 'OK'
-        };
-      } else {
-        logger.warn(`Distance matrix failed: ${response.data.status}`);
-        return null;
-      }
-    } catch (error: any) {
-      logger.error('Distance matrix error:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Get distance and time between coordinates
+   * Get distance using coordinates (if you have them)
    */
   async getDistanceAndTimeFromCoords(
     originCoords: Coordinates,
@@ -109,44 +250,6 @@ export class LocationService {
     const destination = `${destinationCoords.lat},${destinationCoords.lng}`;
     
     return this.getDistanceAndTime(origin, destination, mode);
-  }
-
-  /**
-   * Batch process distances for multiple drivers
-   */
-  async getDistancesForDrivers(
-    pickupAddress: string,
-    drivers: Array<{ driverId: string; currentLocation: string }>
-  ): Promise<Map<string, DistanceMatrixResponse>> {
-    const results = new Map<string, DistanceMatrixResponse>();
-    
-    // Process in batches to avoid rate limiting
-    const batchSize = 5;
-    for (let i = 0; i < drivers.length; i += batchSize) {
-      const batch = drivers.slice(i, i + batchSize);
-      
-      await Promise.all(batch.map(async (driver) => {
-        try {
-          const distanceInfo = await this.getDistanceAndTime(
-            driver.currentLocation,
-            pickupAddress
-          );
-          
-          if (distanceInfo) {
-            results.set(driver.driverId, distanceInfo);
-          }
-        } catch (error) {
-          logger.error(`Failed to get distance for driver ${driver.driverId}:`, error);
-        }
-      }));
-
-      // Add delay between batches to respect rate limits
-      if (i + batchSize < drivers.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-    
-    return results;
   }
 }
 
