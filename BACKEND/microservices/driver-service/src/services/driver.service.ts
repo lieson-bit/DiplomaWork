@@ -161,7 +161,8 @@ export class DriverService {
   }): Promise<DriverInfo[]> {
     const pool = await ensurePool();
     
-    let query = `
+    // Base query parts
+    const selectFields = `
       SELECT 
         d.id as driver_id,
         d.user_id,
@@ -185,43 +186,76 @@ export class DriverService {
         v.max_volume,
         v.image_url,
         v.current_status as vehicle_status
-        
+    `;
+    
+    const fromClause = `
       FROM drivers d
       LEFT JOIN vehicles v ON d.id = v.driver_id AND v.is_active = TRUE
+    `;
+    
+    const baseConditions = `
       WHERE d.status = 'active'
         AND d.is_online = TRUE
         AND d.verification_level IN ('verified', 'premium')
         AND v.current_status = 'available'
     `;
-  
+    
+    // Build WHERE conditions dynamically
+    const conditions: string[] = [];
     const values: any[] = [];
-  
-    // Add filters
+    
+    // Add optional filters
     if (params.vehicleType) {
-      query += ` AND v.type = ?`;
+      conditions.push(`v.type = ?`);
       values.push(params.vehicleType);
     }
-  
-    if (params.estimatedWeight) {
-      query += ` AND v.max_weight >= ?`;
+    
+    if (params.estimatedWeight !== undefined && params.estimatedWeight !== null) {
+      conditions.push(`v.max_weight >= ?`);
       values.push(params.estimatedWeight);
     }
-  
-    if (params.estimatedVolume) {
-      query += ` AND v.max_volume >= ?`;
+    
+    if (params.estimatedVolume !== undefined && params.estimatedVolume !== null) {
+      conditions.push(`v.max_volume >= ?`);
       values.push(params.estimatedVolume);
     }
-  
+    
+    // Build the complete WHERE clause
+    let whereClause = baseConditions;
+    if (conditions.length > 0) {
+      whereClause += ` AND ${conditions.join(' AND ')}`;
+    }
+    
     // Add pagination
-    const offset = ((params.page || 1) - 1) * (params.limit || 20);
-    query += ` LIMIT ? OFFSET ?`;
-    values.push(params.limit || 20, offset);
+    const limit = params.limit || 20;
+    const page = params.page || 1;
+    const offset = (page - 1) * limit;
+    
+    whereClause += ` LIMIT ? OFFSET ?`;
+    values.push(limit, offset);
+    
+    // Build the complete query
+    const query = `${selectFields} ${fromClause} ${whereClause}`;
+    
+    logger.info('🔍 Executing driver discovery query:', {
+      query: query.replace(/\s+/g, ' ').trim(),
+      values: values,
+      valuesLength: values.length,
+      params: params
+    });
   
     try {
       const [rows] = await pool.execute(query, values);
       const drivers = rows as any[];
       
-      // Group vehicles by driver and fetch user info for each driver
+      if (!drivers || drivers.length === 0) {
+        logger.info('ℹ️ No drivers found matching criteria');
+        return [];
+      }
+      
+      logger.info(`✅ Found ${drivers.length} drivers in database query`);
+      
+      // Group vehicles by driver and fetch user info
       const driversMap = new Map();
       const userPromises: Promise<any>[] = [];
       
@@ -239,7 +273,7 @@ export class DriverService {
             currentLocation: row.current_location,
             profileCompleted: Boolean(row.profile_completed),
             vehicles: [],
-            user: null // Placeholder for user data
+            user: null
           });
           
           // Fetch user info for this driver
@@ -247,16 +281,22 @@ export class DriverService {
             httpClient.getUser(row.user_id)
               .then(userInfo => ({
                 driverId: row.driver_id,
-                userInfo
+                userInfo: {
+                  firstName: userInfo.firstName || 'Driver',
+                  lastName: userInfo.lastName || `#${row.user_id.substring(0, 4)}`,
+                  phone: userInfo.phone || 'Contact via app',
+                  email: userInfo.email || ''
+                }
               }))
               .catch(error => {
-                logger.error(`Failed to fetch user info for ${row.user_id}:`, error);
+                logger.error(`Failed to fetch user info for ${row.user_id}:`, error.message);
                 return {
                   driverId: row.driver_id,
                   userInfo: {
-                    firstName: 'Unknown',
-                    lastName: 'Driver',
-                    phone: 'N/A'
+                    firstName: 'Driver',
+                    lastName: `#${row.user_id.substring(0, 4)}`,
+                    phone: 'Contact via app',
+                    email: ''
                   }
                 };
               })
@@ -288,23 +328,26 @@ export class DriverService {
       userResults.forEach(result => {
         const driverData = driversMap.get(result.driverId);
         if (driverData && result.userInfo) {
-          driverData.user = {
-            firstName: result.userInfo.firstName || 'Unknown',
-            lastName: result.userInfo.lastName || 'Driver',
-            phone: result.userInfo.phone || 'N/A'
-          };
+          driverData.user = result.userInfo;
         }
       });
       
-      // Filter out drivers without user info (optional)
+      // Filter out drivers without user info
       const validDrivers = Array.from(driversMap.values()).filter(driver => 
         driver.user !== null
       );
       
+      logger.info(`✅ Processed ${validDrivers.length} valid drivers`);
       return validDrivers;
       
     } catch (error: any) {
-      logger.error('Error discovering drivers:', error);
+      logger.error('❌ Error in discoverAvailableDrivers:', {
+        message: error.message,
+        sql: query,
+        values: values,
+        errorCode: error.code,
+        sqlMessage: error.sqlMessage
+      });
       throw new Error('Failed to discover available drivers');
     }
   }
