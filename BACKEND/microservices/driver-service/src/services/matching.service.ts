@@ -1,7 +1,7 @@
 import { logger } from '../utils/logger';
-import { geocodeAddress, formatCoordinates } from '../utils/geocoding.util';
 import { driverService } from './driver.service';
 import { locationService } from './location.service';
+import { geocodeAddress, isValidCoordinates } from '../utils/geocoding.util';
 
 export interface OrderRequirements {
   pickupAddress: string;
@@ -54,77 +54,129 @@ export interface MatchedDriver {
 export class MatchingService {
   
   async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
+    const requestStartTime = Date.now();
+    const matchingId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    
     try {
-      logger.info('🚗 ===== STARTING DRIVER MATCHING PROCESS =====');
-      logger.info('📦 Order Requirements:', {
-        pickupAddress: order.pickupAddress,
+      logger.info(`🚗 [${matchingId}] ===== STARTING MATCHING PROCESS =====`);
+      logger.info(`📦 [${matchingId}] Order requirements:`, {
         weight: order.weight,
         volume: order.volume,
         vehicleType: order.vehicleType,
         urgency: order.urgency,
-        maxDistance: order.maxDistance
+        maxDistance: order.maxDistance,
+        pickupAddress: order.pickupAddress.substring(0, 100) + '...'
       });
-
-      // Step 1: Get available drivers based on capacity
-      logger.info('🔍 Step 1: Finding drivers with suitable capacity...');
-      const drivers = await driverService.discoverAvailableDrivers({
-        estimatedWeight: order.weight,
-        estimatedVolume: order.volume,
-        vehicleType: order.vehicleType,
-        limit: 50
-      });
-
-      if (drivers.length === 0) {
-        logger.info('❌ No drivers meet basic capacity requirements');
-        return [];
+      
+      // STEP 1: Get available drivers
+      logger.info(`🔍 [${matchingId}] Step 1: Finding drivers with suitable capacity...`);
+      
+      let drivers: any[] = [];
+      try {
+        drivers = await driverService.discoverAvailableDrivers({
+          estimatedWeight: order.weight,
+          estimatedVolume: order.volume,
+          vehicleType: order.vehicleType as any,
+          limit: 50
+        });
+        
+        logger.info(`✅ [${matchingId}] Driver service returned ${drivers.length} drivers`);
+        
+        if (drivers.length === 0) {
+          logger.warn(`❌ [${matchingId}] No drivers found matching capacity requirements`);
+          return [];
+        }
+        
+        // Log driver details
+        drivers.forEach((driver, index) => {
+          logger.debug(`👤 [${matchingId}] Driver ${index + 1}: ${driver.user?.firstName} ${driver.user?.lastName}`, {
+            driverId: driver.driverId,
+            userId: driver.userId,
+            vehicles: driver.vehicles?.length || 0,
+            location: driver.currentLocation || 'No location'
+          });
+        });
+        
+      } catch (dbError: any) {
+        logger.error(`❌ [${matchingId}] Driver service failed:`, {
+          message: dbError.message,
+          stack: dbError.stack?.substring(0, 500),
+          errorName: dbError.name
+        });
+        throw new Error(`Failed to get available drivers: ${dbError.message}`);
       }
-
-      logger.info(`✅ Step 1 Complete: Found ${drivers.length} drivers meeting capacity requirements`);
-
-      // Step 2: Geocode pickup address
-      logger.info('📍 Step 2: Geocoding pickup address...');
-      let pickupCoords: { lat: number; lng: number } | undefined = order.pickupCoords;
-      let geocodingStatus: 'success' | 'fallback' | 'failed' = 'success';
-
-      if (!pickupCoords) {
-        const geocoded = await geocodeAddress(order.pickupAddress);
-        if (geocoded) {
-          pickupCoords = geocoded;
-          logger.info(`📍 Pickup coordinates: ${formatCoordinates(pickupCoords)}`);
+      
+      // STEP 2: Get pickup coordinates
+      logger.info(`📍 [${matchingId}] Step 2: Getting pickup coordinates for: "${order.pickupAddress}"`);
+      
+      let pickupCoords: { lat: number; lng: number };
+      
+      // Check if coordinates were provided and are valid
+      if (order.pickupCoords && 
+          order.pickupCoords.lat !== undefined && 
+          order.pickupCoords.lng !== undefined &&
+          !isNaN(order.pickupCoords.lat) && 
+          !isNaN(order.pickupCoords.lng)) {
+        
+        pickupCoords = order.pickupCoords;
+        logger.info(`📍 [${matchingId}] Using provided coordinates: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+        
+      } else {
+        // No valid coordinates provided, try to geocode
+        try {
+          logger.info(`🗺️ [${matchingId}] Geocoding address...`);
+          const geocoded = await geocodeAddress(order.pickupAddress);
           
-          // Check if these are fallback coordinates (Saint Petersburg center)
-          if (Math.abs(pickupCoords.lat - 59.9343) < 0.01 && Math.abs(pickupCoords.lng - 30.3351) < 0.01) {
-            geocodingStatus = 'fallback';
-            logger.warn('⚠️ Using fallback coordinates for pickup location');
+          if (geocoded && isValidCoordinates(geocoded)) {
+            pickupCoords = geocoded;
+            logger.info(`📍 [${matchingId}] Successfully geocoded to: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+          } else {
+            logger.warn(`⚠️ [${matchingId}] Geocoding returned invalid coordinates:`, geocoded);
+            pickupCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
+            logger.info(`📍 [${matchingId}] Using fallback coordinates: ${pickupCoords.lat}, ${pickupCoords.lng}`);
           }
-        } else {
-          logger.warn('⚠️ Could not geocode pickup address');
-          geocodingStatus = 'failed';
-          // Use default coordinates to continue
-          pickupCoords = { lat: 59.9343, lng: 30.3351 };
+        } catch (geocodingError: any) {
+          logger.warn(`⚠️ [${matchingId}] Geocoding error: ${geocodingError.message}`);
+          pickupCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
+          logger.info(`📍 [${matchingId}] Using fallback coordinates after error: ${pickupCoords.lat}, ${pickupCoords.lng}`);
         }
       }
-
-      // Step 3: Process each driver and calculate scores
-      logger.info('🎯 Step 3: Calculating driver suitability scores...');
+      
+      // STEP 3: Process each driver
+      logger.info(`🎯 [${matchingId}] Step 3: Processing ${drivers.length} drivers...`);
+      
       const matchedDrivers: MatchedDriver[] = [];
-
+      let processedCount = 0;
+      let skippedCount = 0;
+      let distanceCalcSuccess = 0;
+      let distanceCalcFailed = 0;
+      
       for (const driver of drivers) {
+        processedCount++;
+        
         try {
+          logger.debug(`👤 [${matchingId}] Processing driver ${processedCount}/${drivers.length}: ${driver.user?.firstName} ${driver.user?.lastName}`);
+          
           let distanceInfo = null;
           let driverGeocodingStatus: 'success' | 'fallback' | 'failed' = 'success';
-
-          // Try to get distance info if driver has location
-          if (driver.currentLocation && pickupCoords) {
+          let shouldSkipDriver = false;
+          
+          // Try to calculate distance if driver has location
+          if (driver.currentLocation && driver.currentLocation.trim()) {
             try {
-              // First, geocode driver's location
-              logger.info(`📍 Geocoding driver ${driver.driverId} location: ${driver.currentLocation}`);
+              logger.debug(`📍 [${matchingId}] Geocoding driver location: "${driver.currentLocation.substring(0, 50)}..."`);
+              
               const driverCoords = await geocodeAddress(driver.currentLocation);
               
-              if (driverCoords) {
-                // Check if driver coordinates are fallback
-                if (Math.abs(driverCoords.lat - 59.9343) < 0.01 && Math.abs(driverCoords.lng - 30.3351) < 0.01) {
+              if (driverCoords && isValidCoordinates(driverCoords)) {
+                // Check if these are fallback coordinates
+                const isFallbackCoords = 
+                  Math.abs(driverCoords.lat - 59.9343) < 0.01 && 
+                  Math.abs(driverCoords.lng - 30.3351) < 0.01;
+                
+                if (isFallbackCoords) {
                   driverGeocodingStatus = 'fallback';
+                  logger.debug(`📍 [${matchingId}] Driver coordinates are fallback/default`);
                 }
                 
                 // Calculate distance using haversine formula
@@ -134,128 +186,175 @@ export class MatchingService {
                   driverCoords.lat,
                   driverCoords.lng
                 );
-
+                
+                logger.debug(`📏 [${matchingId}] Distance calculated: ${distanceKm.toFixed(2)} km`);
+                
                 // Apply maxDistance filter if specified
                 if (order.maxDistance && distanceKm > order.maxDistance) {
-                  logger.info(`❌ Driver ${driver.driverId} excluded: ${distanceKm.toFixed(1)}km > ${order.maxDistance}km`);
-                  continue; // Skip this driver
+                  logger.debug(`📍 [${matchingId}] Skipping driver: ${distanceKm.toFixed(1)}km > ${order.maxDistance}km max`);
+                  shouldSkipDriver = true;
+                  skippedCount++;
+                } else {
+                  // Create distance info
+                  const distanceMeters = distanceKm * 1000;
+                  // Estimate duration based on distance and traffic
+                  const baseDurationSeconds = (distanceKm / 30) * 3600; // 30 km/h average
+                  const urgencyMultiplier = order.urgency === 'express' ? 0.8 : order.urgency === 'urgent' ? 0.9 : 1;
+                  const durationSeconds = baseDurationSeconds * urgencyMultiplier;
+                  
+                  distanceInfo = {
+                    distance: {
+                      text: `${distanceKm.toFixed(1)} km`,
+                      value: Math.round(distanceMeters)
+                    },
+                    duration: {
+                      text: `${Math.ceil(durationSeconds / 60)} mins`,
+                      value: Math.round(durationSeconds)
+                    }
+                  };
+                  
+                  distanceCalcSuccess++;
+                  logger.debug(`✅ [${matchingId}] Distance info created: ${distanceInfo.distance.text} in ${distanceInfo.duration.text}`);
                 }
-
-                // Create distance info object
-                const distanceMeters = distanceKm * 1000;
-                // Estimate duration: assume average speed of 30 km/h in city traffic
-                const durationSeconds = (distanceKm / 30) * 3600;
-                
-                distanceInfo = {
-                  distance: {
-                    text: `${distanceKm.toFixed(1)} km`,
-                    value: distanceMeters
-                  },
-                  duration: {
-                    text: `${Math.ceil(durationSeconds / 60)} mins`,
-                    value: durationSeconds
-                  }
-                };
-
-                logger.info(`📏 Driver ${driver.driverId}: ${distanceKm.toFixed(1)}km away`);
               } else {
-                logger.warn(`⚠️ Could not geocode driver ${driver.driverId} location`);
+                logger.warn(`⚠️ [${matchingId}] Could not geocode driver location`);
                 driverGeocodingStatus = 'failed';
+                distanceCalcFailed++;
               }
-            } catch (geoError: any) {
-              logger.warn(`⚠️ Distance calculation failed for driver ${driver.driverId}:`, geoError.message);
+            } catch (distanceError: any) {
+              logger.warn(`⚠️ [${matchingId}] Distance calculation failed:`, {
+                message: distanceError.message,
+                driverId: driver.driverId
+              });
               driverGeocodingStatus = 'failed';
+              distanceCalcFailed++;
             }
-          } else if (!driver.currentLocation) {
-            logger.info(`ℹ️ Driver ${driver.driverId} has no location data`);
+          } else {
+            logger.info(`ℹ️ [${matchingId}] Driver has no location data`);
             driverGeocodingStatus = 'failed';
+            distanceCalcFailed++;
           }
-
-          // Calculate base score
-          const baseScore = this.calculateBaseScore(driver);
           
-          // Calculate distance score (if we have distance info)
-          let distanceScore = 0;
+          // Skip driver if beyond max distance
+          if (shouldSkipDriver) {
+            continue;
+          }
+          
+          // Calculate scores
+          const baseScore = this.calculateBaseScore(driver);
+          logger.debug(`📊 [${matchingId}] Base score: ${baseScore.toFixed(1)}`);
+          
+          let finalScore = baseScore;
+          
+          // Adjust score based on distance (if available)
           if (distanceInfo) {
             const distanceKm = distanceInfo.distance.value / 1000;
-            // Score decreases with distance: 100 points for 0km, 0 points for 50km
-            distanceScore = Math.max(0, 100 - (distanceKm * 2));
+            const distanceScore = Math.max(0, 100 - (distanceKm * 2)); // Closer is better
+            finalScore = (baseScore * 0.5) + (distanceScore * 0.5);
+            logger.debug(`📊 [${matchingId}] Distance score: ${distanceScore.toFixed(1)}, Combined: ${finalScore.toFixed(1)}`);
           }
-
-          // Calculate vehicle suitability score
-          let vehicleScore = 0;
+          
+          // Adjust for vehicle suitability
           const primaryVehicle = driver.vehicles && driver.vehicles[0];
           if (primaryVehicle) {
-            vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
+            const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
+            finalScore = (finalScore * 0.7) + (vehicleScore * 0.3);
+            logger.debug(`🚗 [${matchingId}] Vehicle score: ${vehicleScore.toFixed(1)}, Final: ${finalScore.toFixed(1)}`);
           }
-
-          // Combine scores
-          let finalScore = baseScore;
-          if (distanceInfo) {
-            // Weighted average: 50% base score, 30% distance, 20% vehicle
-            finalScore = (baseScore * 0.5) + (distanceScore * 0.3) + (vehicleScore * 0.2);
-          } else {
-            // No distance info: 70% base score, 30% vehicle
-            finalScore = (baseScore * 0.7) + (vehicleScore * 0.3);
-          }
-
+          
           // Adjust for urgency
           if (order.urgency === 'express') {
-            // For express orders, prioritize closer drivers more
+            // For express orders, prioritize drivers who are closer
             if (distanceInfo) {
-              finalScore = (baseScore * 0.3) + (distanceScore * 0.5) + (vehicleScore * 0.2);
+              const distanceKm = distanceInfo.distance.value / 1000;
+              const distanceScore = Math.max(0, 100 - (distanceKm * 3)); // More weight for distance
+              finalScore = (baseScore * 0.3) + (distanceScore * 0.7);
+              logger.debug(`⚡ [${matchingId}] Express order adjustment, final: ${finalScore.toFixed(1)}`);
             }
           }
-
-          // Ensure score is between 0-100
-          finalScore = Math.max(0, Math.min(100, finalScore));
-
+          
+          // Ensure score is valid
+          finalScore = Math.max(0, Math.min(100, Math.round(finalScore)));
+          
           // Create matched driver object
           const matchedDriver = this.createMatchedDriver(
             driver,
             distanceInfo,
             order,
-            Math.round(finalScore),
+            finalScore,
             driverGeocodingStatus
           );
-
+          
           matchedDrivers.push(matchedDriver);
-          logger.info(`✅ Driver ${driver.driverId} scored: ${finalScore.toFixed(1)} (${matchedDriver.suitability})`);
-
+          
+          logger.debug(`✅ [${matchingId}] Driver ${driver.driverId} added: Score ${finalScore} (${matchedDriver.suitability})`);
+          
         } catch (driverError: any) {
-          logger.error(`❌ Error processing driver ${driver.driverId}:`, driverError.message);
-          // Continue with next driver
-          continue;
+          logger.warn(`⚠️ [${matchingId}] Error processing driver ${driver.driverId}:`, {
+            message: driverError.message,
+            errorName: driverError.name
+          });
+          skippedCount++;
+          continue; // Skip this driver and continue with others
         }
       }
-
-      if (matchedDrivers.length === 0) {
-        logger.info('❌ No drivers matched after filtering');
-        return [];
-      }
-
-      // Step 4: Sort drivers by match score (highest first)
-      logger.info('📊 Step 4: Sorting drivers by match score...');
+      
+      // STEP 4: Sort and return results
+      logger.info(`📊 [${matchingId}] Step 4: Sorting ${matchedDrivers.length} matched drivers...`);
+      
+      // Sort by match score (highest first)
       const sortedDrivers = matchedDrivers.sort((a, b) => b.matchScore - a.matchScore);
-
-      logger.info(`🎉 MATCHING PROCESS COMPLETE: ${sortedDrivers.length} drivers matched`);
-      logger.info('🏆 Top 3 drivers:');
-      sortedDrivers.slice(0, 3).forEach((driver, index) => {
-        logger.info(`  ${index + 1}. ${driver.user.firstName} ${driver.user.lastName} - Score: ${driver.matchScore} (${driver.suitability})`);
-        if (driver.distanceInfo) {
-          logger.info(`     Distance: ${driver.distanceInfo.distance.text}, Time: ${driver.distanceInfo.duration.text}`);
-        }
+      
+      const processingTime = Date.now() - requestStartTime;
+      
+      logger.info(`🎉 [${matchingId}] ===== MATCHING PROCESS COMPLETE =====`, {
+        stats: {
+          totalDriversProcessed: processedCount,
+          successfullyMatched: matchedDrivers.length,
+          skipped: skippedCount,
+          distanceCalculations: {
+            success: distanceCalcSuccess,
+            failed: distanceCalcFailed
+          }
+        },
+        results: {
+          topScore: sortedDrivers[0]?.matchScore || 0,
+          averageScore: sortedDrivers.length > 0 
+            ? (sortedDrivers.reduce((sum, d) => sum + d.matchScore, 0) / sortedDrivers.length).toFixed(1)
+            : 0,
+          suitabilityBreakdown: {
+            excellent: sortedDrivers.filter(d => d.suitability === 'excellent').length,
+            good: sortedDrivers.filter(d => d.suitability === 'good').length,
+            fair: sortedDrivers.filter(d => d.suitability === 'fair').length,
+            poor: sortedDrivers.filter(d => d.suitability === 'poor').length
+          }
+        },
+        processingTime
       });
-
+      
+      // Log top 3 drivers for debugging
+      if (sortedDrivers.length > 0) {
+        logger.info(`🏆 [${matchingId}] Top ${Math.min(3, sortedDrivers.length)} drivers:`);
+        sortedDrivers.slice(0, 3).forEach((driver, index) => {
+          const distanceText = driver.distanceInfo 
+            ? `${driver.distanceInfo.distance.text} (${driver.distanceInfo.duration.text})`
+            : 'no distance';
+          logger.info(`  ${index + 1}. ${driver.user.firstName} ${driver.user.lastName} - Score: ${driver.matchScore} - ${distanceText}`);
+        });
+      } else {
+        logger.warn(`⚠️ [${matchingId}] No drivers matched after processing`);
+      }
+      
       return sortedDrivers;
-
+      
     } catch (error: any) {
-      logger.error('💥 MATCHING SERVICE CRITICAL ERROR:', error);
-      logger.error('Error details:', {
+      const processingTime = Date.now() - requestStartTime;
+      logger.error(`💥 [${matchingId}] Matching service critical error after ${processingTime}ms:`, {
         message: error.message,
-        stack: error.stack
+        stack: error.stack?.substring(0, 500),
+        errorName: error.name
       });
-      throw new Error('Failed to find matching drivers');
+      throw new Error(`Matching service failed: ${error.message}`);
     }
   }
 
@@ -356,7 +455,6 @@ export class MatchingService {
     // Check weight capacity
     const weightUtilization = order.weight / vehicle.maxWeight;
     if (weightUtilization > 1) {
-      logger.info(`❌ Vehicle ${vehicle.id} cannot carry ${order.weight}kg (max: ${vehicle.maxWeight}kg)`);
       return 0; // Cannot carry the weight
     }
     
@@ -366,7 +464,6 @@ export class MatchingService {
     // Check volume capacity
     const volumeUtilization = order.volume / vehicle.maxVolume;
     if (volumeUtilization > 1) {
-      logger.info(`❌ Vehicle ${vehicle.id} cannot fit ${order.volume}m³ (max: ${vehicle.maxVolume}m³)`);
       return 0; // Cannot fit the volume
     }
     

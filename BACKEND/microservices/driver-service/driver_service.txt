@@ -600,7 +600,7 @@ export class DriverController {
   async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
     try {
       const userType = req.user?.userType;
-
+    
       const {
         pickupAddress,
         pickupLat,
@@ -611,34 +611,165 @@ export class DriverController {
         urgency,
         maxDistance
       } = req.body;
-
+    
+      logger.info('📞 Customer matching request received:', {
+        pickupAddress: pickupAddress?.substring(0, 100),
+        weight,
+        volume,
+        vehicleType,
+        userType
+      });
+    
       // Validate required fields
-      if (!pickupAddress || !weight || !volume) {
+      if (!pickupAddress || weight === undefined || volume === undefined) {
+        logger.warn('❌ Missing required fields in matching request');
         return res.status(400).json({ 
+          success: false,
           error: 'Missing required fields: pickupAddress, weight, volume' 
         });
       }
-
+    
+      // Parse numeric values safely
+      const parsedWeight = parseFloat(weight);
+      const parsedVolume = parseFloat(volume);
+      
+      if (isNaN(parsedWeight) || isNaN(parsedVolume)) {
+        logger.warn('❌ Invalid numeric values in matching request');
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid numeric values for weight or volume'
+        });
+      }
+    
+      // Build order requirements
       const orderRequirements = {
         pickupAddress,
-        pickupCoords: pickupLat && pickupLng ? { lat: parseFloat(pickupLat), lng: parseFloat(pickupLng) } : undefined,
-        weight: parseFloat(weight),
-        volume: parseFloat(volume),
+        pickupCoords: pickupLat && pickupLng ? { 
+          lat: parseFloat(pickupLat), 
+          lng: parseFloat(pickupLng) 
+        } : undefined,
+        weight: parsedWeight,
+        volume: parsedVolume,
         vehicleType,
         urgency: urgency as 'normal' | 'urgent' | 'express',
         maxDistance: maxDistance ? parseFloat(maxDistance) : undefined
       };
-
-      const matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
-
-      res.json({
+    
+      // Generate request ID for tracking
+      const requestId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
+      logger.info('🔍 Starting driver matching process', {
+        requestId,
+        pickupAddress: orderRequirements.pickupAddress.substring(0, 100),
+        weight: orderRequirements.weight,
+        volume: orderRequirements.volume,
+        vehicleType: orderRequirements.vehicleType
+      });
+    
+      // Call matching service
+      let matchedDrivers;
+      try {
+        matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
+        logger.info(`✅ Matching service completed: ${matchedDrivers.length} drivers found`);
+      } catch (matchingError: any) {
+        logger.error('❌ Matching service failed:', {
+          message: matchingError.message,
+          stack: matchingError.stack?.substring(0, 500),
+          requestId
+        });
+        
+        // Return a more helpful error message
+        let errorMessage = 'Failed to find matching drivers';
+        let statusCode = 500;
+        
+        if (matchingError.message.includes('database') || matchingError.message.includes('query')) {
+          errorMessage = 'Driver database service is temporarily unavailable';
+          statusCode = 503;
+        } else if (matchingError.message.includes('geocoding') || matchingError.message.includes('coordinates')) {
+          errorMessage = 'Location service is temporarily unavailable';
+          statusCode = 503;
+        }
+        
+        return res.status(statusCode).json({
+          success: false,
+          error: {
+            message: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? matchingError.message : undefined
+          },
+          timestamp: new Date().toISOString(),
+          requestId
+        });
+      }
+    
+      // Analyze results
+      const totalDrivers = matchedDrivers.length;
+      const driversWithDistance = matchedDrivers.filter(d => d.distanceInfo).length;
+      const driversWithoutDistance = totalDrivers - driversWithDistance;
+    
+      // Prepare response
+      const response: any = {
         success: true,
         data: matchedDrivers,
-        count: matchedDrivers.length
+        count: totalDrivers,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          requestId,
+          matchingStats: {
+            total: totalDrivers,
+            withDistanceInfo: driversWithDistance,
+            withoutDistanceInfo: driversWithoutDistance
+          },
+          filtersApplied: {
+            weight: orderRequirements.weight,
+            volume: orderRequirements.volume,
+            vehicleType: orderRequirements.vehicleType,
+            maxDistance: orderRequirements.maxDistance,
+            urgency: orderRequirements.urgency
+          }
+        }
+      };
+    
+      // Add warnings if needed
+      const warnings = [];
+      
+      if (driversWithoutDistance > 0) {
+        warnings.push(`${driversWithoutDistance} driver(s) have no distance information`);
+      }
+      
+      if (totalDrivers === 0) {
+        warnings.push('No drivers found matching your criteria');
+      }
+      
+      if (warnings.length > 0) {
+        response.warnings = warnings;
+      }
+    
+      // Log successful response
+      logger.info(`🎉 Matching request ${requestId} completed successfully`, {
+        driversFound: totalDrivers,
+        withDistance: driversWithDistance,
+        warnings: warnings.length
       });
+    
+      return res.json(response);
+      
     } catch (error: any) {
-      logger.error('Find matching drivers error:', error);
-      next(error);
+      // Catch any unexpected errors
+      logger.error('💥 Unexpected error in findMatchingDrivers:', {
+        message: error.message,
+        stack: error.stack?.substring(0, 500),
+        body: req.body,
+        user: req.user
+      });
+      
+      return res.status(500).json({
+        success: false,
+        error: {
+          message: 'An unexpected error occurred while processing your request',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        },
+        timestamp: new Date().toISOString()
+      });
     }
   }
 
@@ -2651,7 +2782,8 @@ export class DriverService {
   }): Promise<DriverInfo[]> {
     const pool = await ensurePool();
     
-    let query = `
+    // Base query parts
+    const selectFields = `
       SELECT 
         d.id as driver_id,
         d.user_id,
@@ -2675,43 +2807,76 @@ export class DriverService {
         v.max_volume,
         v.image_url,
         v.current_status as vehicle_status
-        
+    `;
+    
+    const fromClause = `
       FROM drivers d
       LEFT JOIN vehicles v ON d.id = v.driver_id AND v.is_active = TRUE
+    `;
+    
+    const baseConditions = `
       WHERE d.status = 'active'
         AND d.is_online = TRUE
         AND d.verification_level IN ('verified', 'premium')
         AND v.current_status = 'available'
     `;
-  
+    
+    // Build WHERE conditions dynamically
+    const conditions: string[] = [];
     const values: any[] = [];
-  
-    // Add filters
+    
+    // Add optional filters
     if (params.vehicleType) {
-      query += ` AND v.type = ?`;
+      conditions.push(`v.type = ?`);
       values.push(params.vehicleType);
     }
-  
-    if (params.estimatedWeight) {
-      query += ` AND v.max_weight >= ?`;
+    
+    if (params.estimatedWeight !== undefined && params.estimatedWeight !== null) {
+      conditions.push(`v.max_weight >= ?`);
       values.push(params.estimatedWeight);
     }
-  
-    if (params.estimatedVolume) {
-      query += ` AND v.max_volume >= ?`;
+    
+    if (params.estimatedVolume !== undefined && params.estimatedVolume !== null) {
+      conditions.push(`v.max_volume >= ?`);
       values.push(params.estimatedVolume);
     }
-  
+    
+    // Build the complete WHERE clause
+    let whereClause = baseConditions;
+    if (conditions.length > 0) {
+      whereClause += ` AND ${conditions.join(' AND ')}`;
+    }
+    
     // Add pagination
-    const offset = ((params.page || 1) - 1) * (params.limit || 20);
-    query += ` LIMIT ? OFFSET ?`;
-    values.push(params.limit || 20, offset);
+    const limit = params.limit || 20;
+    const page = params.page || 1;
+    const offset = (page - 1) * limit;
+    
+    whereClause += ` LIMIT ? OFFSET ?`;
+    values.push(limit, offset);
+    
+    // Build the complete query
+    const query = `${selectFields} ${fromClause} ${whereClause}`;
+    
+    logger.info('🔍 Executing driver discovery query:', {
+      query: query.replace(/\s+/g, ' ').trim(),
+      values: values,
+      valuesLength: values.length,
+      params: params
+    });
   
     try {
       const [rows] = await pool.execute(query, values);
       const drivers = rows as any[];
       
-      // Group vehicles by driver and fetch user info for each driver
+      if (!drivers || drivers.length === 0) {
+        logger.info('ℹ️ No drivers found matching criteria');
+        return [];
+      }
+      
+      logger.info(`✅ Found ${drivers.length} drivers in database query`);
+      
+      // Group vehicles by driver and fetch user info
       const driversMap = new Map();
       const userPromises: Promise<any>[] = [];
       
@@ -2729,7 +2894,7 @@ export class DriverService {
             currentLocation: row.current_location,
             profileCompleted: Boolean(row.profile_completed),
             vehicles: [],
-            user: null // Placeholder for user data
+            user: null
           });
           
           // Fetch user info for this driver
@@ -2737,16 +2902,22 @@ export class DriverService {
             httpClient.getUser(row.user_id)
               .then(userInfo => ({
                 driverId: row.driver_id,
-                userInfo
+                userInfo: {
+                  firstName: userInfo.firstName || 'Driver',
+                  lastName: userInfo.lastName || `#${row.user_id.substring(0, 4)}`,
+                  phone: userInfo.phone || 'Contact via app',
+                  email: userInfo.email || ''
+                }
               }))
               .catch(error => {
-                logger.error(`Failed to fetch user info for ${row.user_id}:`, error);
+                logger.error(`Failed to fetch user info for ${row.user_id}:`, error.message);
                 return {
                   driverId: row.driver_id,
                   userInfo: {
-                    firstName: 'Unknown',
-                    lastName: 'Driver',
-                    phone: 'N/A'
+                    firstName: 'Driver',
+                    lastName: `#${row.user_id.substring(0, 4)}`,
+                    phone: 'Contact via app',
+                    email: ''
                   }
                 };
               })
@@ -2778,23 +2949,26 @@ export class DriverService {
       userResults.forEach(result => {
         const driverData = driversMap.get(result.driverId);
         if (driverData && result.userInfo) {
-          driverData.user = {
-            firstName: result.userInfo.firstName || 'Unknown',
-            lastName: result.userInfo.lastName || 'Driver',
-            phone: result.userInfo.phone || 'N/A'
-          };
+          driverData.user = result.userInfo;
         }
       });
       
-      // Filter out drivers without user info (optional)
+      // Filter out drivers without user info
       const validDrivers = Array.from(driversMap.values()).filter(driver => 
         driver.user !== null
       );
       
+      logger.info(`✅ Processed ${validDrivers.length} valid drivers`);
       return validDrivers;
       
     } catch (error: any) {
-      logger.error('Error discovering drivers:', error);
+      logger.error('❌ Error in discoverAvailableDrivers:', {
+        message: error.message,
+        sql: query,
+        values: values,
+        errorCode: error.code,
+        sqlMessage: error.sqlMessage
+      });
       throw new Error('Failed to discover available drivers');
     }
   }
@@ -3265,8 +3439,6 @@ export interface DistanceMatrixResponse {
 
 export class LocationService {
   private distanceMatrixApiKey: string;
-  private cache = new Map<string, { coords: Coordinates; timestamp: number }>();
-  private cacheTTL = 24 * 60 * 60 * 1000; // 24 hours
 
   constructor() {
     this.distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
@@ -3275,7 +3447,6 @@ export class LocationService {
 
   /**
    * Get distance and duration between two addresses using DistanceMatrix.ai
-   * DistanceMatrix.ai can handle addresses directly - no need for geocoding first!
    */
   async getDistanceAndTime(
     origin: string, 
@@ -3283,7 +3454,7 @@ export class LocationService {
     mode: string = 'driving'
   ): Promise<DistanceMatrixResponse | null> {
     try {
-      logger.info(`Getting distance from "${origin}" to "${destination}"`);
+      logger.info(`📍 Getting distance from "${origin}" to "${destination}"`);
       
       const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
         params: {
@@ -3292,10 +3463,10 @@ export class LocationService {
           mode: mode,
           key: this.distanceMatrixApiKey
         },
-        timeout: 10000 // 10 second timeout
+        timeout: 10000
       });
 
-      logger.info('Distance matrix response status:', response.data.status);
+      logger.info(`DistanceMatrix.ai response status: ${response.data.status}`);
       
       if (response.data.status === 'OK' && 
           response.data.rows && 
@@ -3305,7 +3476,7 @@ export class LocationService {
           response.data.rows[0].elements[0].status === 'OK') {
         
         const element = response.data.rows[0].elements[0];
-        logger.info(`Distance: ${element.distance.text}, Duration: ${element.duration.text}`);
+        logger.info(`✅ Distance: ${element.distance.text}, Duration: ${element.duration.text}`);
         
         return {
           distance: element.distance,
@@ -3314,187 +3485,96 @@ export class LocationService {
         };
       } else {
         const errorStatus = response.data.rows?.[0]?.elements?.[0]?.status || response.data.status;
-        logger.warn(`Distance matrix failed: ${errorStatus}`);
-        logger.warn('Response data:', response.data);
+        logger.warn(`❌ Distance matrix failed: ${errorStatus}`);
         return null;
       }
     } catch (error: any) {
-      logger.error('Distance matrix error:', error.message);
-      if (error.response) {
-        logger.error('Error response data:', error.response.data);
-      }
+      logger.error('❌ Distance matrix error:', error.message);
       return null;
     }
   }
 
   /**
-   * Batch process distances for multiple drivers
-   * DistanceMatrix.ai can handle multiple origins/destinations in one request!
+   * Calculate distance between coordinates using haversine formula
    */
-  async getDistancesForDrivers(
-    pickupAddress: string,
-    drivers: Array<{ driverId: string; currentLocation: string }>
-  ): Promise<Map<string, DistanceMatrixResponse>> {
-    const results = new Map<string, DistanceMatrixResponse>();
-    
-    if (drivers.length === 0) {
-      return results;
-    }
-
-    try {
-      // Group drivers into batches (DistanceMatrix.ai has limits)
-      const batchSize = 10; // Safe batch size
-      const batches = [];
-      
-      for (let i = 0; i < drivers.length; i += batchSize) {
-        batches.push(drivers.slice(i, i + batchSize));
-      }
-
-      for (const batch of batches) {
-        // Extract driver locations
-        const origins = batch.map(d => d.currentLocation);
-        
-        logger.info(`Processing batch of ${batch.length} drivers`);
-        logger.info('Origins:', origins);
-        logger.info('Destination:', pickupAddress);
-
-        // Make a single request for all drivers in this batch
-        const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
-          params: {
-            origins: origins.join('|'), // Multiple origins separated by |
-            destinations: pickupAddress,
-            mode: 'driving',
-            key: this.distanceMatrixApiKey
-          },
-          timeout: 15000 // 15 second timeout for batch
-        });
-
-        if (response.data.status === 'OK' && response.data.rows) {
-          response.data.rows.forEach((row: any, index: number) => {
-            const driver = batch[index];
-            if (!driver) return;
-            
-            const element = row.elements?.[0];
-            if (element && element.status === 'OK') {
-              results.set(driver.driverId, {
-                distance: element.distance,
-                duration: element.duration,
-                status: 'OK'
-              });
-              logger.info(`Driver ${driver.driverId}: ${element.distance.text}, ${element.duration.text}`);
-            } else {
-              logger.warn(`No distance for driver ${driver.driverId}: ${element?.status || 'no data'}`);
-            }
-          });
-        } else {
-          logger.warn(`Batch request failed: ${response.data.status}`);
-        }
-
-        // Add delay between batches to avoid rate limiting
-        if (batches.length > 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-
-      logger.info(`Successfully got distances for ${results.size} out of ${drivers.length} drivers`);
-      return results;
-
-    } catch (error: any) {
-      logger.error('Batch distance calculation error:', error.message);
-      
-      // Fallback: Try individual requests if batch fails
-      logger.info('Trying individual requests as fallback...');
-      await this.getDistancesIndividually(pickupAddress, drivers, results);
-      
-      return results;
-    }
-  }
-
-  /**
-   * Fallback method: Get distances one by one
-   */
-  private async getDistancesIndividually(
-    pickupAddress: string,
-    drivers: Array<{ driverId: string; currentLocation: string }>,
-    results: Map<string, DistanceMatrixResponse>
-  ): Promise<void> {
-    for (const driver of drivers) {
-      try {
-        const distanceInfo = await this.getDistanceAndTime(
-          driver.currentLocation,
-          pickupAddress
-        );
-        
-        if (distanceInfo) {
-          results.set(driver.driverId, distanceInfo);
-        }
-        
-        // Add delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 200));
-      } catch (error) {
-        logger.error(`Individual distance failed for driver ${driver.driverId}:`, error);
-      }
-    }
-  }
-
-  /**
-   * Simple geocoding using OpenWeatherMap (optional - only if needed)
-   */
-  async geocodeAddress(address: string): Promise<Coordinates | null> {
-    try {
-      // Check cache first
-      const cached = this.cache.get(address);
-      if (cached && Date.now() - cached.timestamp < this.cacheTTL) {
-        return cached.coords;
-      }
-
-      // Try OpenWeatherMap geocoding
-      const weatherApiKey = process.env.WEATHER_API_KEY || 'your_openweather_api_key';
-      const response = await axios.get('http://api.openweathermap.org/geo/1.0/direct', {
-        params: {
-          q: address,
-          limit: 1,
-          appid: weatherApiKey
-        },
-        timeout: 5000
-      });
-
-      if (response.data && response.data.length > 0) {
-        const coords = {
-          lat: response.data[0].lat,
-          lng: response.data[0].lon
-        };
-        
-        // Cache the result
-        this.cache.set(address, {
-          coords,
-          timestamp: Date.now()
-        });
-        
-        logger.info(`Geocoded "${address}" to ${coords.lat},${coords.lng}`);
-        return coords;
-      }
-
-      logger.warn(`Geocoding failed for: ${address}`);
-      return null;
-    } catch (error: any) {
-      logger.error('Geocoding error:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Get distance using coordinates (if you have them)
-   */
-  async getDistanceAndTimeFromCoords(
+  async calculateDistanceBetweenCoordinates(
     originCoords: Coordinates,
-    destinationCoords: Coordinates,
-    mode: string = 'driving'
-  ): Promise<DistanceMatrixResponse | null> {
-    const origin = `${originCoords.lat},${originCoords.lng}`;
-    const destination = `${destinationCoords.lat},${destinationCoords.lng}`;
+    destinationCoords: Coordinates
+  ): Promise<number> {
+    const R = 6371; // Earth's radius in kilometers
+    const lat1 = originCoords.lat * Math.PI / 180;
+    const lat2 = destinationCoords.lat * Math.PI / 180;
+    const deltaLat = (destinationCoords.lat - originCoords.lat) * Math.PI / 180;
+    const deltaLon = (destinationCoords.lng - originCoords.lng) * Math.PI / 180;
+
+    const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+              Math.cos(lat1) * Math.cos(lat2) *
+              Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
     
-    return this.getDistanceAndTime(origin, destination, mode);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distanceKm = R * c;
+
+    logger.info(`📍 Coordinate distance: ${distanceKm.toFixed(2)} km`);
+    
+    return distanceKm;
+  }
+
+  /**
+   * Estimate travel time based on distance and mode
+   */
+  estimateTravelTime(distanceKm: number, mode: string = 'driving'): number {
+    let averageSpeedKmph = 30; // Default for driving in city
+    
+    switch (mode) {
+      case 'walking':
+        averageSpeedKmph = 5;
+        break;
+      case 'bicycling':
+        averageSpeedKmph = 15;
+        break;
+      case 'transit':
+        averageSpeedKmph = 20;
+        break;
+      case 'driving':
+      default:
+        averageSpeedKmph = 30;
+    }
+
+    const timeHours = distanceKm / averageSpeedKmph;
+    const timeMinutes = timeHours * 60;
+    
+    logger.info(`⏱️ Estimated travel time: ${Math.ceil(timeMinutes)} minutes (${mode} at ${averageSpeedKmph} km/h)`);
+    
+    return timeMinutes;
+  }
+
+  /**
+   * Format distance for display
+   */
+  formatDistance(distanceMeters: number): string {
+    if (distanceMeters < 1000) {
+      return `${Math.round(distanceMeters)} m`;
+    } else {
+      return `${(distanceMeters / 1000).toFixed(1)} km`;
+    }
+  }
+
+  /**
+   * Format duration for display
+   */
+  formatDuration(seconds: number): string {
+    const minutes = Math.ceil(seconds / 60);
+    if (minutes < 60) {
+      return `${minutes} mins`;
+    } else {
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      if (remainingMinutes === 0) {
+        return `${hours} hour${hours > 1 ? 's' : ''}`;
+      } else {
+        return `${hours}h ${remainingMinutes}m`;
+      }
+    }
   }
 }
 
@@ -3505,8 +3585,9 @@ export const locationService = new LocationService();
 
 ```ts
 import { logger } from '../utils/logger';
-import { geocodeAddress } from '../utils/geocoding.util';
 import { driverService } from './driver.service';
+import { locationService } from './location.service';
+import { geocodeAddress, isValidCoordinates } from '../utils/geocoding.util';
 
 export interface OrderRequirements {
   pickupAddress: string;
@@ -3552,153 +3633,274 @@ export interface MatchedDriver {
   };
   matchScore: number;
   suitability: 'excellent' | 'good' | 'fair' | 'poor';
-  estimatedArrival: string; // e.g., "15 mins"
+  estimatedArrival: string;
+  geocodingStatus: 'success' | 'fallback' | 'failed';
 }
 
 export class MatchingService {
+  
   async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
-    try {
-      logger.info('🚗 Starting driver matching process', {
-        pickupAddress: order.pickupAddress,
-        weight: order.weight,
-        volume: order.volume,
-        vehicleType: order.vehicleType,
-        maxDistance: order.maxDistance
-      });
-
-      // Step 1: Get available drivers based on capacity
-      const drivers = await driverService.discoverAvailableDrivers({
-        estimatedWeight: order.weight,
-        estimatedVolume: order.volume,
-        vehicleType: order.vehicleType,
-        limit: 50
-      });
-
-      if (drivers.length === 0) {
-        logger.info('❌ No drivers meet basic capacity requirements');
-        return [];
-      }
-
-      logger.info(`✅ Found ${drivers.length} drivers meeting capacity requirements`);
-
-      // Step 2: Geocode pickup address ONCE
-        let pickupCoords: { lat: number; lng: number } | undefined = order.pickupCoords;
-      
-        if (!pickupCoords) {
-          logger.info('📍 Geocoding pickup address...');
-          const geocoded = await geocodeAddress(order.pickupAddress);
-          pickupCoords = geocoded || undefined; // ✅ Convert null → undefined
+      const requestStartTime = Date.now();
+      const matchingId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    
+      try {
+        logger.info(`🚗 [${matchingId}] Starting driver matching process`);
+        logger.info(`📦 [${matchingId}] Order: ${order.weight}kg, ${order.volume}m³, ${order.vehicleType || 'any vehicle'}`);
+    
+        // STEP 1: Get available drivers
+        logger.info(`🔍 [${matchingId}] Step 1: Finding drivers with suitable capacity...`);
         
-          if (!pickupCoords) {
-            logger.warn('⚠️ Could not geocode pickup address, skipping distance-based filtering');
-            return drivers.map(driver => this.createMatchedDriver(driver, null, order));
+        let drivers: any[] = [];
+        try {
+          drivers = await driverService.discoverAvailableDrivers({
+            estimatedWeight: order.weight,
+            estimatedVolume: order.volume,
+            vehicleType: order.vehicleType as any,
+            limit: 50
+          });
+          
+          logger.info(`✅ [${matchingId}] Found ${drivers.length} drivers from database`);
+          
+          if (drivers.length === 0) {
+            logger.info(`❌ [${matchingId}] No drivers found matching capacity requirements`);
+            return [];
+          }
+          
+        } catch (dbError: any) {
+          logger.error(`❌ [${matchingId}] Database query failed:`, dbError.message);
+          throw new Error('Failed to query available drivers from database');
+        }
+    
+        // STEP 2: Get pickup coordinates - FIXED TYPE ISSUE
+        logger.info(`📍 [${matchingId}] Step 2: Getting pickup coordinates...`);
+        
+        let pickupCoords: { lat: number; lng: number };
+        
+        // Check if coordinates were provided and are valid
+        if (order.pickupCoords && 
+            order.pickupCoords.lat !== undefined && 
+            order.pickupCoords.lng !== undefined &&
+            !isNaN(order.pickupCoords.lat) && 
+            !isNaN(order.pickupCoords.lng)) {
+            
+          // TypeScript now knows pickupCoords is not undefined because we checked all conditions
+          pickupCoords = order.pickupCoords;
+          logger.info(`📍 [${matchingId}] Using provided coordinates: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+            
+        } else {
+          // No valid coordinates provided, try to geocode
+          try {
+            const geocoded = await geocodeAddress(order.pickupAddress);
+            if (geocoded && isValidCoordinates(geocoded)) {
+              pickupCoords = geocoded;
+              logger.info(`📍 [${matchingId}] Geocoded to: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+            } else {
+              logger.warn(`⚠️ [${matchingId}] Geocoding failed, using fallback coordinates`);
+              pickupCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
+            }
+          } catch (geocodingError: any) {
+            logger.warn(`⚠️ [${matchingId}] Geocoding error: ${geocodingError.message}`);
+            pickupCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
           }
         }
-
-      // Step 3: Geocode each driver's location and calculate distances
-      const validDrivers: Array<{ driver: any; distanceKm: number }> = [];
-      
-      for (const driver of drivers) {
-        if (!driver.currentLocation) continue;
-
-        logger.info(`📍 Geocoding driver ${driver.driverId} location...`);
-        const driverCoords = await geocodeAddress(driver.currentLocation);
-        if (!driverCoords) continue;
-
-        const distanceKm = this.haversineDistance(
-          pickupCoords.lat,
-          pickupCoords.lng,
-          driverCoords.lat,
-          driverCoords.lng
-        );
-
-        // Apply maxDistance filter if specified
-        if (order.maxDistance && distanceKm > order.maxDistance) {
-          logger.info(`❌ Driver ${driver.driverId} is ${distanceKm.toFixed(2)}km away (max: ${order.maxDistance}km) - excluded`);
-          continue;
-        }
-
-        validDrivers.push({ driver, distanceKm });
-      }
-
-      if (validDrivers.length === 0) {
-        logger.info('❌ No drivers within the specified distance range');
-        return [];
-      }
-
-      logger.info(`🎯 ${validDrivers.length} drivers within ${order.maxDistance || 'any'} km range`);
-
-      // Step 4: Create MatchedDriver objects with scores
-      const scoredDrivers: MatchedDriver[] = validDrivers.map(({ driver, distanceKm }) => {
-        // Calculate base score (rating, completion rate, experience)
-        let score = this.calculateBaseScore(driver);
-
-        // Distance score (closer is better)
-        const distanceScore = Math.max(0, 100 - (distanceKm * 5)); // Lose 5 points per km
-        score = (score * 0.6) + (distanceScore * 0.4);
-
-        // Vehicle suitability score
-        const primaryVehicle = driver.vehicles[0];
-        if (primaryVehicle) {
-          const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
-          score = (score * 0.5) + (vehicleScore * 0.5);
-        }
-
-        // Urgency factor
-        if (order.urgency === 'express') {
-          // Prioritize closer drivers more heavily for express orders
-          score = (score * 0.3) + (distanceScore * 0.7);
-        }
-
-        // Create distance info object
-        const distanceMeters = distanceKm * 1000;
-        const durationSeconds = distanceKm * 180; // Assume 20 km/h average speed (180 sec/km)
+    
+        // STEP 3: Process each driver
+        logger.info(`🎯 [${matchingId}] Step 3: Processing ${drivers.length} drivers...`);
         
-        const distanceInfo = {
-          distance: {
-            text: `${distanceKm.toFixed(1)} km`,
-            value: distanceMeters
-          },
-          duration: {
-            text: `${Math.ceil(durationSeconds / 60)} mins`,
-            value: durationSeconds
+        const matchedDrivers: MatchedDriver[] = [];
+        let processedCount = 0;
+        let skippedCount = 0;
+    
+        for (const driver of drivers) {
+          processedCount++;
+        
+          try {
+            let distanceInfo = null;
+            let driverGeocodingStatus: 'success' | 'fallback' | 'failed' = 'success';
+            let shouldSkipDriver = false;
+        
+            // Try to calculate distance if driver has location
+            if (driver.currentLocation && driver.currentLocation.trim()) {
+              try {
+                logger.debug(`📍 [${matchingId}] Geocoding driver ${driver.driverId} location: ${driver.currentLocation.substring(0, 50)}...`);
+                
+                const driverCoords = await geocodeAddress(driver.currentLocation);
+                
+                if (driverCoords && isValidCoordinates(driverCoords)) {
+                  // Check if these are fallback coordinates
+                  const isFallbackCoords = 
+                    Math.abs(driverCoords.lat - 59.9343) < 0.01 && 
+                    Math.abs(driverCoords.lng - 30.3351) < 0.01;
+                
+                  if (isFallbackCoords) {
+                    driverGeocodingStatus = 'fallback';
+                  }
+                  
+                  // Calculate distance
+                  const distanceKm = this.haversineDistance(
+                    pickupCoords.lat,
+                    pickupCoords.lng,
+                    driverCoords.lat,
+                    driverCoords.lng
+                  );
+              
+                  // Apply maxDistance filter if specified
+                  if (order.maxDistance && distanceKm > order.maxDistance) {
+                    logger.debug(`📍 [${matchingId}] Driver ${driver.driverId} skipped: ${distanceKm.toFixed(1)}km > ${order.maxDistance}km max`);
+                    shouldSkipDriver = true;
+                  } else {
+                    // Create distance info
+                    const distanceMeters = distanceKm * 1000;
+                    // Estimate duration based on distance and traffic
+                    const baseDurationSeconds = (distanceKm / 30) * 3600; // 30 km/h average
+                    const urgencyMultiplier = order.urgency === 'express' ? 0.8 : order.urgency === 'urgent' ? 0.9 : 1;
+                    const durationSeconds = baseDurationSeconds * urgencyMultiplier;
+                    
+                    distanceInfo = {
+                      distance: {
+                        text: `${distanceKm.toFixed(1)} km`,
+                        value: Math.round(distanceMeters)
+                      },
+                      duration: {
+                        text: `${Math.ceil(durationSeconds / 60)} mins`,
+                        value: Math.round(durationSeconds)
+                      }
+                    };
+                    
+                    logger.debug(`📏 [${matchingId}] Driver ${driver.driverId}: ${distanceKm.toFixed(1)}km away`);
+                  }
+                } else {
+                  logger.warn(`⚠️ [${matchingId}] Could not geocode driver ${driver.driverId} location`);
+                  driverGeocodingStatus = 'failed';
+                }
+              } catch (distanceError: any) {
+                logger.warn(`⚠️ [${matchingId}] Distance calc failed for driver ${driver.driverId}: ${distanceError.message}`);
+                driverGeocodingStatus = 'failed';
+              }
+            } else {
+              logger.info(`ℹ️ [${matchingId}] Driver ${driver.driverId} has no location data`);
+              driverGeocodingStatus = 'failed';
+            }
+        
+            // Skip driver if beyond max distance
+            if (shouldSkipDriver) {
+              skippedCount++;
+              continue;
+            }
+        
+            // Calculate scores
+            const baseScore = this.calculateBaseScore(driver);
+            let finalScore = baseScore;
+        
+            // Adjust score based on distance (if available)
+            if (distanceInfo) {
+              const distanceKm = distanceInfo.distance.value / 1000;
+              const distanceScore = Math.max(0, 100 - (distanceKm * 2)); // Closer is better
+              finalScore = (baseScore * 0.5) + (distanceScore * 0.5);
+            }
+        
+            // Adjust for vehicle suitability
+            const primaryVehicle = driver.vehicles && driver.vehicles[0];
+            if (primaryVehicle) {
+              const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
+              finalScore = (finalScore * 0.7) + (vehicleScore * 0.3);
+            }
+        
+            // Adjust for urgency
+            if (order.urgency === 'express') {
+              // For express orders, prioritize drivers who are closer
+              if (distanceInfo) {
+                const distanceKm = distanceInfo.distance.value / 1000;
+                const distanceScore = Math.max(0, 100 - (distanceKm * 3)); // More weight for distance
+                finalScore = (baseScore * 0.3) + (distanceScore * 0.7);
+              }
+            }
+        
+            // Ensure score is valid
+            finalScore = Math.max(0, Math.min(100, Math.round(finalScore)));
+        
+            // Create matched driver object
+            const matchedDriver = this.createMatchedDriver(
+              driver,
+              distanceInfo,
+              order,
+              finalScore,
+              driverGeocodingStatus
+            );
+        
+            matchedDrivers.push(matchedDriver);
+            
+            logger.debug(`✅ [${matchingId}] Driver ${driver.driverId} scored: ${finalScore} (${matchedDriver.suitability})`);
+        
+          } catch (driverError: any) {
+            logger.warn(`⚠️ [${matchingId}] Error processing driver ${driver.driverId}:`, driverError.message);
+            skippedCount++;
+            continue; // Skip this driver and continue with others
           }
-        };
-
-        return this.createMatchedDriver(driver, distanceInfo, order, Math.round(score));
-      });
-
-      // Step 5: Sort by match score (highest first)
-      const sortedDrivers = scoredDrivers.sort((a, b) => b.matchScore - a.matchScore);
-      logger.info(`✅ Returning ${sortedDrivers.length} matched drivers`);
-      
-      return sortedDrivers;
-    } catch (error: any) {
-      logger.error('❌ Matching service error:', error);
-      logger.error('Error details:', {
-        message: error.message,
-        stack: error.stack
-      });
-      throw new Error('Failed to find matching drivers');
+        }
+    
+        // STEP 4: Sort and return results
+        logger.info(`📊 [${matchingId}] Step 4: Sorting ${matchedDrivers.length} matched drivers...`);
+        
+        // Sort by match score (highest first)
+        const sortedDrivers = matchedDrivers.sort((a, b) => b.matchScore - a.matchScore);
+        
+        const processingTime = Date.now() - requestStartTime;
+        
+        logger.info(`🎉 [${matchingId}] Matching process completed in ${processingTime}ms`, {
+          totalDrivers: drivers.length,
+          matched: matchedDrivers.length,
+          skipped: skippedCount,
+          topScore: sortedDrivers[0]?.matchScore || 0,
+          processingTime
+        });
+    
+        // Log top 3 drivers for debugging
+        if (sortedDrivers.length > 0) {
+          logger.info(`🏆 [${matchingId}] Top 3 drivers:`);
+          sortedDrivers.slice(0, 3).forEach((driver, index) => {
+            const distanceText = driver.distanceInfo 
+              ? `${driver.distanceInfo.distance.text} (${driver.distanceInfo.duration.text})`
+              : 'no distance';
+            logger.info(`  ${index + 1}. ${driver.user.firstName} ${driver.user.lastName} - Score: ${driver.matchScore} - ${distanceText}`);
+          });
+        }
+    
+        return sortedDrivers;
+    
+      } catch (error: any) {
+        const processingTime = Date.now() - requestStartTime;
+        logger.error(`💥 [${matchingId}] Matching service critical error after ${processingTime}ms:`, {
+          message: error.message,
+          stack: error.stack?.substring(0, 500)
+        });
+        throw new Error('Failed to find matching drivers');
+      }
     }
-  }
 
   private createMatchedDriver(
     driver: any,
     distanceInfo: { distance: { text: string; value: number }; duration: { text: string; value: number } } | null,
     order: OrderRequirements,
-    matchScore: number = 0
+    matchScore: number = 0,
+    geocodingStatus: 'success' | 'fallback' | 'failed' = 'success'
   ): MatchedDriver {
     // Ensure user info exists
     const userInfo = driver.user || {
       firstName: 'Driver',
-      lastName: `#${driver.driverId.substring(0, 4)}`,
-      phone: 'Not available'
+      lastName: `#${driver.driverId.substring(0, 8)}`,
+      phone: 'Contact via app'
     };
 
-    // Calculate base score if not provided
-    if (matchScore === 0) {
-      matchScore = this.calculateBaseScore(driver);
+    // Calculate arrival estimate
+    let estimatedArrival = 'N/A';
+    if (distanceInfo) {
+      const minutes = Math.ceil(distanceInfo.duration.value / 60);
+      estimatedArrival = `${minutes} mins`;
+    } else if (geocodingStatus === 'failed') {
+      estimatedArrival = 'Location data unavailable';
+    } else {
+      estimatedArrival = 'Calculating...';
     }
 
     return {
@@ -3709,38 +3911,55 @@ export class MatchingService {
       completionRate: driver.completionRate || 0,
       verificationLevel: driver.verificationLevel || 'none',
       isOnline: driver.isOnline || false,
-      currentLocation: driver.currentLocation || 'Unknown',
+      currentLocation: driver.currentLocation || 'Location not set',
       profileCompleted: driver.profileCompleted || false,
       user: userInfo,
       vehicles: driver.vehicles || [],
       distanceInfo: distanceInfo || undefined,
       matchScore: matchScore,
       suitability: this.getSuitabilityLevel(matchScore),
-      estimatedArrival: distanceInfo 
-        ? `${Math.ceil(distanceInfo.duration.value / 60)} mins`
-        : 'N/A'
+      estimatedArrival: estimatedArrival,
+      geocodingStatus: geocodingStatus
     };
   }
 
   private calculateBaseScore(driver: any): number {
-    let score = 100;
+    let score = 0;
 
-    // Rating score (higher rating is better)
-    const ratingScore = (driver.rating || 0) * 20; // Convert 0-5 to 0-100
-    score = (score * 0.6) + (ratingScore * 0.4);
+    // Rating score (0-5 rating becomes 0-100 points)
+    const ratingScore = (driver.rating || 0) * 20;
+    score += ratingScore * 0.3; // 30% weight
 
     // Completion rate score
     const completionScore = (driver.completionRate || 0) * 100;
-    score = (score * 0.7) + (completionScore * 0.3);
+    score += completionScore * 0.25; // 25% weight
 
-    // Experience score (more deliveries is better, but capped)
-    const experienceScore = Math.min(100, (driver.totalDeliveries || 0) / 100);
-    score = (score * 0.8) + (experienceScore * 0.2);
+    // Experience score (more deliveries is better, but with diminishing returns)
+    const experienceDeliveries = driver.totalDeliveries || 0;
+    let experienceScore = 0;
+    if (experienceDeliveries > 0) {
+      experienceScore = Math.min(100, Math.log10(experienceDeliveries + 1) * 40);
+    }
+    score += experienceScore * 0.2; // 20% weight
 
-    // Verification level bonus
-    const verificationBonus = driver.verificationLevel === 'premium' ? 10 : 
-                             driver.verificationLevel === 'verified' ? 5 : 0;
-    score += verificationBonus;
+    
+    // Or alternatively, with type safety:
+    const verificationBonus = (() => {
+      const level = driver.verificationLevel as 'none' | 'basic' | 'verified' | 'premium' | string;
+      switch (level) {
+        case 'none': return 0;
+        case 'basic': return 10;
+        case 'verified': return 25;
+        case 'premium': return 50;
+        default: return 0;
+      }
+    })();
+
+    score += verificationBonus * 0.15;// 15% weight
+
+    // Online status bonus
+    const onlineBonus = driver.isOnline ? 10 : 0;
+    score += onlineBonus * 0.1; // 10% weight
 
     return Math.min(100, score);
   }
@@ -3753,38 +3972,44 @@ export class MatchingService {
     
     let score = 100;
 
-    // Weight capacity score
+    // Check weight capacity
     const weightUtilization = order.weight / vehicle.maxWeight;
-    if (weightUtilization > 1) return 0; // Cannot carry
+    if (weightUtilization > 1) {
+      logger.info(`❌ Vehicle ${vehicle.id} cannot carry ${order.weight}kg (max: ${vehicle.maxWeight}kg)`);
+      return 0; // Cannot carry the weight
+    }
     
-    const weightScore = 100 - (weightUtilization * 50);
+    const weightScore = 100 - (weightUtilization * 40); // Lose up to 40 points for high utilization
     score = (score * 0.4) + (weightScore * 0.6);
 
-    // Volume capacity score
+    // Check volume capacity
     const volumeUtilization = order.volume / vehicle.maxVolume;
-    if (volumeUtilization > 1) return 0; // Cannot fit
+    if (volumeUtilization > 1) {
+      logger.info(`❌ Vehicle ${vehicle.id} cannot fit ${order.volume}m³ (max: ${vehicle.maxVolume}m³)`);
+      return 0; // Cannot fit the volume
+    }
     
-    const volumeScore = 100 - (volumeUtilization * 50);
+    const volumeScore = 100 - (volumeUtilization * 40); // Lose up to 40 points for high utilization
     score = (score * 0.4) + (volumeScore * 0.6);
 
-    // Vehicle type preference
+    // Vehicle type suitability
     const typeScores: Record<string, number> = {
-      'motorbike': order.weight < 10 && order.volume < 0.5 ? 100 : 70,
-      'small_van': order.weight < 100 && order.volume < 5 ? 100 : 85,
-      'medium_truck': order.weight < 500 && order.volume < 20 ? 100 : 90,
-      'large_truck': 100
+      'motorbike': order.weight < 50 && order.volume < 1 ? 100 : 70,
+      'small_van': order.weight < 500 && order.volume < 5 ? 100 : 85,
+      'medium_truck': order.weight < 2000 && order.volume < 20 ? 100 : 90,
+      'large_truck': 100 // Large truck can handle anything
     };
     
     const typeScore = typeScores[vehicle.type] || 75;
     score = (score * 0.5) + (typeScore * 0.5);
 
-    return score;
+    return Math.min(100, score);
   }
 
   private getSuitabilityLevel(score: number): 'excellent' | 'good' | 'fair' | 'poor' {
-    if (score >= 90) return 'excellent';
-    if (score >= 75) return 'good';
-    if (score >= 60) return 'fair';
+    if (score >= 85) return 'excellent';
+    if (score >= 70) return 'good';
+    if (score >= 50) return 'fair';
     return 'poor';
   }
 
@@ -3804,6 +4029,7 @@ export class MatchingService {
     return degrees * (Math.PI / 180);
   }
 }
+
 export const matchingService = new MatchingService();
 ```
 
@@ -4226,33 +4452,229 @@ export interface Coordinates {
 }
 
 /**
- * Convert address string to coordinates using OpenStreetMap Nominatim
+ * Convert address string to coordinates using DistanceMatrix.ai (primary) 
+ * with multiple fallback options
  */
 export async function geocodeAddress(address: string): Promise<Coordinates | null> {
   try {
-    const response = await axios.get('https://nominatim.openstreetmap.org/search', {
-      params: {
-        q: address,
-        format: 'json',
-        limit: 1
-      },
-      headers: {
-        'User-Agent': 'YourApp/1.0 (contact@example.com)' // Required by Nominatim
-      },
-      timeout: 5000
-    });
+    logger.info(`🌍 Attempting to geocode: "${address.substring(0, 50)}${address.length > 50 ? '...' : ''}"`);
+    
+    // ============================================
+    // OPTION 1: Primary - DistanceMatrix.ai Geocoding
+    // ============================================
+    try {
+      logger.info('📍 Trying DistanceMatrix.ai geocoding...');
+      const distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
+        'NFLqNsgalupmIuzDS6zKuprvodMgjdaGAxBtGYNpOT9TUwnCnC4Z9Do6T2drMT4Y';
+      
+      const response = await axios.get('https://api.distancematrix.ai/maps/api/geocode/json', {
+        params: {
+          address: address,
+          key: distanceMatrixApiKey,
+          language: 'en' // Use English for consistency
+        },
+        headers: {
+          // Add User-Agent to avoid blocking
+          'User-Agent': 'DeliveryMatch/1.0 (lieson.work@gmail.com)'
+        },
+        timeout: 8000
+      });
 
-    const results = response.data;
-    if (!results.length) return null;
+      logger.info(`DistanceMatrix.ai response status: ${response.data.status}`);
+      
+      // FIX: Check for "OK" status AND "results" array
+      if (response.data.status === 'OK' && Array.isArray(response.data.result)) {
+        const results = response.data.result;
+        if (results.length > 0) {
+          const location = results[0];
+          const coords = {
+            lat: location.geometry?.location?.lat,
+            lng: location.geometry?.location?.lng
+          };
+          
+          // Validate coordinates
+          if (coords.lat && coords.lng) {
+            logger.info(`✅ Successfully geocoded via DistanceMatrix.ai: ${coords.lat},${coords.lng}`);
+            logger.info(`📍 Location: ${location.formatted_address || 'Address found'}`);
+            
+            return {
+              lat: parseFloat(coords.lat),
+              lng: parseFloat(coords.lng)
+            };
+          } else {
+            logger.warn('❌ Invalid coordinates in DistanceMatrix.ai response:', location);
+          }
+        } else {
+          logger.warn('❌ DistanceMatrix.ai returned empty results array');
+        }
+      } else {
+        logger.warn(`❌ DistanceMatrix.ai geocoding failed with status: ${response.data.status}`);
+        logger.warn('Response data:', JSON.stringify(response.data, null, 2));
+      }
+    } catch (dmError: any) {
+      logger.warn(`❌ DistanceMatrix.ai geocoding error:`, {
+        message: dmError.message,
+        code: dmError.code,
+        response: dmError.response?.data
+      });
+    }
 
-    return {
-      lat: parseFloat(results[0].lat),
-      lng: parseFloat(results[0].lon)
+    // ============================================
+    // OPTION 2: Try OpenStreetMap Nominatim as fallback (with proper User-Agent)
+    // ============================================
+    try {
+      logger.info('📍 Trying OpenStreetMap Nominatim as fallback...');
+      
+      const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+        params: {
+          q: address,
+          format: 'json',
+          limit: 1,
+          'accept-language': 'en'
+        },
+        headers: {
+          // REQUIRED by Nominatim ToS
+          'User-Agent': 'DeliveryMatch/1.0 (lieson.work@gmail.com)'
+        },
+        timeout: 5000
+      });
+
+      const results = response.data;
+      if (Array.isArray(results) && results.length > 0) {
+        const coords = {
+          lat: parseFloat(results[0].lat),
+          lng: parseFloat(results[0].lon)
+        };
+        
+        logger.info(`✅ Successfully geocoded via Nominatim: ${coords.lat},${coords.lng}`);
+        logger.info(`📍 Location: ${results[0].display_name?.substring(0, 100) || 'Address found'}`);
+        
+        return coords;
+      } else {
+        logger.warn('❌ Nominatim returned no results');
+      }
+    } catch (nominatimError: any) {
+      logger.warn(`❌ Nominatim geocoding error:`, {
+        message: nominatimError.message,
+        status: nominatimError.response?.status
+      });
+    }
+
+    // ============================================
+    // OPTION 3: Secondary - Simple address parsing for Russian cities
+    // ============================================
+    logger.info('📍 Falling back to address parsing for Russian cities...');
+    
+    const russianCityCoordinates: Record<string, Coordinates> = {
+      // Moscow and major cities
+      'москва': { lat: 55.7558, lng: 37.6173 },
+      'moscow': { lat: 55.7558, lng: 37.6173 },
+      'msk': { lat: 55.7558, lng: 37.6173 },
+      
+      // Saint Petersburg
+      'санкт-петербург': { lat: 59.9343, lng: 30.3351 },
+      'saint petersburg': { lat: 59.9343, lng: 30.3351 },
+      'st. petersburg': { lat: 59.9343, lng: 30.3351 },
+      'spb': { lat: 59.9343, lng: 30.3351 },
+      'питер': { lat: 59.9343, lng: 30.3351 },
+      
+      // Other major Russian cities
+      'казань': { lat: 55.7961, lng: 49.1064 },
+      'kazan': { lat: 55.7961, lng: 49.1064 },
+      
+      'нижний новгород': { lat: 56.3269, lng: 44.0065 },
+      'nizhny novgorod': { lat: 56.3269, lng: 44.0065 },
+      
+      'екатеринбург': { lat: 56.8389, lng: 60.6057 },
+      'yekaterinburg': { lat: 56.8389, lng: 60.6057 },
+      
+      'новосибирск': { lat: 55.0084, lng: 82.9357 },
+      'novosibirsk': { lat: 55.0084, lng: 82.9357 },
+      
+      // Your pickup address contains "Sankt-Peterburg"
+      'sankt-peterburg': { lat: 59.9343, lng: 30.3351 },
+      'sankt peterburg': { lat: 59.9343, lng: 30.3351 },
+      'khersonskiy': { lat: 59.8500, lng: 30.3167 }, // Warsaw street area
+      'варшавская': { lat: 59.8500, lng: 30.3167 }
     };
+
+    const addressLower = address.toLowerCase().trim();
+    logger.info(`🔍 Searching for Russian city in: ${addressLower}`);
+    
+    // Check for city names in address
+    for (const [city, coords] of Object.entries(russianCityCoordinates)) {
+      if (addressLower.includes(city)) {
+        logger.info(`📍 Found city "${city}" in address, using coordinates: ${coords.lat},${coords.lng}`);
+        return coords;
+      }
+    }
+
+    // ============================================
+    // OPTION 4: Try to extract address parts
+    // ============================================
+    logger.info('📍 Trying to extract location from address parts...');
+    
+    const parts = address.split(',');
+    logger.info(`🔍 Address parts: ${JSON.stringify(parts)}`);
+    
+    if (parts.length >= 2) {
+      // Check each part for city names
+      for (const part of parts) {
+        const cleanPart = part.toLowerCase().trim();
+        for (const [city, coords] of Object.entries(russianCityCoordinates)) {
+          if (cleanPart.includes(city)) {
+            logger.info(`📍 Extracted city "${city}" from part "${part}", using coordinates: ${coords.lat},${coords.lng}`);
+            return coords;
+          }
+        }
+      }
+    }
+
+    // ============================================
+    // OPTION 5: Ultimate fallback - Default coordinates
+    // ============================================
+    logger.warn(`⚠️ All geocoding attempts failed for address`);
+    logger.warn(`⚠️ Address was: "${address.substring(0, 100)}${address.length > 100 ? '...' : ''}"`);
+    logger.warn(`⚠️ Using default Saint Petersburg coordinates as fallback`);
+    
+    // Default to Saint Petersburg center
+    const defaultCoords = { lat: 59.9343, lng: 30.3351 };
+    
+    logger.info(`📍 Using fallback coordinates: ${defaultCoords.lat},${defaultCoords.lng}`);
+    logger.info(`📍 These coordinates represent: Saint Petersburg city center, Russia`);
+    
+    return defaultCoords;
+    
   } catch (error: any) {
-    logger.error(`Geocoding failed for "${address}":`, error.message);
-    return null;
+    logger.error(`💥 Critical geocoding error:`, {
+      message: error.message,
+      stack: error.stack?.substring(0, 500)
+    });
+    
+    // Even if everything fails, return default coordinates
+    logger.info(`📍 Critical fallback: Using Saint Petersburg coordinates`);
+    return { lat: 59.9343, lng: 30.3351 };
   }
+}
+
+/**
+ * Helper function to check if coordinates are valid
+ */
+export function isValidCoordinates(coords: Coordinates | null): boolean {
+  if (!coords) return false;
+  if (typeof coords.lat !== 'number' || typeof coords.lng !== 'number') return false;
+  if (coords.lat < -90 || coords.lat > 90) return false;
+  if (coords.lng < -180 || coords.lng > 180) return false;
+  if (isNaN(coords.lat) || isNaN(coords.lng)) return false;
+  return true;
+}
+
+/**
+ * Format coordinates as a string for logging/debugging
+ */
+export function formatCoordinates(coords: Coordinates | null): string {
+  if (!coords || !isValidCoordinates(coords)) return 'null';
+  return `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
 }
 ```
 

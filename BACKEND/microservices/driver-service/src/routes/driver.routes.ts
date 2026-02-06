@@ -8,6 +8,7 @@ const router = express.Router();
 
 router.post(
   '/drivers/match',
+  authenticate,
   validate(validationSchemas.matchDrivers),
   driverController.findMatchingDrivers
 );
@@ -15,6 +16,7 @@ router.post(
 // Route for simple discovery (without distance calculations)
 router.get(
   '/drivers/available',
+  authenticate,
   validate(validationSchemas.discoverDrivers),
   driverController.discoverDrivers
 );

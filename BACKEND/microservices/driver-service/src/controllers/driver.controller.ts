@@ -363,58 +363,112 @@ export class DriverController {
         maxDistance
       } = req.body;
     
+      logger.info('📞 Customer matching request received:', {
+        pickupAddress: pickupAddress?.substring(0, 100),
+        weight,
+        volume,
+        vehicleType,
+        userType
+      });
+    
       // Validate required fields
-      if (!pickupAddress || !weight || !volume) {
+      if (!pickupAddress || weight === undefined || volume === undefined) {
+        logger.warn('❌ Missing required fields in matching request');
         return res.status(400).json({ 
           success: false,
           error: 'Missing required fields: pickupAddress, weight, volume' 
         });
       }
     
+      // Parse numeric values safely
+      const parsedWeight = parseFloat(weight);
+      const parsedVolume = parseFloat(volume);
+      
+      if (isNaN(parsedWeight) || isNaN(parsedVolume)) {
+        logger.warn('❌ Invalid numeric values in matching request');
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid numeric values for weight or volume'
+        });
+      }
+    
+      // Build order requirements
       const orderRequirements = {
         pickupAddress,
         pickupCoords: pickupLat && pickupLng ? { 
           lat: parseFloat(pickupLat), 
           lng: parseFloat(pickupLng) 
         } : undefined,
-        weight: parseFloat(weight),
-        volume: parseFloat(volume),
+        weight: parsedWeight,
+        volume: parsedVolume,
         vehicleType,
         urgency: urgency as 'normal' | 'urgent' | 'express',
         maxDistance: maxDistance ? parseFloat(maxDistance) : undefined
       };
     
-      logger.info('📞 Customer matching request received:', {
-        pickupAddress: orderRequirements.pickupAddress,
-        weight: orderRequirements.weight,
-        volume: orderRequirements.volume,
-        vehicleType: orderRequirements.vehicleType,
-        userType: userType
-      });
-    
-      // Generate a unique request ID
+      // Generate request ID for tracking
       const requestId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
-      const matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
+      logger.info('🔍 Starting driver matching process', {
+        requestId,
+        pickupAddress: orderRequirements.pickupAddress.substring(0, 100),
+        weight: orderRequirements.weight,
+        volume: orderRequirements.volume,
+        vehicleType: orderRequirements.vehicleType
+      });
     
-      // Analyze geocoding success rate
-      const driversWithSuccessGeocoding = matchedDrivers.filter(d => d.geocodingStatus === 'success').length;
-      const driversWithFallbackGeocoding = matchedDrivers.filter(d => d.geocodingStatus === 'fallback').length;
-      const driversWithFailedGeocoding = matchedDrivers.filter(d => d.geocodingStatus === 'failed').length;
+      // Call matching service
+      let matchedDrivers;
+      try {
+        matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
+        logger.info(`✅ Matching service completed: ${matchedDrivers.length} drivers found`);
+      } catch (matchingError: any) {
+        logger.error('❌ Matching service failed:', {
+          message: matchingError.message,
+          stack: matchingError.stack?.substring(0, 500),
+          requestId
+        });
+        
+        // Return a more helpful error message
+        let errorMessage = 'Failed to find matching drivers';
+        let statusCode = 500;
+        
+        if (matchingError.message.includes('database') || matchingError.message.includes('query')) {
+          errorMessage = 'Driver database service is temporarily unavailable';
+          statusCode = 503;
+        } else if (matchingError.message.includes('geocoding') || matchingError.message.includes('coordinates')) {
+          errorMessage = 'Location service is temporarily unavailable';
+          statusCode = 503;
+        }
+        
+        return res.status(statusCode).json({
+          success: false,
+          error: {
+            message: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? matchingError.message : undefined
+          },
+          timestamp: new Date().toISOString(),
+          requestId
+        });
+      }
+    
+      // Analyze results
+      const totalDrivers = matchedDrivers.length;
+      const driversWithDistance = matchedDrivers.filter(d => d.distanceInfo).length;
+      const driversWithoutDistance = totalDrivers - driversWithDistance;
     
       // Prepare response
-      const response = {
+      const response: any = {
         success: true,
         data: matchedDrivers,
-        count: matchedDrivers.length,
+        count: totalDrivers,
         metadata: {
           timestamp: new Date().toISOString(),
-          requestId: requestId, // Use our generated ID
-          geocodingStats: {
-            total: matchedDrivers.length,
-            success: driversWithSuccessGeocoding,
-            fallback: driversWithFallbackGeocoding,
-            failed: driversWithFailedGeocoding
+          requestId,
+          matchingStats: {
+            total: totalDrivers,
+            withDistanceInfo: driversWithDistance,
+            withoutDistanceInfo: driversWithoutDistance
           },
           filtersApplied: {
             weight: orderRequirements.weight,
@@ -426,40 +480,43 @@ export class DriverController {
         }
       };
     
-      // Add warnings if geocoding had issues
+      // Add warnings if needed
       const warnings = [];
-      if (driversWithFallbackGeocoding > 0) {
-        warnings.push(`Some drivers (${driversWithFallbackGeocoding}) are using approximate locations`);
+      
+      if (driversWithoutDistance > 0) {
+        warnings.push(`${driversWithoutDistance} driver(s) have no distance information`);
       }
-      if (driversWithFailedGeocoding > 0) {
-        warnings.push(`Some drivers (${driversWithFailedGeocoding}) have incomplete location data`);
+      
+      if (totalDrivers === 0) {
+        warnings.push('No drivers found matching your criteria');
       }
+      
       if (warnings.length > 0) {
-        (response as any).warnings = warnings;
+        response.warnings = warnings;
       }
     
-      logger.info(`✅ Matching complete: ${matchedDrivers.length} drivers found`);
+      // Log successful response
+      logger.info(`🎉 Matching request ${requestId} completed successfully`, {
+        driversFound: totalDrivers,
+        withDistance: driversWithDistance,
+        warnings: warnings.length
+      });
+    
+      return res.json(response);
       
-      res.json(response);
     } catch (error: any) {
-      logger.error('❌ Find matching drivers error:', error);
+      // Catch any unexpected errors
+      logger.error('💥 Unexpected error in findMatchingDrivers:', {
+        message: error.message,
+        stack: error.stack?.substring(0, 500),
+        body: req.body,
+        user: req.user
+      });
       
-      // Provide more specific error messages
-      let errorMessage = 'Failed to find matching drivers';
-      let statusCode = 500;
-      
-      if (error.message.includes('geocoding') || error.message.includes('coordinates')) {
-        errorMessage = 'Location service is temporarily unavailable. Please try again with different addresses.';
-        statusCode = 503; // Service Unavailable
-      } else if (error.message.includes('database') || error.message.includes('query')) {
-        errorMessage = 'Driver database service is temporarily unavailable';
-        statusCode = 503;
-      }
-    
-      res.status(statusCode).json({
+      return res.status(500).json({
         success: false,
         error: {
-          message: errorMessage,
+          message: 'An unexpected error occurred while processing your request',
           details: process.env.NODE_ENV === 'development' ? error.message : undefined
         },
         timestamp: new Date().toISOString()
