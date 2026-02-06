@@ -167,8 +167,8 @@ export class DriverService {
       
       const pool = await ensurePool();
       
-      // Base query parts
-      const selectFields = `
+      // Start building the query
+      let query = `
         SELECT 
           d.id as driver_id,
           d.user_id,
@@ -192,44 +192,30 @@ export class DriverService {
           v.max_volume,
           v.image_url,
           v.current_status as vehicle_status
-      `;
-      
-      const fromClause = `
         FROM drivers d
         LEFT JOIN vehicles v ON d.id = v.driver_id AND v.is_active = TRUE
-      `;
-      
-      const baseConditions = `
         WHERE d.status = 'active'
           AND d.is_online = TRUE
           AND d.verification_level IN ('verified', 'premium')
           AND v.current_status = 'available'
       `;
       
-      // Build WHERE conditions dynamically
-      const conditions: string[] = [];
       const values: any[] = [];
       
       // Add optional filters
       if (params.vehicleType) {
-        conditions.push(`v.type = ?`);
+        query += ` AND v.type = ?`;
         values.push(params.vehicleType);
       }
       
       if (params.estimatedWeight !== undefined && params.estimatedWeight !== null) {
-        conditions.push(`v.max_weight >= ?`);
+        query += ` AND v.max_weight >= ?`;
         values.push(params.estimatedWeight);
       }
       
       if (params.estimatedVolume !== undefined && params.estimatedVolume !== null) {
-        conditions.push(`v.max_volume >= ?`);
+        query += ` AND v.max_volume >= ?`;
         values.push(params.estimatedVolume);
-      }
-      
-      // Build the complete WHERE clause
-      let whereClause = baseConditions;
-      if (conditions.length > 0) {
-        whereClause += ` AND ${conditions.join(' AND ')}`;
       }
       
       // Add pagination
@@ -237,19 +223,17 @@ export class DriverService {
       const page = params.page || 1;
       const offset = (page - 1) * limit;
       
-      whereClause += ` LIMIT ? OFFSET ?`;
+      query += ` ORDER BY d.rating DESC, d.total_deliveries DESC LIMIT ? OFFSET ?`;
       values.push(limit, offset);
       
-      // Build the complete query
-      const query = `${selectFields} ${fromClause} ${whereClause}`;
-      
-      logger.info(`📊 [${requestId}] Executing driver discovery query:`, {
-        query: query.replace(/\s+/g, ' ').trim().substring(0, 200) + '...',
+      logger.info(`📊 [${requestId}] Final SQL query:`, {
+        query: query,
         values: values,
         valuesLength: values.length
       });
     
       try {
+        logger.info(`💾 [${requestId}] Executing database query...`);
         const [rows] = await pool.execute(query, values);
         const drivers = rows as any[];
         
@@ -269,13 +253,13 @@ export class DriverService {
             driversMap.set(row.driver_id, {
               driverId: row.driver_id,
               userId: row.user_id,
-              rating: row.rating,
-              totalDeliveries: row.total_deliveries,
-              completionRate: row.completion_rate,
+              rating: row.rating || 0,
+              totalDeliveries: row.total_deliveries || 0,
+              completionRate: row.completion_rate || 0,
               status: row.driver_status,
               verificationLevel: row.verification_level,
               isOnline: Boolean(row.is_online),
-              currentLocation: row.current_location,
+              currentLocation: row.current_location || '',
               profileCompleted: Boolean(row.profile_completed),
               vehicles: [],
               user: null
@@ -327,8 +311,8 @@ export class DriverService {
               year: row.year,
               color: row.color,
               licensePlate: row.license_plate,
-              maxWeight: parseFloat(row.max_weight.toString()),
-              maxVolume: parseFloat(row.max_volume.toString()),
+              maxWeight: parseFloat(row.max_weight?.toString() || '0'),
+              maxVolume: parseFloat(row.max_volume?.toString() || '0'),
               imageUrl: row.image_url,
               status: row.vehicle_status
             });
@@ -382,7 +366,8 @@ export class DriverService {
       } catch (error: any) {
         logger.error(`❌ [${requestId}] Database query error:`, {
           message: error.message,
-          sql: query.substring(0, 200),
+          query: query,
+          values: values,
           errorCode: error.code,
           sqlMessage: error.sqlMessage,
           stack: error.stack?.substring(0, 500)

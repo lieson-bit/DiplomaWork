@@ -305,10 +305,14 @@ export class DriverController {
     }
   }
 
-  async discoverDrivers(req: Request, res: Response, next: NextFunction) {
+   async discoverDrivers(req: Request, res: Response, next: NextFunction) {
     try {
       // Customers can access this, so we don't restrict to driver userType
       const userType = req.user?.userType;
+      logger.info('🔍 Discover drivers request received', {
+        userType,
+        query: req.query
+      });
 
       const {
         estimatedWeight,
@@ -324,6 +328,14 @@ export class DriverController {
         ? vehicleType as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck'
         : undefined;
 
+      logger.info('📊 Parsed discovery parameters:', {
+        estimatedWeight: estimatedWeight ? parseFloat(estimatedWeight as string) : undefined,
+        estimatedVolume: estimatedVolume ? parseFloat(estimatedVolume as string) : undefined,
+        vehicleType: typedVehicleType,
+        limit: parseInt(limit as string),
+        page: parseInt(page as string)
+      });
+
       const drivers = await driverService.discoverAvailableDrivers({
         estimatedWeight: estimatedWeight ? parseFloat(estimatedWeight as string) : undefined,
         estimatedVolume: estimatedVolume ? parseFloat(estimatedVolume as string) : undefined,
@@ -331,6 +343,8 @@ export class DriverController {
         limit: parseInt(limit as string),
         page: parseInt(page as string)
       });
+
+      logger.info(`✅ Discover drivers found ${drivers.length} drivers`);
 
       res.json({
         success: true,
@@ -343,15 +357,22 @@ export class DriverController {
         }
       });
     } catch (error: any) {
-      logger.error('Discover drivers error:', error);
+      logger.error('❌ Discover drivers error:', {
+        message: error.message,
+        stack: error.stack?.substring(0, 500),
+        query: req.query
+      });
       next(error);
     }
   }
 
   async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
+    const requestId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const startTime = Date.now();
+    
     try {
       const userType = req.user?.userType;
-    
+      
       const {
         pickupAddress,
         pickupLat,
@@ -362,71 +383,75 @@ export class DriverController {
         urgency,
         maxDistance
       } = req.body;
-    
-      logger.info('📞 Customer matching request received:', {
+      
+      logger.info(`🚗 [${requestId}] Customer matching request received:`, {
+        userType,
         pickupAddress: pickupAddress?.substring(0, 100),
         weight,
         volume,
         vehicleType,
-        userType
+        urgency,
+        maxDistance
       });
-    
+      
       // Validate required fields
       if (!pickupAddress || weight === undefined || volume === undefined) {
-        logger.warn('❌ Missing required fields in matching request');
+        logger.warn(`❌ [${requestId}] Missing required fields`, {
+          hasPickupAddress: !!pickupAddress,
+          hasWeight: weight !== undefined,
+          hasVolume: volume !== undefined,
+          body: req.body
+        });
         return res.status(400).json({ 
           success: false,
           error: 'Missing required fields: pickupAddress, weight, volume' 
         });
       }
-    
+      
       // Parse numeric values safely
-      const parsedWeight = parseFloat(weight);
-      const parsedVolume = parseFloat(volume);
+      const parsedWeight = parseFloat(weight as string);
+      const parsedVolume = parseFloat(volume as string);
       
       if (isNaN(parsedWeight) || isNaN(parsedVolume)) {
-        logger.warn('❌ Invalid numeric values in matching request');
+        logger.warn(`❌ [${requestId}] Invalid numeric values`, {
+          weightValue: weight,
+          volumeValue: volume,
+          parsedWeight,
+          parsedVolume
+        });
         return res.status(400).json({
           success: false,
           error: 'Invalid numeric values for weight or volume'
         });
       }
-    
+      
       // Build order requirements
       const orderRequirements = {
         pickupAddress,
         pickupCoords: pickupLat && pickupLng ? { 
-          lat: parseFloat(pickupLat), 
-          lng: parseFloat(pickupLng) 
+          lat: parseFloat(pickupLat as string), 
+          lng: parseFloat(pickupLng as string) 
         } : undefined,
         weight: parsedWeight,
         volume: parsedVolume,
-        vehicleType,
+        vehicleType: vehicleType as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck',
         urgency: urgency as 'normal' | 'urgent' | 'express',
-        maxDistance: maxDistance ? parseFloat(maxDistance) : undefined
+        maxDistance: maxDistance ? parseFloat(maxDistance as string) : undefined
       };
-    
-      // Generate request ID for tracking
-      const requestId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
-      logger.info('🔍 Starting driver matching process', {
-        requestId,
-        pickupAddress: orderRequirements.pickupAddress.substring(0, 100),
-        weight: orderRequirements.weight,
-        volume: orderRequirements.volume,
-        vehicleType: orderRequirements.vehicleType
-      });
-    
+      logger.info(`📦 [${requestId}] Order requirements:`, orderRequirements);
+      
       // Call matching service
       let matchedDrivers;
       try {
+        logger.info(`🔍 [${requestId}] Calling matching service...`);
         matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
-        logger.info(`✅ Matching service completed: ${matchedDrivers.length} drivers found`);
+        logger.info(`✅ [${requestId}] Matching service completed: ${matchedDrivers.length} drivers found`);
       } catch (matchingError: any) {
-        logger.error('❌ Matching service failed:', {
+        logger.error(`❌ [${requestId}] Matching service failed:`, {
           message: matchingError.message,
           stack: matchingError.stack?.substring(0, 500),
-          requestId
+          errorName: matchingError.name
         });
         
         // Return a more helpful error message
@@ -451,12 +476,12 @@ export class DriverController {
           requestId
         });
       }
-    
+      
       // Analyze results
       const totalDrivers = matchedDrivers.length;
       const driversWithDistance = matchedDrivers.filter(d => d.distanceInfo).length;
       const driversWithoutDistance = totalDrivers - driversWithDistance;
-    
+      
       // Prepare response
       const response: any = {
         success: true,
@@ -465,6 +490,7 @@ export class DriverController {
         metadata: {
           timestamp: new Date().toISOString(),
           requestId,
+          processingTime: Date.now() - startTime,
           matchingStats: {
             total: totalDrivers,
             withDistanceInfo: driversWithDistance,
@@ -479,7 +505,7 @@ export class DriverController {
           }
         }
       };
-    
+      
       // Add warnings if needed
       const warnings = [];
       
@@ -494,30 +520,33 @@ export class DriverController {
       if (warnings.length > 0) {
         response.warnings = warnings;
       }
-    
+      
       // Log successful response
-      logger.info(`🎉 Matching request ${requestId} completed successfully`, {
+      logger.info(`🎉 [${requestId}] Matching request completed successfully`, {
         driversFound: totalDrivers,
         withDistance: driversWithDistance,
-        warnings: warnings.length
+        warnings: warnings.length,
+        processingTime: Date.now() - startTime
       });
-    
+      
       return res.json(response);
       
     } catch (error: any) {
       // Catch any unexpected errors
-      logger.error('💥 Unexpected error in findMatchingDrivers:', {
+      logger.error(`💥 [${requestId}] Unexpected error in findMatchingDrivers:`, {
         message: error.message,
         stack: error.stack?.substring(0, 500),
         body: req.body,
-        user: req.user
+        user: req.user,
+        processingTime: Date.now() - startTime
       });
       
       return res.status(500).json({
         success: false,
         error: {
           message: 'An unexpected error occurred while processing your request',
-          details: process.env.NODE_ENV === 'development' ? error.message : undefined
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+          requestId
         },
         timestamp: new Date().toISOString()
       });
