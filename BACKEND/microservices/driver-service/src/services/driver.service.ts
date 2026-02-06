@@ -26,7 +26,6 @@ import {
    DriverMetrics
 } from '../types';
 import { ensurePool } from '../config/database';
-import { DriverInfo } from './matching.service';
 
 export interface CreateDriverProfileInput {
   licenseNumber?: string;
@@ -45,6 +44,36 @@ export interface DiscoverDriversParams {
   radius?: number;
   limit?: number;
   page?: number;
+}
+
+export interface DriverInfo {
+  driverId: string;
+  userId: string;
+  rating: number;
+  totalDeliveries: number;
+  completionRate: number;
+  verificationLevel: string;
+  isOnline: boolean;
+  currentLocation: string;
+  profileCompleted: boolean;
+  user?: { 
+    firstName: string;
+    lastName: string;
+    phone: string;
+  };
+  vehicles: Array<{
+    id: string;
+    type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    licensePlate: string;
+    maxWeight: number;
+    maxVolume: number;
+    imageUrl?: string;
+    status: string;
+  }>;
 }
 
 export class DriverService {
