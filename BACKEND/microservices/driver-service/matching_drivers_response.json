@@ -2,6 +2,147 @@
   "success": true,
   "data": [
     {
+      "driverId": "1358764d-1e0b-44bd-a735-ca0fc71732f1",
+      "userId": "7383849d-c318-4fd7-8c62-6e9981beadc5",
+      "rating": 0,
+      "totalDeliveries": 0,
+      "completionRate": 0,
+      "verificationLevel": "verified",
+      "isOnline": true,
+      "currentLocation": "Варшавская улица, округ Московская застава, Санкт-Петербург, Северо-Западный федеральный округ, 196128, Россия",
+      "profileCompleted": true,
+      "user": {
+        "id": "7383849d-c318-4fd7-8c62-6e9981beadc5",
+        "firstName": "Lieson",
+        "lastName": "Mwale",
+        "email": "lieson22@gmail.com",
+        "phone": "0963884441"
+      },
+      "vehicles": [
+        {
+          "id": "a2b128a2-abeb-438c-8f42-f4d925089f3c",
+          "type": "small_van",
+          "make": "Ford",
+          "model": "Transit",
+          "year": 2020,
+          "color": "White",
+          "licensePlate": "ABD-25",
+          "maxWeight": 100,
+          "maxVolume": 10,
+          "imageUrl": "http://localhost:3002/uploads/vehicles/7383849d-c318-4fd7-8c62-6e9981beadc5/a2b128a2-abeb-438c-8f42-f4d925089f3c_1769541668103.jpg",
+          "status": "available"
+        }
+      ],
+      "distanceInfo": {
+        "distance": {
+          "text": "7.3 km",
+          "value": 7323
+        },
+        "duration": {
+          "text": "15 mins",
+          "value": 879
+        }
+      },
+      "matchScore": 62,
+      "suitability": "fair",
+      "estimatedArrival": "15 mins",
+      "geocodingStatus": "success"
+    },
+    {
+      "driverId": "4496fb2a-14e6-4359-9c51-2b71f2f2f57f",
+      "userId": "4a405088-c108-43c3-b832-27dbeb73c714",
+      "rating": 0,
+      "totalDeliveries": 0,
+      "completionRate": 0,
+      "verificationLevel": "verified",
+      "isOnline": true,
+      "currentLocation": "Варшавская улица, округ Московская застава, Санкт-Петербург, Северо-Западный федеральный округ, 196128, Россия",
+      "profileCompleted": true,
+      "user": {
+        "id": "4a405088-c108-43c3-b832-27dbeb73c714",
+        "firstName": "Prince",
+        "lastName": "Driver",
+        "email": "prince@driver.com",
+        "phone": "+260967915487"
+      },
+      "vehicles": [
+        {
+          "id": "8f58b306-cfd9-4164-8f52-1a56c269d4d5",
+          "type": "medium_truck",
+          "make": "Truck",
+          "model": "Transit",
+          "year": 2023,
+          "color": "Grey_white",
+          "licensePlate": "FGH-432",
+          "maxWeight": 500,
+          "maxVolume": 80,
+          "imageUrl": "http://localhost:3002/uploads/vehicles/4a405088-c108-43c3-b832-27dbeb73c714/8f58b306-cfd9-4164-8f52-1a56c269d4d5_1770134751690.png",
+          "status": "available"
+        }
+      ],
+      "distanceInfo": {
+        "distance": {
+          "text": "7.3 km",
+          "value": 7323
+        },
+        "duration": {
+          "text": "15 mins",
+          "value": 879
+        }
+      },
+      "matchScore": 62,
+      "suitability": "fair",
+      "estimatedArrival": "15 mins",
+      "geocodingStatus": "success"
+    },
+    {
+      "driverId": "8c2529ee-5fc1-44a4-b62a-1bbb705b60ab",
+      "userId": "51f1fb54-c60c-4ba9-b83a-d3cfb4215357",
+      "rating": 0,
+      "totalDeliveries": 0,
+      "completionRate": 0,
+      "verificationLevel": "verified",
+      "isOnline": true,
+      "currentLocation": "Варшавская улица, округ Московская застава, Санкт-Петербург, Северо-Западный федеральный округ, 196128, Россия",
+      "profileCompleted": false,
+      "user": {
+        "id": "51f1fb54-c60c-4ba9-b83a-d3cfb4215357",
+        "firstName": "Derick",
+        "lastName": "Ferriz",
+        "email": "derickdriver@gmail.com",
+        "phone": "+79475783956"
+      },
+      "vehicles": [
+        {
+          "id": "8b4165e5-8d82-4758-915a-6745c542752e",
+          "type": "large_truck",
+          "make": "trailer",
+          "model": "Transit",
+          "year": 2020,
+          "color": "blue-white",
+          "licensePlate": "DFT-324",
+          "maxWeight": 100000,
+          "maxVolume": 1000,
+          "imageUrl": "http://localhost:3002/uploads/vehicles/51f1fb54-c60c-4ba9-b83a-d3cfb4215357/8b4165e5-8d82-4758-915a-6745c542752e_1770206700062.png",
+          "status": "available"
+        }
+      ],
+      "distanceInfo": {
+        "distance": {
+          "text": "7.3 km",
+          "value": 7323
+        },
+        "duration": {
+          "text": "15 mins",
+          "value": 879
+        }
+      },
+      "matchScore": 62,
+      "suitability": "fair",
+      "estimatedArrival": "15 mins",
+      "geocodingStatus": "success"
+    },
+    {
       "driverId": "8203347e-b7d1-4b6d-a065-77da1fabff84",
       "userId": "44a7ca21-de27-4261-a3a4-25b89c5c9e1e",
       "rating": 0,
@@ -13,10 +154,10 @@
       "profileCompleted": true,
       "user": {
         "id": "44a7ca21-de27-4261-a3a4-25b89c5c9e1e",
-        "firstName": "Driver",
-        "lastName": "#44a7",
-        "email": "",
-        "phone": ""
+        "firstName": "Bobo",
+        "lastName": "Williams",
+        "email": "bobodriver@gmail.com",
+        "phone": "09576365573"
       },
       "vehicles": [
         {
@@ -43,22 +184,25 @@
           "value": 879
         }
       },
-      "matchScore": 58,
+      "matchScore": 51,
       "suitability": "fair",
       "estimatedArrival": "15 mins",
       "geocodingStatus": "success"
     }
   ],
-  "count": 1,
+  "count": 4,
   "metadata": {
-    "timestamp": "2026-02-07T09:40:24.558Z",
-    "requestId": "match_1770457221750_6tqj7cw",
-    "processingTime": 2806,
+    "timestamp": "2026-02-07T10:26:47.957Z",
+    "requestId": "match_1770460002552_5qufo0n",
+    "processingTime": 5404,
     "matchingStats": {
-      "total": 1,
-      "withDistanceInfo": 1,
-      "withoutDistanceInfo": 0
+      "total": 4,
+      "top4Returned": 4,
+      "withDistanceInfo": 4,
+      "withoutDistanceInfo": 0,
+      "vehicleTypesIncluded": "all"
     },
+    "note": "Returning top 4 drivers across all vehicle types that can handle your order capacity",
     "filtersApplied": {
       "weight": 15,
       "volume": 0.8,

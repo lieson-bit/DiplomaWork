@@ -76,7 +76,6 @@ export class MatchingService {
         drivers = await driverService.discoverAvailableDrivers({
           estimatedWeight: order.weight,
           estimatedVolume: order.volume,
-          vehicleType: order.vehicleType as any,
           limit: 50
         });
         
@@ -306,11 +305,13 @@ export class MatchingService {
       const sortedDrivers = matchedDrivers.sort((a, b) => b.matchScore - a.matchScore);
       
       const processingTime = Date.now() - requestStartTime;
+      const topDrivers = sortedDrivers.slice(0, 4);
       
       logger.info(`🎉 [${matchingId}] ===== MATCHING PROCESS COMPLETE =====`, {
         stats: {
           totalDriversProcessed: processedCount,
           successfullyMatched: matchedDrivers.length,
+          top4Returned: topDrivers.length,
           skipped: skippedCount,
           distanceCalculations: {
             success: distanceCalcSuccess,
@@ -319,9 +320,7 @@ export class MatchingService {
         },
         results: {
           topScore: sortedDrivers[0]?.matchScore || 0,
-          averageScore: sortedDrivers.length > 0 
-            ? (sortedDrivers.reduce((sum, d) => sum + d.matchScore, 0) / sortedDrivers.length).toFixed(1)
-            : 0,
+          vehicleTypes: topDrivers.map(d => d.vehicles[0]?.type),
           suitabilityBreakdown: {
             excellent: sortedDrivers.filter(d => d.suitability === 'excellent').length,
             good: sortedDrivers.filter(d => d.suitability === 'good').length,
@@ -332,20 +331,17 @@ export class MatchingService {
         processingTime
       });
       
-      // Log top 3 drivers for debugging
-      if (sortedDrivers.length > 0) {
-        logger.info(`🏆 [${matchingId}] Top ${Math.min(3, sortedDrivers.length)} drivers:`);
-        sortedDrivers.slice(0, 3).forEach((driver, index) => {
-          const distanceText = driver.distanceInfo 
-            ? `${driver.distanceInfo.distance.text} (${driver.distanceInfo.duration.text})`
-            : 'no distance';
-          logger.info(`  ${index + 1}. ${driver.user.firstName} ${driver.user.lastName} - Score: ${driver.matchScore} - ${distanceText}`);
-        });
-      } else {
-        logger.warn(`⚠️ [${matchingId}] No drivers matched after processing`);
-      }
-      
-      return sortedDrivers;
+      // Log top 4 drivers for debugging
+    logger.info(`🏆 [${matchingId}] Top 4 drivers (vehicle types in brackets):`);
+    topDrivers.forEach((driver, index) => {
+      const distanceText = driver.distanceInfo 
+        ? `${driver.distanceInfo.distance.text} (${driver.distanceInfo.duration.text})`
+        : 'no distance';
+      const vehicleType = driver.vehicles[0]?.type || 'unknown';
+      logger.info(`  ${index + 1}. ${driver.user.firstName} ${driver.user.lastName} - Score: ${driver.matchScore} - ${distanceText} [${vehicleType}]`);
+    });
+    
+    return topDrivers;
       
     } catch (error: any) {
       const processingTime = Date.now() - requestStartTime;
@@ -445,45 +441,43 @@ export class MatchingService {
   }
 
   private calculateVehicleSuitability(
-    vehicle: any,
-    order: OrderRequirements
-  ): number {
-    if (!vehicle) return 0;
+      vehicle: any,
+      order: OrderRequirements
+    ): number {
+      if (!vehicle) return 0;
     
-    let score = 100;
+      let score = 100;
 
-    // Check weight capacity
-    const weightUtilization = order.weight / vehicle.maxWeight;
-    if (weightUtilization > 1) {
-      return 0; // Cannot carry the weight
+      // Check weight capacity - CRITICAL: must be able to carry the weight
+      const weightUtilization = order.weight / vehicle.maxWeight;
+      if (weightUtilization > 1) {
+        return 0; // Cannot carry the weight
+      }
+
+      // Check volume capacity - CRITICAL: must be able to fit the volume
+      const volumeUtilization = order.volume / vehicle.maxVolume;
+      if (volumeUtilization > 1) {
+        return 0; // Cannot fit the volume
+      }
+
+      // Adjust score based on capacity utilization (lower utilization is better)
+      const capacityScore = 100 - ((weightUtilization + volumeUtilization) * 25);
+      score = Math.min(100, capacityScore);
+
+      // REMOVE OR REDUCE vehicle type penalty
+      // Instead of penalizing different types, we can give bonuses for optimal types
+      const typeBonuses: Record<string, number> = {
+        'motorbike': order.weight < 20 && order.volume < 0.5 ? 20 : 0,  // Bonus for small packages
+        'small_van': order.weight < 200 && order.volume < 5 ? 15 : 0,   // Bonus for medium packages
+        'medium_truck': order.weight < 1000 && order.volume < 15 ? 10 : 0, // Bonus for large packages
+        'large_truck': order.weight >= 1000 ? 5 : 0  // Bonus for very large packages
+      };
+
+      const typeBonus = typeBonuses[vehicle.type] || 0;
+      score = Math.min(100, score + typeBonus);
+
+      return Math.min(100, score);
     }
-    
-    const weightScore = 100 - (weightUtilization * 40); // Lose up to 40 points for high utilization
-    score = (score * 0.4) + (weightScore * 0.6);
-
-    // Check volume capacity
-    const volumeUtilization = order.volume / vehicle.maxVolume;
-    if (volumeUtilization > 1) {
-      return 0; // Cannot fit the volume
-    }
-    
-    const volumeScore = 100 - (volumeUtilization * 40); // Lose up to 40 points for high utilization
-    score = (score * 0.4) + (volumeScore * 0.6);
-
-    // Vehicle type suitability
-    const typeScores: Record<string, number> = {
-      'motorbike': order.weight < 50 && order.volume < 1 ? 100 : 70,
-      'small_van': order.weight < 500 && order.volume < 5 ? 100 : 85,
-      'medium_truck': order.weight < 2000 && order.volume < 20 ? 100 : 90,
-      'large_truck': 100 // Large truck can handle anything
-    };
-    
-    const typeScore = typeScores[vehicle.type] || 75;
-    score = (score * 0.5) + (typeScore * 0.5);
-
-    return Math.min(100, score);
-  }
-
   private getSuitabilityLevel(score: number): 'excellent' | 'good' | 'fair' | 'poor' {
     if (score >= 85) return 'excellent';
     if (score >= 70) return 'good';

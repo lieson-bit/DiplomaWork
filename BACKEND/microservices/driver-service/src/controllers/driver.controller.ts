@@ -493,9 +493,12 @@ export class DriverController {
           processingTime: Date.now() - startTime,
           matchingStats: {
             total: totalDrivers,
+            top4Returned: Math.min(4, totalDrivers),
             withDistanceInfo: driversWithDistance,
-            withoutDistanceInfo: driversWithoutDistance
+            withoutDistanceInfo: driversWithoutDistance,
+            vehicleTypesIncluded: 'all'
           },
+          note: 'Returning top 4 drivers across all vehicle types that can handle your order capacity',
           filtersApplied: {
             weight: orderRequirements.weight,
             volume: orderRequirements.volume,

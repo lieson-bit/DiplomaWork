@@ -277,10 +277,8 @@ export class DriverService {
       let filteredDrivers = allDrivers;
 
       if (params.vehicleType) {
-        filteredDrivers = filteredDrivers.filter(driver => 
-          driver.vehicle_type === params.vehicleType
-        );
-        logger.info(`🚗 [${requestId}] After vehicle type filter: ${filteredDrivers.length} drivers`);
+        logger.info(`ℹ️ [${requestId}] Vehicle type filter requested: ${params.vehicleType}, but will include all vehicle types that meet capacity`);
+        // Don't filter by vehicle type - just log it
       }
 
       if (params.estimatedWeight !== undefined) {
