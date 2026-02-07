@@ -160,189 +160,74 @@ export class DriverService {
   page?: number;
 }): Promise<DriverInfo[]> {
   const requestId = `discover_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-  const startTime = Date.now();
   
-  try {
-    logger.info(`🔍 [${requestId}] Starting driver discovery with params:`, params);
-    
-    const pool = await ensurePool();
-    
-    // SIMPLE FIXED QUERY - Remove dynamic building to avoid parameter issues
-    const query = `
-      SELECT 
-        d.id as driver_id,
-        d.user_id,
-        d.rating,
-        d.total_deliveries,
-        d.completion_rate,
-        d.status as driver_status,
-        d.verification_level,
-        d.is_online,
-        d.current_location,
-        d.profile_completed,
-        
-        v.id as vehicle_id,
-        v.type as vehicle_type,
-        v.make,
-        v.model,
-        v.year,
-        v.color,
-        v.license_plate,
-        v.max_weight,
-        v.max_volume,
-        v.image_url,
-        v.current_status as vehicle_status
-      FROM drivers d
-      LEFT JOIN vehicles v ON d.id = v.driver_id
-      WHERE d.status = 'active'
-        AND d.is_online = 1
-        AND d.verification_level IN ('verified', 'premium')
-        AND v.current_status = 'available'
-    `;
-    
-    // Build conditions manually to ensure proper typing
-    let conditions = '';
-    const values: any[] = [];
-    
-    if (params.vehicleType) {
-      conditions += ` AND v.type = ?`;
-      values.push(params.vehicleType);
-    }
-    
-    if (params.estimatedWeight !== undefined) {
-      conditions += ` AND v.max_weight >= ?`;
-      // Ensure weight is a number (not string)
-      values.push(Number(params.estimatedWeight));
-    }
-    
-    if (params.estimatedVolume !== undefined) {
-      conditions += ` AND v.max_volume >= ?`;
-      // Ensure volume is a number
-      values.push(Number(params.estimatedVolume));
-    }
-    
-    // CRITICAL FIX: Convert limit and offset to integers explicitly
-    const limit = Number(params.limit) || 20;
-    const page = Number(params.page) || 1;
-    const offset = (page - 1) * limit;
-    
-    const finalQuery = query + conditions + ` LIMIT ? OFFSET ?`;
-    
-    // Push limit and offset as integers
-    values.push(parseInt(limit.toString(), 10));  // Ensure integer
-    values.push(parseInt(offset.toString(), 10)); // Ensure integer
-    
-    logger.info(`📊 [${requestId}] Executing SQL query:`, {
-      query: finalQuery,
-      values: values,
-      valueTypes: values.map(v => `${typeof v}: ${v}`)
-    });
+  logger.info(`🔍 [${requestId}] BYPASSING DATABASE - Returning mock data for testing`);
   
-    try {
-      logger.info(`💾 [${requestId}] Executing database query...`);
-      
-      // DEBUG: Log what we're about to send to MySQL
-      logger.debug(`🔧 [${requestId}] SQL Parameters:`, {
-        count: values.length,
-        types: values.map(v => ({ value: v, type: typeof v })),
-        queryLength: finalQuery.length
-      });
-      
-      const [rows] = await pool.execute(finalQuery, values);
-      const drivers = rows as any[];
-      
-      logger.info(`✅ [${requestId}] Found ${drivers.length} driver records from database`);
-      
-      if (drivers.length === 0) {
-        return [];
-      }
-      
-      // TEMPORARY: Use mock user info to bypass user-service issues
-      const driverInfos: DriverInfo[] = drivers.map(row => {
-        // Create a unique driver entry
-        return {
-          driverId: row.driver_id,
-          userId: row.user_id,
-          rating: row.rating || 4.5,
-          totalDeliveries: row.total_deliveries || 10,
-          completionRate: row.completion_rate || 95.0,
-          verificationLevel: row.verification_level || 'verified',
-          isOnline: Boolean(row.is_online),
-          currentLocation: row.current_location || 'St. Petersburg, Russia',
-          profileCompleted: Boolean(row.profile_completed),
-          user: {
-            firstName: 'Alexey',
-            lastName: 'Ivanov',
-            phone: '+7 912 345 6789'
-          },
-          vehicles: [{
-            id: row.vehicle_id,
-            type: row.vehicle_type,
-            make: row.make || 'Honda',
-            model: row.model || 'CB500X',
-            year: row.year || 2023,
-            color: row.color || 'Black',
-            licensePlate: row.license_plate || 'A123BC',
-            maxWeight: parseFloat(row.max_weight?.toString() || '25'),
-            maxVolume: parseFloat(row.max_volume?.toString() || '1'),
-            imageUrl: row.image_url,
-            status: 'available'
-          }]
-        };
-      });
-      
-      // Remove duplicates (in case same driver appears multiple times)
-      const uniqueDrivers = Array.from(
-        new Map(driverInfos.map(driver => [driver.driverId, driver])).values()
-      );
-      
-      logger.info(`🎯 [${requestId}] Returning ${uniqueDrivers.length} unique drivers`);
-      return uniqueDrivers;
-      
-    } catch (dbError: any) {
-      logger.error(`❌ [${requestId}] Database query error:`, {
-        message: dbError.message,
-        errorCode: dbError.code,
-        sqlMessage: dbError.sqlMessage,
-        queryPreview: finalQuery.substring(0, 200),
-        values: values
-      });
-      
-      // Try a simpler query as fallback
-      logger.info(`🔄 [${requestId}] Trying simple fallback query...`);
-      try {
-        const simpleQuery = `
-          SELECT d.id as driver_id, d.user_id, d.rating, d.current_location,
-                 v.id as vehicle_id, v.type as vehicle_type, v.max_weight, v.max_volume
-          FROM drivers d
-          LEFT JOIN vehicles v ON d.id = v.driver_id
-          WHERE d.status = 'active'
-            AND d.is_online = 1
-            AND v.current_status = 'available'
-          LIMIT 5
-        `;
-        
-        const [simpleRows] = await pool.execute(simpleQuery);
-        logger.info(`✅ [${requestId}] Simple query returned ${simpleRows.length} rows`);
-        
-        // Return empty array for now
-        return [];
-        
-      } catch (simpleError: any) {
-        logger.error(`💥 [${requestId}] Simple query also failed:`, simpleError.message);
-        throw new Error(`Database connection issue: ${dbError.message}`);
-      }
+  // Return mock data for testing
+  const mockDrivers: DriverInfo[] = [
+    {
+      driverId: '8203347e-b7d1-4b6d-a065-77da1fabff84',
+      userId: '44a7ca21-de27-4261-a3a4-25b89c5c9e1e',
+      rating: 4.7,
+      totalDeliveries: 25,
+      completionRate: 96.5,
+      verificationLevel: 'verified',
+      isOnline: true,
+      currentLocation: 'St. Petersburg, Russia',
+      profileCompleted: true,
+      user: {
+        firstName: 'Alexey',
+        lastName: 'Ivanov',
+        phone: '+7 912 345 6789'
+      },
+      vehicles: [{
+        id: 'vehicle_123',
+        type: 'motorbike',
+        make: 'Honda',
+        model: 'CB500X',
+        year: 2023,
+        color: 'Black',
+        licensePlate: 'A123BC',
+        maxWeight: 25,
+        maxVolume: 1,
+        imageUrl: '"E:/DiplomaWork/reports/account12.png"',
+        status: 'available'
+      }]
+    },
+    {
+      driverId: 'mock_driver_2',
+      userId: 'mock_user_2',
+      rating: 4.3,
+      totalDeliveries: 18,
+      completionRate: 92.0,
+      verificationLevel: 'verified',
+      isOnline: true,
+      currentLocation: 'Moscow, Russia',
+      profileCompleted: true,
+      user: {
+        firstName: 'Dmitry',
+        lastName: 'Petrov',
+        phone: '+7 923 456 7890'
+      },
+      vehicles: [{
+        id: 'vehicle_456',
+        type: 'motorbike',
+        make: 'Yamaha',
+        model: 'MT-07',
+        year: 2022,
+        color: 'Blue',
+        licensePlate: 'B456CD',
+        maxWeight: 30,
+        maxVolume: 1.2,
+        imageUrl: 'E:/DiplomaWork/reports/account12.png',
+        status: 'available'
+      }]
     }
-  } catch (error: any) {
-    logger.error(`💥 [${requestId}] Error in discoverAvailableDrivers:`, {
-      message: error.message,
-      params: params,
-      processingTime: Date.now() - startTime
-    });
-    throw error;
-  }
+  ];
+  
+  logger.info(`✅ [${requestId}] Returning ${mockDrivers.length} mock drivers`);
+  return mockDrivers;
 }
-
 
   async updateDriverProfile(userId: string, data: UpdateDriverRequest): Promise<Driver | null> {
     const driver = await this.driverRepository.findByUserId(userId);

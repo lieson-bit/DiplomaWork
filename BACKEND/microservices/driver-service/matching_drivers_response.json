@@ -1,0 +1,68 @@
+{
+  "success": true,
+  "data": [
+    {
+      "driverId": "8203347e-b7d1-4b6d-a065-77da1fabff84",
+      "userId": "44a7ca21-de27-4261-a3a4-25b89c5c9e1e",
+      "rating": 4.7,
+      "totalDeliveries": 25,
+      "completionRate": 96.5,
+      "verificationLevel": "verified",
+      "isOnline": true,
+      "currentLocation": "St. Petersburg, Russia",
+      "profileCompleted": true,
+      "user": {
+        "firstName": "Alexey",
+        "lastName": "Ivanov",
+        "phone": "+7 912 345 6789"
+      },
+      "vehicles": [
+        {
+          "id": "vehicle_123",
+          "type": "motorbike",
+          "make": "Honda",
+          "model": "CB500X",
+          "year": 2023,
+          "color": "Black",
+          "licensePlate": "A123BC",
+          "maxWeight": 25,
+          "maxVolume": 1,
+          "imageUrl": "\"E:/DiplomaWork/reports/account12.png\"",
+          "status": "available"
+        }
+      ],
+      "distanceInfo": {
+        "distance": {
+          "text": "16.3 km",
+          "value": 16291
+        },
+        "duration": {
+          "text": "33 mins",
+          "value": 1955
+        }
+      },
+      "matchScore": 85,
+      "suitability": "excellent",
+      "estimatedArrival": "33 mins",
+      "geocodingStatus": "success"
+    }
+  ],
+  "count": 1,
+  "metadata": {
+    "timestamp": "2026-02-07T08:09:00.997Z",
+    "requestId": "match_1770451737954_5ozojd1",
+    "processingTime": 3044,
+    "matchingStats": {
+      "total": 1,
+      "withDistanceInfo": 1,
+      "withoutDistanceInfo": 0
+    },
+    "filtersApplied": {
+      "weight": 15,
+      "volume": 0.8,
+      "vehicleType": "motorbike",
+      "maxDistance": 50,
+      "urgency": "normal"
+    }
+  }
+}

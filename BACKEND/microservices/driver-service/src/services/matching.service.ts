@@ -55,7 +55,7 @@ export class MatchingService {
   
   async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
     const requestStartTime = Date.now();
-    const matchingId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const matchingId = `match_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     
     try {
       logger.info(`🚗 [${matchingId}] ===== STARTING MATCHING PROCESS =====`);

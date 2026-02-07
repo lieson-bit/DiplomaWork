@@ -367,7 +367,7 @@ export class DriverController {
   }
 
   async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
-    const requestId = `match_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const requestId = `match_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
     const startTime = Date.now();
     
     try {
