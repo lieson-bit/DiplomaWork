@@ -5,7 +5,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Checkbox } from "./ui/checkbox";
-import { MapPin, Package, Weight, Ruler, Clock, DollarSign, Loader2, User, Star, Check, ChevronDown, ChevronUp, Car, Calendar, Shield, Award, Battery, Fuel } from 'lucide-react';
+import { MapPin, Package, Weight, Ruler, Clock, DollarSign, Loader2, User, Star, Check, ChevronDown, ChevronUp, Car, Calendar, Trophy, Eye, RefreshCw, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import debounce from 'lodash/debounce';
 import { useLanguage } from './LanguageContext';
@@ -100,6 +100,7 @@ export function CustomerBooking() {
   const [loading, setLoading] = useState(false);
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [categories, setCategories] = useState<Array<{value: string, label: string}>>([]);
+  const [imageErrors, setImageErrors] = useState<{[key: string]: boolean}>({});
 
   // Check if user is customer
   useEffect(() => {
@@ -216,6 +217,8 @@ export function CustomerBooking() {
     setLoadingDrivers(true);
     
     try {
+      console.log('Fetching drivers with token:', token.substring(0, 20) + '...');
+      
       const response = await fetch('http://localhost:3002/api/drivers/match', {
         method: 'POST',
         headers: {
@@ -240,7 +243,14 @@ export function CustomerBooking() {
 
       const data: DriversResponse = await response.json();
       
+      console.log('Drivers response:', data);
+      
       if (data.success && data.data && data.data.length > 0) {
+        // Debug: Log vehicle image URLs
+        data.data.forEach((driver, index) => {
+          console.log(`Driver ${index + 1} vehicle image:`, driver.vehicles[0]?.imageUrl);
+        });
+        
         setDrivers(data.data.slice(0, 4)); // Берем максимум 4 водителя
         toast.success(`Found ${data.count} available drivers`);
       } else {
@@ -302,17 +312,6 @@ export function CustomerBooking() {
     );
   };
 
-  // Функция для форматирования времени прибытия
-  const formatArrivalTime = (minutes: string) => {
-    if (minutes.includes('mins')) {
-      const mins = parseInt(minutes);
-      const now = new Date();
-      now.setMinutes(now.getMinutes() + mins);
-      return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    return minutes;
-  };
-
   // Функция для получения временной метки
   const getCurrentTimePlusMinutes = (minutes: number) => {
     const now = new Date();
@@ -324,6 +323,142 @@ export function CustomerBooking() {
   const formatVehicleType = (type: string) => {
     if (!type) return 'N/A';
     return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+  };
+
+  // Функция для обработки ошибок изображения
+  const handleImageError = (driverId: string, vehicleIndex: number = 0) => {
+    console.log(`Image error for driver ${driverId}, vehicle ${vehicleIndex}`);
+    setImageErrors(prev => ({
+      ...prev,
+      [`${driverId}-${vehicleIndex}`]: true
+    }));
+  };
+
+  // Функция для повторной попытки загрузки изображения
+  const handleRetryImage = (driverId: string, vehicleIndex: number = 0) => {
+    console.log(`Retrying image for driver ${driverId}, vehicle ${vehicleIndex}`);
+    setImageErrors(prev => ({
+      ...prev,
+      [`${driverId}-${vehicleIndex}`]: false
+    }));
+  };
+
+  // Функция для получения цвета градиента на основе типа транспортного средства
+  const getVehicleGradient = (type: string) => {
+    switch(type) {
+      case 'motorbike':
+        return 'from-orange-100 to-yellow-100';
+      case 'small_van':
+        return 'from-blue-100 to-cyan-100';
+      case 'medium_truck':
+        return 'from-green-100 to-emerald-100';
+      case 'large_truck':
+        return 'from-purple-100 to-pink-100';
+      default:
+        return 'from-gray-100 to-gray-200';
+    }
+  };
+
+  // Функция для получения цвета иконки на основе типа транспортного средства
+  const getVehicleIconColor = (type: string) => {
+    switch(type) {
+      case 'motorbike':
+        return 'text-orange-600';
+      case 'small_van':
+        return 'text-blue-600';
+      case 'medium_truck':
+        return 'text-green-600';
+      case 'large_truck':
+        return 'text-purple-600';
+      default:
+        return 'text-gray-600';
+    }
+  };
+
+  // Компонент для отображения изображения транспортного средства
+  const VehicleImage = ({ driver, isExpanded = false }: { driver: Driver, isExpanded?: boolean }) => {
+    const vehicle = driver.vehicles[0];
+    const imageKey = `${driver.driverId}-0`;
+    const hasError = imageErrors[imageKey];
+    
+    if (!vehicle) {
+      return (
+        <div className={`w-full ${isExpanded ? 'h-40' : 'h-full'} flex items-center justify-center bg-gradient-to-br ${getVehicleGradient('')}`}>
+          <Car className={`${isExpanded ? 'h-16 w-16' : 'h-8 w-8'} ${getVehicleIconColor('')}`} />
+        </div>
+      );
+    }
+
+    const imageUrl = vehicle.imageUrl;
+    const isValidUrl = imageUrl && imageUrl.startsWith('http');
+    
+    if (!isValidUrl || hasError) {
+      return (
+        <div className={`w-full ${isExpanded ? 'h-40' : 'h-full'} flex flex-col items-center justify-center bg-gradient-to-br ${getVehicleGradient(vehicle.type)}`}>
+          {hasError && (
+            <AlertTriangle className={`${isExpanded ? 'h-10 w-10' : 'h-6 w-6'} text-red-400 mb-2`} />
+          )}
+          <Car className={`${isExpanded ? 'h-12 w-12' : 'h-8 w-8'} ${getVehicleIconColor(vehicle.type)} mb-2`} />
+          <span className={`text-center ${isExpanded ? 'text-sm' : 'text-xs'} font-medium text-gray-700`}>
+            {formatVehicleType(vehicle.type)}
+          </span>
+          {isExpanded && (
+            <span className="text-xs text-gray-500 mt-1">
+              {vehicle.make} {vehicle.model}
+            </span>
+          )}
+          {hasError && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleRetryImage(driver.driverId, 0);
+              }}
+              className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center"
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Retry
+            </button>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <img 
+          src={imageUrl}
+          alt={`${vehicle.make} ${vehicle.model}`}
+          className={`w-full ${isExpanded ? 'h-40' : 'h-full'} object-cover`}
+          onError={() => handleImageError(driver.driverId, 0)}
+          onLoad={() => console.log('✅ Vehicle image loaded successfully:', imageUrl)}
+          crossOrigin="anonymous"
+        />
+        {imageUrl && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              window.open(imageUrl, '_blank');
+            }}
+            className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
+            title="Open image in new tab"
+          >
+            <Eye className="h-4 w-4" />
+          </button>
+        )}
+        {imageUrl && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRetryImage(driver.driverId, 0);
+            }}
+            className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
+            title="Refresh image"
+          >
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        )}
+      </>
+    );
   };
 
   // Компонент отображения цены
@@ -446,68 +581,36 @@ export function CustomerBooking() {
             {drivers.map((driver) => {
               const vehicle = driver.vehicles[0];
               const minutes = parseInt(driver.estimatedArrival) || 15;
+              const isSelected = selectedDriver === driver.driverId;
+              const isExpanded = expandedDriver === driver.driverId;
               
               return (
                 <div 
                   key={driver.driverId}
                   className={`rounded-lg border transition-all duration-200 ${
-                    selectedDriver === driver.driverId 
+                    isSelected 
                       ? 'border-green-500 ring-2 ring-green-200 bg-green-50' 
-                      : 'border-gray-200 hover:border-blue-300'
+                      : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50/50'
                   } ${
-                    expandedDriver === driver.driverId ? 'bg-blue-50' : ''
+                    isExpanded ? 'bg-blue-50' : ''
                   }`}
                 >
                   {/* Driver Summary */}
                   <div 
                     className="p-4 cursor-pointer"
                     onClick={() => setExpandedDriver(
-                      expandedDriver === driver.driverId ? null : driver.driverId
+                      isExpanded ? null : driver.driverId
                     )}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4">
-                        <div className="relative">
+                        <div className="relative group">
                           {/* Small vehicle image when not selected */}
-                          <div className={`${selectedDriver === driver.driverId ? 'w-20 h-20' : 'w-16 h-16'} rounded-lg overflow-hidden bg-gradient-to-br from-blue-100 to-gray-100 border-2 ${selectedDriver === driver.driverId ? 'border-green-400' : 'border-gray-200'}`}>
-                            {vehicle?.imageUrl ? (
-                              <img 
-                                src={vehicle.imageUrl} 
-                                alt={`${vehicle.make} ${vehicle.model}`}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  const target = e.target as HTMLImageElement;
-                                  target.style.display = 'none';
-                                  const parent = target.parentElement;
-                                  if (parent) {
-                                    const fallback = document.createElement('div');
-                                    fallback.className = 'w-full h-full flex items-center justify-center bg-gradient-to-br from-blue-100 to-gray-200';
-                                    fallback.innerHTML = `
-                                      <div class="flex flex-col items-center">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="${selectedDriver === driver.driverId ? 'h-10 w-10' : 'h-8 w-8'} text-blue-600">
-                                          <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1-4-1-4 1-4 1-2.7.6-3.5 1.1c-.8.2-1.5 1-1.5 1.9v3c0 .6.4 1 1 1h2"/>
-                                          <rect x="3" y="8" width="18" height="10" rx="1"/>
-                                          <path d="M8 22v-3"/>
-                                          <path d="M16 22v-3"/>
-                                        </svg>
-                                        <span class="text-xs mt-1 text-gray-600 font-medium">${formatVehicleType(vehicle?.type || '').split(' ')[0] || 'Vehicle'}</span>
-                                      </div>
-                                    `;
-                                    parent.appendChild(fallback);
-                                  }
-                                }}
-                              />
-                            ) : (
-                              <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 to-gray-200">
-                                <Car className={`${selectedDriver === driver.driverId ? 'h-10 w-10' : 'h-8 w-8'} text-blue-600`} />
-                                <span className="text-xs mt-1 text-gray-600 font-medium">
-                                  {formatVehicleType(vehicle?.type || '').split(' ')[0] || 'Vehicle'}
-                                </span>
-                              </div>
-                            )}
+                          <div className={`${isSelected ? 'w-20 h-20' : 'w-16 h-16'} rounded-lg overflow-hidden border-2 ${isSelected ? 'border-green-400 shadow-sm' : 'border-gray-200'} relative`}>
+                            <VehicleImage driver={driver} />
                           </div>
                           
-                          {selectedDriver === driver.driverId && (
+                          {isSelected && (
                             <div className="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center border-2 border-white shadow-md">
                               <Check className="h-3 w-3 text-white" />
                             </div>
@@ -543,7 +646,7 @@ export function CustomerBooking() {
                               <span className="font-medium">Arrives by {getCurrentTimePlusMinutes(minutes)}</span>
                             </div>
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
-                              <Award className="h-3.5 w-3.5 mr-1.5 text-purple-500" />
+                              <Trophy className="h-3.5 w-3.5 mr-1.5 text-purple-500" />
                               <span className="font-medium">{driver.matchScore}% Match</span>
                             </div>
                           </div>
@@ -551,7 +654,7 @@ export function CustomerBooking() {
                       </div>
                       
                       <div className="flex flex-col items-end space-y-1">
-                        {expandedDriver === driver.driverId ? (
+                        {isExpanded ? (
                           <ChevronUp className="h-5 w-5 text-gray-400" />
                         ) : (
                           <ChevronDown className="h-5 w-5 text-gray-400" />
@@ -564,9 +667,9 @@ export function CustomerBooking() {
                   </div>
                   
                   {/* Expanded Details */}
-                  {expandedDriver === driver.driverId && (
+                  {isExpanded && (
                     <div className="px-4 pb-4 border-t border-gray-200 pt-4">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Driver Details */}
                         <div className="space-y-4">
                           <div>
@@ -574,7 +677,7 @@ export function CustomerBooking() {
                               <User className="h-4 w-4 mr-2 text-blue-600" />
                               Driver Information
                             </h5>
-                            <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100">
+                            <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="flex justify-between items-center">
                                 <span className="text-gray-500">Name:</span>
                                 <span className="font-medium text-gray-800">{driver.user.firstName} {driver.user.lastName}</span>
@@ -610,47 +713,11 @@ export function CustomerBooking() {
                               <Car className="h-4 w-4 mr-2 text-green-600" />
                               Vehicle Information
                             </h5>
-                            <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100">
+                            <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               {/* Larger vehicle image in expanded view */}
                               <div className="mb-3">
-                                <div className="w-full h-32 rounded-lg overflow-hidden bg-gradient-to-br from-blue-50 to-gray-100 border">
-                                  {vehicle?.imageUrl ? (
-                                    <img 
-                                      src={vehicle.imageUrl} 
-                                      alt={`${vehicle.make} ${vehicle.model}`}
-                                      className="w-full h-full object-cover"
-                                      onError={(e) => {
-                                        const target = e.target as HTMLImageElement;
-                                        target.style.display = 'none';
-                                        const parent = target.parentElement;
-                                        if (parent) {
-                                          const fallback = document.createElement('div');
-                                          fallback.className = 'w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-gray-200';
-                                          fallback.innerHTML = `
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="h-12 w-12 text-blue-600 mb-2">
-                                              <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1-4-1-4 1-4 1-2.7.6-3.5 1.1c-.8.2-1.5 1-1.5 1.9v3c0 .6.4 1 1 1h2"/>
-                                              <rect x="3" y="8" width="18" height="10" rx="1"/>
-                                              <path d="M8 22v-3"/>
-                                              <path d="M16 22v-3"/>
-                                            </svg>
-                                            <span class="text-sm font-semibold text-gray-700">${vehicle?.make || ''} ${vehicle?.model || ''}</span>
-                                            <span class="text-xs text-gray-500">${formatVehicleType(vehicle?.type || '')}</span>
-                                          `;
-                                          parent.appendChild(fallback);
-                                        }
-                                      }}
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-gray-200">
-                                      <Car className="h-12 w-12 text-blue-600 mb-2" />
-                                      <span className="text-sm font-semibold text-gray-700">
-                                        {vehicle?.make || ''} {vehicle?.model || ''}
-                                      </span>
-                                      <span className="text-xs text-gray-500">
-                                        {formatVehicleType(vehicle?.type || '')}
-                                      </span>
-                                    </div>
-                                  )}
+                                <div className="w-full rounded-lg overflow-hidden border border-gray-200 shadow-sm relative group">
+                                  <VehicleImage driver={driver} isExpanded={true} />
                                 </div>
                               </div>
                               
@@ -687,9 +754,9 @@ export function CustomerBooking() {
                               <MapPin className="h-4 w-4 mr-2 text-red-600" />
                               Distance Information
                             </h5>
-                            <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100">
+                            <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="space-y-3">
-                                <div className="bg-gradient-to-r from-blue-50 to-gray-50 p-3 rounded-lg">
+                                <div className="bg-gradient-to-r from-blue-50 to-gray-50 p-3 rounded-lg border border-blue-100">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center">
                                       <MapPin className="h-4 w-4 text-blue-600 mr-2" />
@@ -701,7 +768,7 @@ export function CustomerBooking() {
                                   </div>
                                 </div>
                                 
-                                <div className="bg-gradient-to-r from-green-50 to-gray-50 p-3 rounded-lg">
+                                <div className="bg-gradient-to-r from-green-50 to-gray-50 p-3 rounded-lg border border-green-100">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center">
                                       <Clock className="h-4 w-4 text-green-600 mr-2" />
@@ -713,7 +780,7 @@ export function CustomerBooking() {
                                   </div>
                                 </div>
                                 
-                                <div className="bg-gradient-to-r from-purple-50 to-gray-50 p-3 rounded-lg">
+                                <div className="bg-gradient-to-r from-purple-50 to-gray-50 p-3 rounded-lg border border-purple-100">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center">
                                       <Calendar className="h-4 w-4 text-purple-600 mr-2" />
@@ -734,15 +801,15 @@ export function CustomerBooking() {
                       <div className="mt-6 flex justify-end">
                         <Button
                           onClick={() => handleDriverSelect(driver.driverId)}
-                          variant={selectedDriver === driver.driverId ? "default" : "outline"}
+                          variant={isSelected ? "default" : "outline"}
                           size="lg"
                           className={`font-medium ${
-                            selectedDriver === driver.driverId 
+                            isSelected 
                               ? 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-md' 
                               : 'border-green-500 text-green-600 hover:bg-green-50 hover:border-green-600 hover:text-green-700'
                           }`}
                         >
-                          {selectedDriver === driver.driverId ? (
+                          {isSelected ? (
                             <>
                               <Check className="h-5 w-5 mr-2" />
                               Driver Selected
@@ -760,7 +827,7 @@ export function CustomerBooking() {
           </div>
           
           {selectedDriver && (
-            <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+            <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg shadow-sm">
               <div className="flex items-center justify-between">
                 <div className="flex items-center text-green-700">
                   <Check className="h-5 w-5 mr-3 bg-green-100 p-1 rounded-full" />
