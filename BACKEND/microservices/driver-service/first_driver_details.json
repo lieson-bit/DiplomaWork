@@ -1,0 +1,47 @@
+{
+  "driverId": "8203347e-b7d1-4b6d-a065-77da1fabff84",
+  "userId": "44a7ca21-de27-4261-a3a4-25b89c5c9e1e",
+  "rating": 0,
+  "totalDeliveries": 0,
+  "completionRate": 0,
+  "verificationLevel": "verified",
+  "isOnline": true,
+  "currentLocation": "Варшавская улица, округ Московская застава, Санкт-Петербург, Северо-Западный федеральный округ, 196128, Россия",
+  "profileCompleted": true,
+  "user": {
+    "id": "44a7ca21-de27-4261-a3a4-25b89c5c9e1e",
+    "firstName": "Driver",
+    "lastName": "#44a7",
+    "email": "",
+    "phone": ""
+  },
+  "vehicles": [
+    {
+      "id": "2d944bcf-9efe-4e1a-9423-d923b1cb1c3a",
+      "type": "motorbike",
+      "make": "Scooter",
+      "model": "Electric",
+      "year": 2025,
+      "color": "Black",
+      "licensePlate": "DFT-234",
+      "maxWeight": 25,
+      "maxVolume": 1,
+      "imageUrl": "http://localhost:3002/uploads/vehicles/44a7ca21-de27-4261-a3a4-25b89c5c9e1e/2d944bcf-9efe-4e1a-9423-d923b1cb1c3a_1770204584593.png",
+      "status": "available"
+    }
+  ],
+  "distanceInfo": {
+    "distance": {
+      "text": "7.3 km",
+      "value": 7323
+    },
+    "duration": {
+      "text": "15 mins",
+      "value": 879
+    }
+  },
+  "matchScore": 58,
+  "suitability": "fair",
+  "estimatedArrival": "15 mins",
+  "geocodingStatus": "success"
+}
