@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -101,16 +101,19 @@ export function CustomerBooking() {
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [categories, setCategories] = useState<Array<{value: string, label: string}>>([]);
   const [imageErrors, setImageErrors] = useState<{[key: string]: boolean}>({});
+  
+  // Store last fetched form data to prevent unnecessary refetches
+  const lastFetchedFormDataRef = useRef<Partial<BookingForm>>({});
 
   // Check if user is customer
   useEffect(() => {
     const user = getCurrentUser();
     if (user && user.userType !== 'customer') {
-      toast.error('Only customers can book deliveries');
+      toast.error(t('customer.booking.only_customers') || 'Only customers can book deliveries');
     }
-  }, []);
+  }, [t]);
 
-  // Загружаем категории при монтировании
+  // Load categories on mount
   useEffect(() => {
     fetch('http://localhost:8000/api/categories')
       .then(res => {
@@ -131,10 +134,107 @@ export function CustomerBooking() {
       });
   }, [t]);
 
-  // Функция для расчета стоимости
+  // Memoized function to get vehicle type based on form data
+  const getVehicleType = useCallback((formData: BookingForm) => {
+    const weight = parseFloat(formData.weight) || 0;
+    const volume = parseFloat(formData.volume) || 0;
+    
+    if (weight <= 25 && volume <= 1) return 'motorbike';
+    if (weight <= 500 && volume <= 80) return 'medium_truck';
+    if (weight <= 100 && volume <= 10) return 'small_van';
+    return 'large_truck';
+  }, []);
+
+  // Function to fetch available drivers
+  const fetchAvailableDrivers = useCallback(async (formData: BookingForm, priceData: PriceResponse | null) => {
+    // Check if form data has actually changed to prevent unnecessary fetches
+    const currentKey = `${formData.pickupAddress}-${formData.weight}-${formData.volume}-${formData.urgency}`;
+    const lastKey = `${lastFetchedFormDataRef.current.pickupAddress}-${lastFetchedFormDataRef.current.weight}-${lastFetchedFormDataRef.current.volume}-${lastFetchedFormDataRef.current.urgency}`;
+    
+    if (currentKey === lastKey && drivers.length > 0) {
+      return; // Don't refetch if form data hasn't changed
+    }
+    
+    const token = getAuthToken();
+    
+    if (!token) {
+      toast.error(t('customer.booking.login_required') || 'Please login first to book a delivery');
+      return;
+    }
+
+    // Store the current form data
+    lastFetchedFormDataRef.current = {
+      pickupAddress: formData.pickupAddress,
+      weight: formData.weight,
+      volume: formData.volume,
+      urgency: formData.urgency
+    };
+
+    setLoadingDrivers(true);
+    
+    try {
+      console.log('Fetching drivers with token:', token.substring(0, 20) + '...');
+      
+      const response = await fetch('http://localhost:3002/api/drivers/match', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          pickupAddress: formData.pickupAddress,
+          weight: parseFloat(formData.weight) || 1,
+          volume: parseFloat(formData.volume) || 0.1,
+          vehicleType: getVehicleType(formData),
+          urgency: formData.urgency,
+          maxDistance: 50
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Drivers API error:', response.status, errorText);
+        throw new Error(`Drivers API error: ${response.status}`);
+      }
+
+      const data: DriversResponse = await response.json();
+      
+      console.log('Drivers response:', data);
+      
+      if (data.success && data.data && data.data.length > 0) {
+        // Debug: Log vehicle image URLs
+        data.data.forEach((driver, index) => {
+          console.log(`Driver ${index + 1} vehicle image:`, driver.vehicles[0]?.imageUrl);
+        });
+        
+        setDrivers(data.data.slice(0, 4)); // Take max 4 drivers
+        toast.success(t('customer.booking.drivers_found', { count: data.count.toString() }) || `Found ${data.count} available drivers`);
+      } else {
+        setDrivers([]);
+        toast.info(t('customer.booking.no_drivers_available') || 'No drivers available at the moment');
+      }
+      
+    } catch (error: any) {
+      console.error('Error fetching drivers:', error);
+      setDrivers([]);
+      
+      // More specific error messages
+      if (error.message.includes('401')) {
+        toast.error(t('customer.booking.session_expired') || 'Session expired. Please login again.');
+      } else if (error.message.includes('Failed to fetch')) {
+        toast.error(t('customer.booking.driver_service_error') || 'Cannot connect to driver service. Please try again later.');
+      } else {
+        toast.error(t('customer.booking.failed_fetch_drivers') || 'Failed to fetch available drivers. Please try again.');
+      }
+    } finally {
+      setLoadingDrivers(false);
+    }
+  }, [t, drivers.length, getVehicleType]);
+
+  // Function to calculate price
   const calculatePrice = useCallback(
     debounce(async (formData: BookingForm) => {
-      // Проверяем обязательные поля
+      // Check required fields
       if (!formData.pickupAddress || !formData.deliveryAddress || 
           !formData.category || !formData.weight || !formData.volume) {
         setPriceData(null);
@@ -175,7 +275,7 @@ export function CustomerBooking() {
           setPriceData(data);
           toast.success(t('customer.booking.price_calculated_success') || 'Price calculated successfully!');
           // Fetch drivers after price calculation
-          fetchAvailableDrivers(formData);
+          fetchAvailableDrivers(formData, data);
         } else {
           setPriceData(null);
           setDrivers([]);
@@ -190,99 +290,18 @@ export function CustomerBooking() {
       } finally {
         setLoading(false);
       }
-    }, 1000), // Дебаунс 1 секунда
-    [t]
+    }, 1000), // Debounce 1 second
+    [t, fetchAvailableDrivers]
   );
 
-  // Функция для получения доступных водителей с использованием вашего API utilities
-  const fetchAvailableDrivers = async (formData: BookingForm) => {
-    const token = getAuthToken();
-    
-    if (!token) {
-      toast.error('Please login first to book a delivery');
-      return;
-    }
-
-    // Определяем vehicleType на основе категории и веса/объема
-    const getVehicleType = () => {
-      const weight = parseFloat(formData.weight) || 0;
-      const volume = parseFloat(formData.volume) || 0;
-      
-      if (weight <= 25 && volume <= 1) return 'motorbike';
-      if (weight <= 500 && volume <= 80) return 'medium_truck';
-      if (weight <= 100 && volume <= 10) return 'small_van';
-      return 'large_truck';
-    };
-
-    setLoadingDrivers(true);
-    
-    try {
-      console.log('Fetching drivers with token:', token.substring(0, 20) + '...');
-      
-      const response = await fetch('http://localhost:3002/api/drivers/match', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          pickupAddress: formData.pickupAddress,
-          weight: parseFloat(formData.weight) || 1,
-          volume: parseFloat(formData.volume) || 0.1,
-          vehicleType: getVehicleType(),
-          urgency: formData.urgency,
-          maxDistance: 50
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Drivers API error:', response.status, errorText);
-        throw new Error(`Drivers API error: ${response.status}`);
-      }
-
-      const data: DriversResponse = await response.json();
-      
-      console.log('Drivers response:', data);
-      
-      if (data.success && data.data && data.data.length > 0) {
-        // Debug: Log vehicle image URLs
-        data.data.forEach((driver, index) => {
-          console.log(`Driver ${index + 1} vehicle image:`, driver.vehicles[0]?.imageUrl);
-        });
-        
-        setDrivers(data.data.slice(0, 4)); // Берем максимум 4 водителя
-        toast.success(`Found ${data.count} available drivers`);
-      } else {
-        setDrivers([]);
-        toast.info('No drivers available at the moment');
-      }
-      
-    } catch (error: any) {
-      console.error('Error fetching drivers:', error);
-      setDrivers([]);
-      
-      // More specific error messages
-      if (error.message.includes('401')) {
-        toast.error('Session expired. Please login again.');
-      } else if (error.message.includes('Failed to fetch')) {
-        toast.error('Cannot connect to driver service. Please try again later.');
-      } else {
-        toast.error('Failed to fetch available drivers. Please try again.');
-      }
-    } finally {
-      setLoadingDrivers(false);
-    }
-  };
-
-  // Обновляем расчет при изменении данных формы
+  // Update calculation when form data changes
   useEffect(() => {
     calculatePrice(formData);
   }, [formData, calculatePrice]);
 
   const handleInputChange = (field: keyof BookingForm, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    // Сбрасываем выбор водителя при изменении формы
+    // Reset driver selection when form changes
     if (field !== 'fragile' && field !== 'refrigerated' && field !== 'oversized' && field !== 'hazardous') {
       setSelectedDriver(null);
       setExpandedDriver(null);
@@ -291,7 +310,7 @@ export function CustomerBooking() {
 
   const handleDriverSelect = (driverId: string) => {
     setSelectedDriver(driverId);
-    toast.success('Driver selected successfully!');
+    toast.success(t('customer.booking.driver_selected') || 'Driver selected successfully!');
   };
 
   const handleSubmit = () => {
@@ -301,31 +320,163 @@ export function CustomerBooking() {
     }
     
     if (!selectedDriver) {
-      toast.error('Please select a driver to proceed');
+      toast.error(t('customer.booking.select_driver') || 'Please select a driver to proceed');
       return;
     }
     
-    // Здесь можно добавить логику создания заказа
+    // Get all necessary data for order creation
+    const orderData = createOrderData();
+    
+    console.log('Order data to send:', orderData);
+    
+    // Here you can add order creation logic
     toast.success(
       t('customer.booking.ready_to_book', { price: priceData.price_usd.toFixed(2) }) || 
       `Ready to book! Estimated price: $${priceData.price_usd.toFixed(2)}`
     );
+    
+    // Send order to order-service (you'll implement this)
+    createOrder(orderData);
   };
 
-  // Функция для получения временной метки
+  // Create complete order data structure
+  const createOrderData = () => {
+    const selectedDriverData = drivers.find(d => d.driverId === selectedDriver);
+    const vehicle = selectedDriverData?.vehicles[0];
+    
+    return {
+      // Customer information
+      customerId: getCurrentUser()?.id,
+      customerName: `${getCurrentUser()?.firstName} ${getCurrentUser()?.lastName}`,
+      customerEmail: getCurrentUser()?.email,
+      customerPhone: getCurrentUser()?.phone,
+      
+      // Delivery information
+      pickupAddress: formData.pickupAddress,
+      deliveryAddress: formData.deliveryAddress,
+      category: formData.category,
+      weight: parseFloat(formData.weight) || 0,
+      volume: parseFloat(formData.volume) || 0,
+      urgency: formData.urgency,
+      
+      // Special requirements
+      specialRequirements: {
+        fragile: formData.fragile,
+        refrigerated: formData.refrigerated,
+        oversized: formData.oversized,
+        hazardous: formData.hazardous
+      },
+      
+      // Driver information
+      driverId: selectedDriver,
+      driverName: selectedDriverData ? `${selectedDriverData.user.firstName} ${selectedDriverData.user.lastName}` : '',
+      driverPhone: selectedDriverData?.user.phone || '',
+      driverEmail: selectedDriverData?.user.email || '',
+      driverRating: selectedDriverData?.rating || 0,
+      
+      // Vehicle information
+      vehicleType: vehicle?.type || '',
+      vehicleMake: vehicle?.make || '',
+      vehicleModel: vehicle?.model || '',
+      vehicleLicensePlate: vehicle?.licensePlate || '',
+      vehicleCapacity: {
+        maxWeight: vehicle?.maxWeight || 0,
+        maxVolume: vehicle?.maxVolume || 0
+      },
+      vehicleImageUrl: vehicle?.imageUrl || '',
+      
+      // Price information
+      estimatedPriceUSD: priceData?.price_usd || 0,
+      estimatedPriceRUB: priceData?.price_rub || 0,
+      confidenceInterval: {
+        low: priceData?.confidence_interval_low || 0,
+        high: priceData?.confidence_interval_high || 0
+      },
+      
+      // Distance and timing
+      distance: priceData?.distance_km || 0,
+      estimatedDuration: priceData?.duration_minutes || 0,
+      estimatedDurationText: priceData?.duration_text || '',
+      estimatedArrival: selectedDriverData?.estimatedArrival || '',
+      
+      // Matching information
+      matchScore: selectedDriverData?.matchScore || 0,
+      suitability: selectedDriverData?.suitability || '',
+      
+      // Timestamps
+      createdAt: new Date().toISOString(),
+      scheduledPickupTime: calculatePickupTime(),
+      estimatedDeliveryTime: calculateDeliveryTime()
+    };
+  };
+
+  // Calculate pickup time (current time + driver arrival time)
+  const calculatePickupTime = () => {
+    const selectedDriverData = drivers.find(d => d.driverId === selectedDriver);
+    if (!selectedDriverData) return new Date().toISOString();
+    
+    const arrivalMinutes = parseInt(selectedDriverData.estimatedArrival) || 15;
+    const pickupTime = new Date();
+    pickupTime.setMinutes(pickupTime.getMinutes() + arrivalMinutes);
+    return pickupTime.toISOString();
+  };
+
+  // Calculate delivery time (pickup time + travel time)
+  const calculateDeliveryTime = () => {
+    const pickupTime = new Date(calculatePickupTime());
+    const travelMinutes = priceData?.duration_minutes || 30;
+    const deliveryTime = new Date(pickupTime);
+    deliveryTime.setMinutes(deliveryTime.getMinutes() + travelMinutes);
+    return deliveryTime.toISOString();
+  };
+
+  // Send order to order-service
+  const createOrder = async (orderData: any) => {
+    try {
+      const token = getAuthToken();
+      
+      const response = await fetch('http://localhost:3004/api/orders/create', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(orderData),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Order creation failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success(t('customer.booking.order_created') || 'Order created successfully!');
+        // You can redirect to order confirmation page or show success modal
+      } else {
+        toast.error(data.error || t('customer.booking.order_creation_failed') || 'Failed to create order');
+      }
+      
+    } catch (error: any) {
+      console.error('Error creating order:', error);
+      toast.error(t('customer.booking.order_service_error') || 'Failed to connect to order service');
+    }
+  };
+
+  // Function to get timestamp
   const getCurrentTimePlusMinutes = (minutes: number) => {
     const now = new Date();
     now.setMinutes(now.getMinutes() + minutes);
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Функция для форматирования типа транспортного средства
+  // Function to format vehicle type
   const formatVehicleType = (type: string) => {
-    if (!type) return 'N/A';
+    if (!type) return t('customer.booking.not_available') || 'N/A';
     return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
-  // Функция для обработки ошибок изображения
+  // Function to handle image errors
   const handleImageError = (driverId: string, vehicleIndex: number = 0) => {
     console.log(`Image error for driver ${driverId}, vehicle ${vehicleIndex}`);
     setImageErrors(prev => ({
@@ -334,7 +485,7 @@ export function CustomerBooking() {
     }));
   };
 
-  // Функция для повторной попытки загрузки изображения
+  // Function to retry image loading
   const handleRetryImage = (driverId: string, vehicleIndex: number = 0) => {
     console.log(`Retrying image for driver ${driverId}, vehicle ${vehicleIndex}`);
     setImageErrors(prev => ({
@@ -343,7 +494,7 @@ export function CustomerBooking() {
     }));
   };
 
-  // Функция для получения цвета градиента на основе типа транспортного средства
+  // Function to get gradient color based on vehicle type
   const getVehicleGradient = (type: string) => {
     switch(type) {
       case 'motorbike':
@@ -359,7 +510,7 @@ export function CustomerBooking() {
     }
   };
 
-  // Функция для получения цвета иконки на основе типа транспортного средства
+  // Function to get icon color based on vehicle type
   const getVehicleIconColor = (type: string) => {
     switch(type) {
       case 'motorbike':
@@ -375,7 +526,7 @@ export function CustomerBooking() {
     }
   };
 
-  // Компонент для отображения изображения транспортного средства
+  // Component to display vehicle image
   const VehicleImage = ({ driver, isExpanded = false }: { driver: Driver, isExpanded?: boolean }) => {
     const vehicle = driver.vehicles[0];
     const imageKey = `${driver.driverId}-0`;
@@ -416,7 +567,7 @@ export function CustomerBooking() {
               className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center"
             >
               <RefreshCw className="h-3 w-3 mr-1" />
-              Retry
+              {t('customer.booking.retry') || 'Retry'}
             </button>
           )}
         </div>
@@ -440,7 +591,7 @@ export function CustomerBooking() {
               window.open(imageUrl, '_blank');
             }}
             className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
-            title="Open image in new tab"
+            title={t('customer.booking.open_image') || 'Open image in new tab'}
           >
             <Eye className="h-4 w-4" />
           </button>
@@ -452,7 +603,7 @@ export function CustomerBooking() {
               handleRetryImage(driver.driverId, 0);
             }}
             className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
-            title="Refresh image"
+            title={t('customer.booking.refresh_image') || 'Refresh image'}
           >
             <RefreshCw className="h-4 w-4" />
           </button>
@@ -461,7 +612,7 @@ export function CustomerBooking() {
     );
   };
 
-  // Компонент отображения цены
+  // Price display component
   const PriceDisplay = () => {
     if (loading) {
       return (
@@ -491,7 +642,7 @@ export function CustomerBooking() {
             </div>
             <div className="text-right">
               <div className="text-sm text-gray-600">
-                Delivery distance
+                {t('customer.booking.delivery_distance') || 'Delivery distance'}
               </div>
               <div className="text-lg font-semibold text-gray-800">
                 {priceData.distance_km.toFixed(1)} km
@@ -541,14 +692,14 @@ export function CustomerBooking() {
     );
   };
 
-  // Компонент отображения водителей
+  // Drivers display component
   const DriversDisplay = () => {
     if (loadingDrivers) {
       return (
         <div className="flex items-center justify-center space-x-2 p-4 bg-blue-50 rounded-lg">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           <span className="text-blue-600">
-            Finding available drivers...
+            {t('customer.booking.finding_drivers') || 'Finding available drivers...'}
           </span>
         </div>
       );
@@ -558,7 +709,7 @@ export function CustomerBooking() {
       return (
         <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200 text-center">
           <div className="text-yellow-700">
-            No drivers available at the moment. Please try again later.
+            {t('customer.booking.no_drivers_available') || 'No drivers available at the moment. Please try again later.'}
           </div>
         </div>
       );
@@ -569,11 +720,15 @@ export function CustomerBooking() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-lg font-semibold text-gray-800">Available Drivers</h3>
-              <p className="text-sm text-gray-600">Select a driver for your delivery</p>
+              <h3 className="text-lg font-semibold text-gray-800">
+                {t('customer.booking.available_drivers') || 'Available Drivers'}
+              </h3>
+              <p className="text-sm text-gray-600">
+                {t('customer.booking.select_driver_description') || 'Select a driver for your delivery'}
+              </p>
             </div>
             <Badge variant="outline" className="bg-blue-50">
-              {drivers.length} available
+              {t('customer.booking.drivers_count', { count: drivers.length.toString() }) || `${drivers.length} available`}
             </Badge>
           </div>
           
@@ -632,7 +787,7 @@ export function CustomerBooking() {
                               driver.suitability === 'excellent' ? 'default' :
                               driver.suitability === 'good' ? 'secondary' : 'outline'
                             } className="text-xs">
-                              {driver.suitability}
+                              {t(`customer.booking.suitability.${driver.suitability}`) || driver.suitability}
                             </Badge>
                           </div>
                           
@@ -643,11 +798,17 @@ export function CustomerBooking() {
                             </div>
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Clock className="h-3.5 w-3.5 mr-1.5 text-green-500" />
-                              <span className="font-medium">Arrives by {getCurrentTimePlusMinutes(minutes)}</span>
+                              <span className="font-medium">
+                                {/* Fixed: Correctly pass the time parameter */}
+                                {t('customer.booking.arrives_by', { time: getCurrentTimePlusMinutes(minutes) }) || `Arrives by ${getCurrentTimePlusMinutes(minutes)}`}
+                              </span>
                             </div>
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Trophy className="h-3.5 w-3.5 mr-1.5 text-purple-500" />
-                              <span className="font-medium">{driver.matchScore}% Match</span>
+                              <span className="font-medium">
+                                {/* Fixed: Correctly pass the score parameter */}
+                                {t('customer.booking.match_score', { score: driver.matchScore.toString() }) || `${driver.matchScore}% Match`}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -660,7 +821,8 @@ export function CustomerBooking() {
                           <ChevronDown className="h-5 w-5 text-gray-400" />
                         )}
                         <div className="text-xs text-gray-500 text-right">
-                          {driver.distanceInfo?.distance?.text || 'N/A'} away
+                          {/* Fixed: Correctly pass the distance parameter */}
+                          {t('customer.booking.distance_away', { distance: driver.distanceInfo?.distance?.text || 'N/A' }) || `${driver.distanceInfo?.distance?.text || 'N/A'} away`}
                         </div>
                       </div>
                     </div>
@@ -675,31 +837,31 @@ export function CustomerBooking() {
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <User className="h-4 w-4 mr-2 text-blue-600" />
-                              Driver Information
+                              {t('customer.booking.driver_information') || 'Driver Information'}
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Name:</span>
+                                <span className="text-gray-500">{t('customer.booking.name') || 'Name'}:</span>
                                 <span className="font-medium text-gray-800">{driver.user.firstName} {driver.user.lastName}</span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Phone:</span>
+                                <span className="text-gray-500">{t('customer.booking.phone') || 'Phone'}:</span>
                                 <span className="font-medium text-gray-800">{driver.user.phone}</span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Rating:</span>
+                                <span className="text-gray-500">{t('customer.booking.rating') || 'Rating'}:</span>
                                 <div className="flex items-center">
                                   <Star className="h-3 w-3 fill-current text-yellow-500 mr-1" />
-                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? driver.rating : 'No ratings yet'}</span>
+                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? driver.rating : t('customer.booking.no_ratings') || 'No ratings yet'}</span>
                                 </div>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Suitability:</span>
+                                <span className="text-gray-500">{t('customer.booking.suitability') || 'Suitability'}:</span>
                                 <Badge variant={
                                   driver.suitability === 'excellent' ? 'default' :
                                   driver.suitability === 'good' ? 'secondary' : 'outline'
                                 } className="font-medium">
-                                  {driver.suitability}
+                                  {t(`customer.booking.suitability.${driver.suitability}`) || driver.suitability}
                                 </Badge>
                               </div>
                             </div>
@@ -711,7 +873,7 @@ export function CustomerBooking() {
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <Car className="h-4 w-4 mr-2 text-green-600" />
-                              Vehicle Information
+                              {t('customer.booking.vehicle_information') || 'Vehicle Information'}
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               {/* Larger vehicle image in expanded view */}
@@ -724,21 +886,21 @@ export function CustomerBooking() {
                               <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">Type:</span>
+                                    <span className="text-gray-500">{t('customer.booking.type') || 'Type'}:</span>
                                     <span className="font-medium text-gray-800 capitalize">{formatVehicleType(vehicle?.type || '')}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">Model:</span>
+                                    <span className="text-gray-500">{t('customer.booking.model') || 'Model'}:</span>
                                     <span className="font-medium text-gray-800">{vehicle?.make || ''} {vehicle?.model || ''}</span>
                                   </div>
                                 </div>
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">License:</span>
-                                    <span className="font-medium text-gray-800">{vehicle?.licensePlate || 'N/A'}</span>
+                                    <span className="text-gray-500">{t('customer.booking.license') || 'License'}:</span>
+                                    <span className="font-medium text-gray-800">{vehicle?.licensePlate || t('customer.booking.not_available') || 'N/A'}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">Capacity:</span>
+                                    <span className="text-gray-500">{t('customer.booking.capacity') || 'Capacity'}:</span>
                                     <span className="font-medium text-gray-800">{vehicle?.maxWeight || 0}kg, {vehicle?.maxVolume || 0}m³</span>
                                   </div>
                                 </div>
@@ -752,7 +914,7 @@ export function CustomerBooking() {
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <MapPin className="h-4 w-4 mr-2 text-red-600" />
-                              Distance Information
+                              {t('customer.booking.distance_information') || 'Distance Information'}
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="space-y-3">
@@ -761,8 +923,10 @@ export function CustomerBooking() {
                                     <div className="flex items-center">
                                       <MapPin className="h-4 w-4 text-blue-600 mr-2" />
                                       <div>
-                                        <div className="text-xs text-gray-500">Distance to pickup</div>
-                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.distance?.text || 'N/A'}</div>
+                                        <div className="text-xs text-gray-500">
+                                          {t('customer.booking.distance_to_pickup') || 'Distance to pickup'}
+                                        </div>
+                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.distance?.text || t('customer.booking.not_available') || 'N/A'}</div>
                                       </div>
                                     </div>
                                   </div>
@@ -773,8 +937,10 @@ export function CustomerBooking() {
                                     <div className="flex items-center">
                                       <Clock className="h-4 w-4 text-green-600 mr-2" />
                                       <div>
-                                        <div className="text-xs text-gray-500">Time to pickup</div>
-                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.duration?.text || 'N/A'}</div>
+                                        <div className="text-xs text-gray-500">
+                                          {t('customer.booking.time_to_pickup') || 'Time to pickup'}
+                                        </div>
+                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.duration?.text || t('customer.booking.not_available') || 'N/A'}</div>
                                       </div>
                                     </div>
                                   </div>
@@ -785,7 +951,9 @@ export function CustomerBooking() {
                                     <div className="flex items-center">
                                       <Calendar className="h-4 w-4 text-purple-600 mr-2" />
                                       <div>
-                                        <div className="text-xs text-gray-500">Estimated arrival time</div>
+                                        <div className="text-xs text-gray-500">
+                                          {t('customer.booking.estimated_arrival_time') || 'Estimated arrival time'}
+                                        </div>
                                         <div className="font-semibold text-gray-800">{getCurrentTimePlusMinutes(minutes)}</div>
                                       </div>
                                     </div>
@@ -812,10 +980,10 @@ export function CustomerBooking() {
                           {isSelected ? (
                             <>
                               <Check className="h-5 w-5 mr-2" />
-                              Driver Selected
+                              {t('customer.booking.driver_selected_button') || 'Driver Selected'}
                             </>
                           ) : (
-                            'Select This Driver'
+                            t('customer.booking.select_this_driver') || 'Select This Driver'
                           )}
                         </Button>
                       </div>
@@ -832,15 +1000,21 @@ export function CustomerBooking() {
                 <div className="flex items-center text-green-700">
                   <Check className="h-5 w-5 mr-3 bg-green-100 p-1 rounded-full" />
                   <div>
-                    <div className="font-semibold">Driver selected! Ready to book delivery.</div>
+                    <div className="font-semibold">
+                      {t('customer.booking.driver_selected_message') || 'Driver selected! Ready to book delivery.'}
+                    </div>
                     <div className="text-sm text-green-600 mt-0.5">
-                      {drivers.find(d => d.driverId === selectedDriver)?.user.firstName} is waiting for your order
+                      {/* Fixed: Correctly pass the name parameter */}
+                      {t('customer.booking.driver_waiting', { 
+                        name: drivers.find(d => d.driverId === selectedDriver)?.user.firstName || 'Driver' 
+                      }) || 
+                       `${drivers.find(d => d.driverId === selectedDriver)?.user.firstName} is waiting for your order`}
                     </div>
                   </div>
                 </div>
                 <Badge variant="outline" className="bg-white text-green-700 border-green-300">
                   <Clock className="h-3 w-3 mr-1" />
-                  Ready to go
+                  {t('customer.booking.ready_to_go') || 'Ready to go'}
                 </Badge>
               </div>
             </div>
@@ -869,7 +1043,7 @@ export function CustomerBooking() {
         {PriceDisplay()}
 
         {/* Available Drivers */}
-        {priceData && DriversDisplay()}
+        {priceData && <DriversDisplay />}
 
         {/* Addresses */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1052,7 +1226,7 @@ export function CustomerBooking() {
             ) : (
               <>
                 <User className="mr-2 h-5 w-5" />
-                Select a driver to continue
+                {t('customer.booking.select_driver_continue') || 'Select a driver to continue'}
               </>
             )
           ) : (
