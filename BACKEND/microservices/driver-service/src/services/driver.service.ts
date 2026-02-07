@@ -22,12 +22,30 @@ class UserServiceClient {
 
   async getUserById(userId: string) {
     try {
+      logger.info(`🔍 [UserServiceClient] Fetching user ${userId} from ${this.baseUrl}/api/users/${userId}`);
+      
       const response = await axios.get(`${this.baseUrl}/api/users/${userId}`, {
         timeout: 5000
       });
+      
+      logger.info(`✅ [UserServiceClient] User ${userId} fetched successfully:`, {
+        hasData: !!response.data,
+        dataStructure: response.data ? Object.keys(response.data) : 'no data',
+        userData: response.data?.data ? {
+          firstName: response.data.data.firstName,
+          lastName: response.data.data.lastName,
+          phone: response.data.data.phone
+        } : 'no user data in response'
+      });
+      
       return response.data.data;
-    } catch (error) {
-      logger.warn(`Failed to fetch user ${userId}:`);
+    } catch (error: any) {
+      logger.error(`❌ [UserServiceClient] Failed to fetch user ${userId}:`, {
+        message: error.message,
+        url: `${this.baseUrl}/api/users/${userId}`,
+        status: error.response?.status,
+        responseData: error.response?.data
+      });
       return null;
     }
   }
@@ -187,13 +205,12 @@ export class DriverService {
   }): Promise<DriverInfo[]> {
     const requestId = `discover_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     const startTime = Date.now();
-  
+
     try {
       logger.info(`🔍 [${requestId}] Starting REAL driver discovery with params:`, params);
-    
+
       const pool = await ensurePool();
-    
-      // Build query with SQL parameters for better performance and security
+
       const baseQuery = `
         SELECT 
           d.id as driver_id,
@@ -205,7 +222,7 @@ export class DriverService {
           d.is_online,
           d.current_location,
           d.profile_completed,
-          
+
           v.id as vehicle_id,
           v.type as vehicle_type,
           v.make,
@@ -224,46 +241,29 @@ export class DriverService {
           AND d.verification_level IN ('verified', 'premium') 
           AND v.current_status = 'available'
       `;
-    
+
       try {
-        // Execute the query
         logger.info(`💾 [${requestId}] Executing database query...`);
         const [allRows] = await pool.execute(baseQuery);
         const allDrivers = allRows as any[];
-      
+
         logger.info(`✅ [${requestId}] Database query found ${allDrivers.length} total drivers`);
-      
+
         if (allDrivers.length === 0) {
           logger.warn(`⚠️ [${requestId}] No drivers found in database`);
           return [];
         }
-      
-        // Log sample driver for debugging
-        if (allDrivers[0]) {
-          logger.debug(`📝 [${requestId}] Sample database row:`, {
-            driverId: allDrivers[0].driver_id,
-            userId: allDrivers[0].user_id,
-            verificationLevel: allDrivers[0].verification_level,
-            isOnline: allDrivers[0].is_online,
-            vehicleType: allDrivers[0].vehicle_type,
-            maxWeight: allDrivers[0].max_weight,
-            maxVolume: allDrivers[0].max_volume,
-            currentLocation: allDrivers[0].current_location
-          });
-        }
-      
-        // Apply filters in JavaScript
+
+        // Apply filters
         let filteredDrivers = allDrivers;
-      
-        // Apply vehicle type filter
+
         if (params.vehicleType) {
           filteredDrivers = filteredDrivers.filter(driver => 
             driver.vehicle_type === params.vehicleType
           );
           logger.info(`🚗 [${requestId}] After vehicle type filter: ${filteredDrivers.length} drivers`);
         }
-      
-        // Apply weight filter
+
         if (params.estimatedWeight !== undefined) {
           filteredDrivers = filteredDrivers.filter(driver => {
             const maxWeight = parseFloat(driver.max_weight || 0);
@@ -271,8 +271,7 @@ export class DriverService {
           });
           logger.info(`⚖️ [${requestId}] After weight filter: ${filteredDrivers.length} drivers`);
         }
-      
-        // Apply volume filter
+
         if (params.estimatedVolume !== undefined) {
           filteredDrivers = filteredDrivers.filter(driver => {
             const maxVolume = parseFloat(driver.max_volume || 0);
@@ -280,73 +279,57 @@ export class DriverService {
           });
           logger.info(`📦 [${requestId}] After volume filter: ${filteredDrivers.length} drivers`);
         }
-      
+
         // Apply pagination
         const limit = params.limit || 20;
         const page = params.page || 1;
         const offset = (page - 1) * limit;
         const paginatedDrivers = filteredDrivers.slice(offset, offset + limit);
-      
+
         logger.info(`📄 [${requestId}] After pagination: ${paginatedDrivers.length} drivers (limit: ${limit}, page: ${page})`);
-      
+
         if (paginatedDrivers.length === 0) {
           logger.warn(`⚠️ [${requestId}] No drivers match all filters`);
           return [];
         }
-      
+
         // Process drivers with user data fetching
         logger.info(`👥 [${requestId}] Fetching user data for ${paginatedDrivers.length} drivers...`);
-        
+
         const driverInfos: DriverInfo[] = [];
-        const userFetchPromises: Promise<void>[] = [];
-        
-        // Create a map to store user data
-        const userDataMap = new Map<string, any>();
-        
-        // Collect unique user IDs
-        const uniqueUserIds = [...new Set(paginatedDrivers
-          .filter(row => row.user_id)
-          .map(row => row.user_id)
-        )];
-        
-        logger.info(`📞 [${requestId}] Fetching ${uniqueUserIds.length} unique users from user service`);
-        
-        // Fetch all users in parallel
-        for (const userId of uniqueUserIds) {
-          const promise = userServiceClient.getUserById(userId)
-            .then(userData => {
-              if (userData) {
-                userDataMap.set(userId, userData);
-              }
-            })
-            .catch(error => {
-              logger.warn(`⚠️ [${requestId}] Failed to fetch user ${userId}:`, error.message);
-            });
-          userFetchPromises.push(promise);
-        }
-        
-        // Wait for all user fetches to complete
-        await Promise.all(userFetchPromises);
-        
-        logger.info(`✅ [${requestId}] User data fetched: ${userDataMap.size}/${uniqueUserIds.length} users found`);
-        
+
         // Process each driver row
         for (const row of paginatedDrivers) {
           try {
-            // Get user data from map or create fallback
+            // Fetch user data for this driver
             let userData = null;
-            if (row.user_id && userDataMap.has(row.user_id)) {
-              userData = userDataMap.get(row.user_id);
+            if (row.user_id) {
+              try {
+                logger.debug(`📞 [${requestId}] Fetching user data for userId: ${row.user_id}`);
+                userData = await userServiceClient.getUserById(row.user_id);
+
+                if (userData) {
+                  logger.debug(`✅ [${requestId}] User data found for ${row.user_id}:`, {
+                    firstName: userData.firstName,
+                    lastName: userData.lastName,
+                    phone: userData.phone
+                  });
+                } else {
+                  logger.warn(`⚠️ [${requestId}] No user data returned for userId: ${row.user_id}`);
+                }
+              } catch (userError: any) {
+                logger.warn(`⚠️ [${requestId}] Failed to fetch user ${row.user_id}:`, userError.message);
+              }
             }
-            
-            // Create user info object
+
+            // Create user info object - CORRECT FIELD MAPPING
             const userInfo = userData ? {
               id: row.user_id,
               firstName: userData.firstName || 'Driver',
               lastName: userData.lastName || '',
               email: userData.email || '',
               phone: userData.phone || '',
-              profileImageUrl: userData.profileImage || userData.profileImageUrl
+              profileImageUrl: undefined // Your user service doesn't return profileImage in the sample
             } : {
               id: row.user_id || '',
               firstName: 'Driver',
@@ -355,10 +338,10 @@ export class DriverService {
               phone: '',
               profileImageUrl: undefined
             };
-            
+
             // Get vehicle type
             const vehicleType = row.vehicle_type as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck' || 'motorbike';
-            
+
             // Create vehicle object with real data
             const vehicle = {
               id: row.vehicle_id || '',
@@ -373,12 +356,12 @@ export class DriverService {
               imageUrl: row.image_url || undefined,
               status: row.current_status || 'available'
             };
-            
+
             // Parse numeric values safely
             const rating = parseFloat(row.rating);
             const totalDeliveries = parseInt(row.total_deliveries);
             const completionRate = parseFloat(row.completion_rate);
-            
+
             // Create driver info with REAL data
             const driverInfo: DriverInfo = {
               driverId: row.driver_id,
@@ -393,153 +376,98 @@ export class DriverService {
               user: userInfo,
               vehicles: [vehicle]
             };
-            
+
             driverInfos.push(driverInfo);
-            
+
+            // Log successful driver processing
+            logger.debug(`✅ [${requestId}] Processed driver: ${driverInfo.driverId}`, {
+              name: `${userInfo.firstName} ${userInfo.lastName}`,
+              phone: userInfo.phone,
+              userId: driverInfo.userId
+            });
+
           } catch (driverError: any) {
             logger.warn(`⚠️ [${requestId}] Error processing driver row ${row.driver_id}:`, {
               message: driverError.message,
               errorName: driverError.name
             });
-            // Continue processing other drivers
             continue;
           }
         }
-        
+
         if (driverInfos.length === 0) {
           logger.warn(`⚠️ [${requestId}] No drivers could be processed after user data fetching`);
           return [];
         }
-        
+
         logger.info(`✅ [${requestId}] Successfully processed ${driverInfos.length} drivers with real data`);
-        
-        // Log detailed information for debugging
-        logger.debug(`📊 [${requestId}] Processed drivers summary:`, {
-          totalProcessed: driverInfos.length,
-          withUserData: driverInfos.filter(d => d.user?.firstName !== 'Driver').length,
-          withRealLocation: driverInfos.filter(d => d.currentLocation && !d.currentLocation.includes('not specified')).length,
-          sampleDriver: driverInfos.length > 0 ? {
-            driverId: driverInfos[0].driverId,
-            userId: driverInfos[0].userId,
-            name: `${driverInfos[0].user?.firstName} ${driverInfos[0].user?.lastName}`,
-            vehicleType: driverInfos[0].vehicles[0]?.type,
-            location: driverInfos[0].currentLocation
-          } : null
+
+        // Log detailed summary
+        logger.debug(`📊 [${requestId}] Final driver summary:`, {
+          totalDrivers: driverInfos.length,
+          drivers: driverInfos.map(d => ({
+            driverId: d.driverId,
+            userId: d.userId,
+            name: `${d.user?.firstName} ${d.user?.lastName}`,
+            phone: d.user?.phone,
+            rating: d.rating,
+            location: d.currentLocation
+          }))
         });
-        
+
         return driverInfos;
-        
+
       } catch (queryError: any) {
         logger.error(`❌ [${requestId}] Database query failed:`, {
           message: queryError.message,
           errorCode: queryError.code,
           sqlMessage: queryError.sqlMessage
         });
-        
-        // Try a simpler query as fallback
-        logger.info(`🔄 [${requestId}] Trying simplified fallback query...`);
-        try {
-          const simpleQuery = `SELECT id as driver_id, user_id FROM drivers WHERE status = 'active' AND is_online = 1 LIMIT 10`;
-          const [simpleRows] = await pool.execute(simpleQuery);
-          const simpleDrivers = simpleRows as any[];
-          
-          logger.info(`🔄 [${requestId}] Simple query returned ${simpleDrivers.length} rows`);
-          
-          if (simpleDrivers.length === 0) {
-            logger.warn(`⚠️ [${requestId}] No drivers found even with simple query`);
-            return [];
-          }
-          
-          // Process simple results with minimal data
-          const fallbackDrivers: DriverInfo[] = [];
-          
-          for (const row of simpleDrivers) {
-            const driverInfo: DriverInfo = {
-              driverId: row.driver_id,
-              userId: row.user_id || '',
-              rating: 0,
-              totalDeliveries: 0,
-              completionRate: 0,
-              verificationLevel: 'verified',
-              isOnline: true,
-              currentLocation: 'Location data unavailable',
-              profileCompleted: false,
-              user: {
-                id: row.user_id || '',
-                firstName: 'Driver',
-                lastName: row.user_id ? `#${row.user_id.substring(0, 4)}` : 'Unknown',
-                email: '',
-                phone: '',
-                profileImageUrl: undefined
-              },
-              vehicles: [{
-                id: 'unknown_vehicle',
-                type: 'motorbike' as const,
-                make: 'Unknown',
-                model: 'Unknown',
-                year: new Date().getFullYear(),
-                color: 'Unknown',
-                licensePlate: 'UNKNOWN',
-                maxWeight: 50,
-                maxVolume: 2,
-                imageUrl: undefined,
-                status: 'available'
-              }]
-            };
-            fallbackDrivers.push(driverInfo);
-          }
-          
-          logger.info(`🔄 [${requestId}] Returning ${fallbackDrivers.length} drivers with fallback data`);
-          return fallbackDrivers;
-          
-        } catch (simpleError: any) {
-          logger.error(`💥 [${requestId}] Simple query also failed:`, simpleError.message);
-          
-          // Ultimate minimal fallback
-          const minimalDriver: DriverInfo = {
-            driverId: 'minimal_driver_1',
-            userId: 'minimal_user_1',
-            rating: 0,
-            totalDeliveries: 0,
-            completionRate: 0,
-            verificationLevel: 'verified',
-            isOnline: true,
-            currentLocation: 'St. Petersburg, Russia',
-            profileCompleted: false,
-            user: {
-              id: 'minimal_user_1',
-              firstName: 'Driver',
-              lastName: '#0001',
-              email: '',
-              phone: '',
-              profileImageUrl: undefined
-            },
-            vehicles: [{
-              id: 'minimal_vehicle_1',
-              type: 'motorbike' as const,
-              make: 'Unknown',
-              model: 'Unknown',
-              year: new Date().getFullYear(),
-              color: 'Black',
-              licensePlate: 'UNKNOWN',
-              maxWeight: 25,
-              maxVolume: 1,
-              imageUrl: undefined,
-              status: 'available'
-            }]
-          };
-          
-          return [minimalDriver];
-        }
+
+        // Fallback with minimal data
+        const minimalDriver: DriverInfo = {
+          driverId: 'fallback_driver',
+          userId: 'fallback_user',
+          rating: 0,
+          totalDeliveries: 0,
+          completionRate: 0,
+          verificationLevel: 'verified',
+          isOnline: true,
+          currentLocation: 'St. Petersburg, Russia',
+          profileCompleted: false,
+          user: {
+            id: 'fallback_user',
+            firstName: 'Fallback',
+            lastName: 'Driver',
+            email: '',
+            phone: '',
+            profileImageUrl: undefined
+          },
+          vehicles: [{
+            id: 'fallback_vehicle',
+            type: 'motorbike' as const,
+            make: 'Unknown',
+            model: 'Unknown',
+            year: new Date().getFullYear(),
+            color: 'Black',
+            licensePlate: 'UNKNOWN',
+            maxWeight: 25,
+            maxVolume: 1,
+            imageUrl: undefined,
+            status: 'available'
+          }]
+        };
+
+        return [minimalDriver];
       }
-      
+
     } catch (error: any) {
       logger.error(`💥 [${requestId}] Error in discoverAvailableDrivers:`, {
         message: error.message,
         stack: error.stack?.substring(0, 300),
         processingTime: Date.now() - startTime
       });
-      
+
       // Emergency fallback
       const emergencyDriver: DriverInfo = {
         driverId: `emergency_${Date.now()}`,
@@ -573,7 +501,7 @@ export class DriverService {
           status: 'unavailable'
         }]
       };
-      
+
       return [emergencyDriver];
     }
   }
