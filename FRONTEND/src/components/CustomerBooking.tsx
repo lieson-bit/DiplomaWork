@@ -102,8 +102,9 @@ export function CustomerBooking() {
   const [categories, setCategories] = useState<Array<{value: string, label: string}>>([]);
   const [imageErrors, setImageErrors] = useState<{[key: string]: boolean}>({});
   
-  // Store last fetched form data to prevent unnecessary refetches
+  // Store last fetched data to prevent unnecessary refetches
   const lastFetchedFormDataRef = useRef<Partial<BookingForm>>({});
+  const lastFetchedPriceDataRef = useRef<string>('');
 
   // Check if user is customer
   useEffect(() => {
@@ -113,45 +114,52 @@ export function CustomerBooking() {
     }
   }, [t]);
 
-  // Load categories on mount
+  // Load categories on mount - only once
   useEffect(() => {
-    fetch('http://localhost:8000/api/categories')
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch categories');
-        return res.json();
-      })
-      .then(data => setCategories(data.categories))
-      .catch(() => {
-        // Fallback categories
+    const loadCategories = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/categories');
+        if (!response.ok) throw new Error('Failed to fetch categories');
+        const data = await response.json();
+        setCategories(data.categories);
+      } catch {
+        // Fallback categories - these are static and don't depend on t()
         setCategories([
-          { value: 'documents', label: t('customer.booking.category_documents') || 'Documents & Small Packages' },
-          { value: 'furniture', label: t('customer.booking.category_furniture') || 'Furniture & Appliances' },
-          { value: 'construction', label: t('customer.booking.category_construction') || 'Construction Materials' },
-          { value: 'food', label: t('customer.booking.category_food') || 'Food & Beverages' },
-          { value: 'electronics', label: t('customer.booking.category_electronics') || 'Electronics & Fragile Items' },
-          { value: 'other', label: t('customer.booking.category_other') || 'Other' }
+          { value: 'documents', label: 'Documents & Small Packages' },
+          { value: 'furniture', label: 'Furniture & Appliances' },
+          { value: 'construction', label: 'Construction Materials' },
+          { value: 'food', label: 'Food & Beverages' },
+          { value: 'electronics', label: 'Electronics & Fragile Items' },
+          { value: 'other', label: 'Other' }
         ]);
-      });
-  }, [t]);
+      }
+    };
+    
+    loadCategories();
+  }, []); // Empty dependency array - load only once
 
   // Memoized function to get vehicle type based on form data
-  const getVehicleType = useCallback((formData: BookingForm) => {
-    const weight = parseFloat(formData.weight) || 0;
-    const volume = parseFloat(formData.volume) || 0;
+  const getVehicleType = useCallback((weight: string, volume: string) => {
+    const weightNum = parseFloat(weight) || 0;
+    const volumeNum = parseFloat(volume) || 0;
     
-    if (weight <= 25 && volume <= 1) return 'motorbike';
-    if (weight <= 500 && volume <= 80) return 'medium_truck';
-    if (weight <= 100 && volume <= 10) return 'small_van';
+    if (weightNum <= 25 && volumeNum <= 1) return 'motorbike';
+    if (weightNum <= 500 && volumeNum <= 80) return 'medium_truck';
+    if (weightNum <= 100 && volumeNum <= 10) return 'small_van';
     return 'large_truck';
   }, []);
 
-  // Function to fetch available drivers
-  const fetchAvailableDrivers = useCallback(async (formData: BookingForm, priceData: PriceResponse | null) => {
+  // Function to fetch available drivers - memoized to prevent recreation
+  const fetchAvailableDrivers = useCallback(async (
+    formData: BookingForm, 
+    priceData: PriceResponse | null,
+    forceFetch: boolean = false
+  ) => {
     // Check if form data has actually changed to prevent unnecessary fetches
     const currentKey = `${formData.pickupAddress}-${formData.weight}-${formData.volume}-${formData.urgency}`;
     const lastKey = `${lastFetchedFormDataRef.current.pickupAddress}-${lastFetchedFormDataRef.current.weight}-${lastFetchedFormDataRef.current.volume}-${lastFetchedFormDataRef.current.urgency}`;
     
-    if (currentKey === lastKey && drivers.length > 0) {
+    if (currentKey === lastKey && drivers.length > 0 && !forceFetch) {
       return; // Don't refetch if form data hasn't changed
     }
     
@@ -173,8 +181,6 @@ export function CustomerBooking() {
     setLoadingDrivers(true);
     
     try {
-      console.log('Fetching drivers with token:', token.substring(0, 20) + '...');
-      
       const response = await fetch('http://localhost:3002/api/drivers/match', {
         method: 'POST',
         headers: {
@@ -185,7 +191,7 @@ export function CustomerBooking() {
           pickupAddress: formData.pickupAddress,
           weight: parseFloat(formData.weight) || 1,
           volume: parseFloat(formData.volume) || 0.1,
-          vehicleType: getVehicleType(formData),
+          vehicleType: getVehicleType(formData.weight, formData.volume),
           urgency: formData.urgency,
           maxDistance: 50
         }),
@@ -193,21 +199,13 @@ export function CustomerBooking() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Drivers API error:', response.status, errorText);
         throw new Error(`Drivers API error: ${response.status}`);
       }
 
       const data: DriversResponse = await response.json();
       
-      console.log('Drivers response:', data);
-      
       if (data.success && data.data && data.data.length > 0) {
-        // Debug: Log vehicle image URLs
-        data.data.forEach((driver, index) => {
-          console.log(`Driver ${index + 1} vehicle image:`, driver.vehicles[0]?.imageUrl);
-        });
-        
-        setDrivers(data.data.slice(0, 4)); // Take max 4 drivers
+        setDrivers(data.data.slice(0, 4));
         toast.success(t('customer.booking.drivers_found', { count: data.count.toString() }) || `Found ${data.count} available drivers`);
       } else {
         setDrivers([]);
@@ -229,17 +227,41 @@ export function CustomerBooking() {
     } finally {
       setLoadingDrivers(false);
     }
-  }, [t, drivers.length, getVehicleType]);
+  }, [t, getVehicleType]); // Only depend on t and getVehicleType
 
-  // Function to calculate price
+  const formatRating = (rating: number) => {
+    if (!rating || rating === 0) return '0.0';
+    return rating.toFixed(1); // This ensures exactly one decimal place
+  };
+
+  // Create a stable calculatePrice function
   const calculatePrice = useCallback(
-    debounce(async (formData: BookingForm) => {
+    debounce(async (formData: BookingForm, forceCalculate: boolean = false) => {
       // Check required fields
       if (!formData.pickupAddress || !formData.deliveryAddress || 
           !formData.category || !formData.weight || !formData.volume) {
         setPriceData(null);
         setDrivers([]);
         setSelectedDriver(null);
+        return;
+      }
+
+      // Create a key for the current calculation
+      const currentKey = JSON.stringify({
+        pickup: formData.pickupAddress,
+        delivery: formData.deliveryAddress,
+        category: formData.category,
+        weight: formData.weight,
+        volume: formData.volume,
+        urgency: formData.urgency,
+        fragile: formData.fragile,
+        refrigerated: formData.refrigerated,
+        oversized: formData.oversized,
+        hazardous: formData.hazardous
+      });
+
+      // Don't recalculate if we already have the same data
+      if (currentKey === lastFetchedPriceDataRef.current && !forceCalculate) {
         return;
       }
 
@@ -273,12 +295,14 @@ export function CustomerBooking() {
         
         if (data.success) {
           setPriceData(data);
+          lastFetchedPriceDataRef.current = currentKey;
           toast.success(t('customer.booking.price_calculated_success') || 'Price calculated successfully!');
           // Fetch drivers after price calculation
-          fetchAvailableDrivers(formData, data);
+          fetchAvailableDrivers(formData, data, true);
         } else {
           setPriceData(null);
           setDrivers([]);
+          lastFetchedPriceDataRef.current = '';
           toast.error(data.error || t('customer.booking.price_calculation_failed') || 'Failed to calculate price');
         }
         
@@ -286,12 +310,13 @@ export function CustomerBooking() {
         console.error('Error calculating price:', error);
         setPriceData(null);
         setDrivers([]);
+        lastFetchedPriceDataRef.current = '';
         toast.error(t('customer.booking.service_connection_failed') || 'Failed to connect to pricing service');
       } finally {
         setLoading(false);
       }
     }, 1000), // Debounce 1 second
-    [t, fetchAvailableDrivers]
+    [fetchAvailableDrivers] // Only depend on fetchAvailableDrivers
   );
 
   // Update calculation when form data changes
@@ -326,8 +351,6 @@ export function CustomerBooking() {
     
     // Get all necessary data for order creation
     const orderData = createOrderData();
-    
-    console.log('Order data to send:', orderData);
     
     // Here you can add order creation logic
     toast.success(
@@ -478,7 +501,6 @@ export function CustomerBooking() {
 
   // Function to handle image errors
   const handleImageError = (driverId: string, vehicleIndex: number = 0) => {
-    console.log(`Image error for driver ${driverId}, vehicle ${vehicleIndex}`);
     setImageErrors(prev => ({
       ...prev,
       [`${driverId}-${vehicleIndex}`]: true
@@ -487,7 +509,6 @@ export function CustomerBooking() {
 
   // Function to retry image loading
   const handleRetryImage = (driverId: string, vehicleIndex: number = 0) => {
-    console.log(`Retrying image for driver ${driverId}, vehicle ${vehicleIndex}`);
     setImageErrors(prev => ({
       ...prev,
       [`${driverId}-${vehicleIndex}`]: false
@@ -567,7 +588,7 @@ export function CustomerBooking() {
               className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center"
             >
               <RefreshCw className="h-3 w-3 mr-1" />
-              {t('customer.booking.retry') || 'Retry'}
+              Retry
             </button>
           )}
         </div>
@@ -591,7 +612,7 @@ export function CustomerBooking() {
               window.open(imageUrl, '_blank');
             }}
             className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
-            title={t('customer.booking.open_image') || 'Open image in new tab'}
+            title="Open image in new tab"
           >
             <Eye className="h-4 w-4" />
           </button>
@@ -603,13 +624,114 @@ export function CustomerBooking() {
               handleRetryImage(driver.driverId, 0);
             }}
             className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
-            title={t('customer.booking.refresh_image') || 'Refresh image'}
+            title="Refresh image"
           >
             <RefreshCw className="h-4 w-4" />
           </button>
         )}
       </>
     );
+  };
+
+  // Get translated label for category
+  const getTranslatedCategoryLabel = (value: string) => {
+    switch(value) {
+      case 'documents':
+        return t('customer.booking.category_documents') || 'Documents & Small Packages';
+      case 'furniture':
+        return t('customer.booking.category_furniture') || 'Furniture & Appliances';
+      case 'construction':
+        return t('customer.booking.category_construction') || 'Construction Materials';
+      case 'food':
+        return t('customer.booking.category_food') || 'Food & Beverages';
+      case 'electronics':
+        return t('customer.booking.category_electronics') || 'Electronics & Fragile Items';
+      case 'other':
+        return t('customer.booking.category_other') || 'Other';
+      default:
+        return value;
+    }
+  };
+
+  // Helper function to get arrival text - FIXED VERSION
+  const getArrivalText = (minutes: number) => {
+    const time = getCurrentTimePlusMinutes(minutes);
+    const translation = t('customer.booking.arrives_by');
+    // If translation exists and contains {time}, replace it
+    if (translation && translation.includes('{time}')) {
+      return translation.replace('{time}', time);
+    }
+    // Otherwise use fallback
+    return translation || `Arrives by ${time}`;
+  };
+
+  // Helper function to get match score text - FIXED VERSION
+  const getMatchScoreText = (score: number) => {
+    const translation = t('customer.booking.match_score');
+    // If translation exists and contains {score}, replace it
+    if (translation && translation.includes('{score}')) {
+      return translation.replace('{score}', score.toString());
+    }
+    // Otherwise use fallback
+    return translation || `${score}% Match`;
+  };
+
+  // Helper function to get distance away text - FIXED VERSION
+  const getDistanceAwayText = (distanceText: string) => {
+    const translation = t('customer.booking.distance_away');
+    // If translation exists and contains {distance}, replace it
+    if (translation && translation.includes('{distance}')) {
+      return translation.replace('{distance}', distanceText);
+    }
+    // Otherwise use fallback
+    return translation || `${distanceText} away`;
+  };
+
+  // Helper function to get drivers count text - FIXED VERSION
+  const getDriversCountText = (count: number) => {
+    const translation = t('customer.booking.drivers_count');
+    // If translation exists and contains {count}, replace it
+    if (translation && translation.includes('{count}')) {
+      return translation.replace('{count}', count.toString());
+    }
+    // Otherwise use fallback
+    return translation || `${count} available`;
+  };
+
+  // Helper function to get driver waiting text - FIXED VERSION
+  const getDriverWaitingText = (driverName: string | undefined) => {
+    const name = driverName || 'Driver';
+    const translation = t('customer.booking.driver_waiting');
+    // If translation exists and contains {name}, replace it
+    if (translation && translation.includes('{name}')) {
+      return translation.replace('{name}', name);
+    }
+    // Otherwise use fallback
+    return translation || `${name} is waiting for your order`;
+  };
+
+  // Helper function to get book delivery text - FIXED VERSION
+  const getBookDeliveryText = (amount: number) => {
+    const translation = t('customer.booking.book_delivery');
+    // If translation exists and contains {amount}, replace it
+    if (translation && translation.includes('{amount}')) {
+      return translation.replace('{amount}', amount.toFixed(2));
+    }
+    // Otherwise use fallback
+    return translation || `Book Delivery for $${amount.toFixed(2)}`;
+  };
+
+  // Helper function to get confidence interval text - FIXED VERSION
+  const getConfidenceIntervalText = (low: number, high: number) => {
+    const translation = t('customer.booking.confidence_interval');
+    // If translation exists and contains {low} and {high}, replace them
+    if (translation && translation.includes('{low}') && translation.includes('{high}')) {
+      return translation
+        .replace('{low}', (low / 90).toFixed(2))
+        .replace('{high}', (high / 90).toFixed(2));
+    }
+    // Otherwise use fallback
+    return translation || `Confidence interval: $${(low / 90).toFixed(2)} - $${(high / 90).toFixed(2)}`;
   };
 
   // Price display component
@@ -673,10 +795,7 @@ export function CustomerBooking() {
           
           <div className="pt-3 border-t border-gray-200">
             <div className="text-xs text-gray-500">
-              {t('customer.booking.confidence_interval', {
-                low: (priceData.confidence_interval_low / 90).toFixed(2),
-                high: (priceData.confidence_interval_high / 90).toFixed(2)
-              }) || `Confidence interval: $${(priceData.confidence_interval_low / 90).toFixed(2)} - $${(priceData.confidence_interval_high / 90).toFixed(2)}`}
+              {getConfidenceIntervalText(priceData.confidence_interval_low, priceData.confidence_interval_high)}
             </div>
           </div>
         </div>
@@ -728,7 +847,7 @@ export function CustomerBooking() {
               </p>
             </div>
             <Badge variant="outline" className="bg-blue-50">
-              {t('customer.booking.drivers_count', { count: drivers.length.toString() }) || `${drivers.length} available`}
+              {getDriversCountText(drivers.length)}
             </Badge>
           </div>
           
@@ -780,7 +899,7 @@ export function CustomerBooking() {
                             {driver.rating > 0 && (
                               <div className="flex items-center text-yellow-500 bg-yellow-50 px-1.5 py-0.5 rounded-full">
                                 <Star className="h-3 w-3 fill-current" />
-                                <span className="text-xs ml-0.5 font-medium">{driver.rating}</span>
+                                <span className="text-xs ml-0.5 font-medium">{formatRating(driver.rating)}</span>
                               </div>
                             )}
                             <Badge variant={
@@ -799,15 +918,13 @@ export function CustomerBooking() {
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Clock className="h-3.5 w-3.5 mr-1.5 text-green-500" />
                               <span className="font-medium">
-                                {/* Fixed: Correctly pass the time parameter */}
-                                {t('customer.booking.arrives_by', { time: getCurrentTimePlusMinutes(minutes) }) || `Arrives by ${getCurrentTimePlusMinutes(minutes)}`}
+                                {getArrivalText(minutes)}
                               </span>
                             </div>
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Trophy className="h-3.5 w-3.5 mr-1.5 text-purple-500" />
                               <span className="font-medium">
-                                {/* Fixed: Correctly pass the score parameter */}
-                                {t('customer.booking.match_score', { score: driver.matchScore.toString() }) || `${driver.matchScore}% Match`}
+                                {getMatchScoreText(driver.matchScore)}
                               </span>
                             </div>
                           </div>
@@ -821,8 +938,7 @@ export function CustomerBooking() {
                           <ChevronDown className="h-5 w-5 text-gray-400" />
                         )}
                         <div className="text-xs text-gray-500 text-right">
-                          {/* Fixed: Correctly pass the distance parameter */}
-                          {t('customer.booking.distance_away', { distance: driver.distanceInfo?.distance?.text || 'N/A' }) || `${driver.distanceInfo?.distance?.text || 'N/A'} away`}
+                          {getDistanceAwayText(driver.distanceInfo?.distance?.text || 'N/A')}
                         </div>
                       </div>
                     </div>
@@ -852,7 +968,7 @@ export function CustomerBooking() {
                                 <span className="text-gray-500">{t('customer.booking.rating') || 'Rating'}:</span>
                                 <div className="flex items-center">
                                   <Star className="h-3 w-3 fill-current text-yellow-500 mr-1" />
-                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? driver.rating : t('customer.booking.no_ratings') || 'No ratings yet'}</span>
+                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? formatRating(driver.rating) : t('customer.booking.no_ratings') || 'No ratings yet'}</span>
                                 </div>
                               </div>
                               <div className="flex justify-between items-center">
@@ -1004,11 +1120,7 @@ export function CustomerBooking() {
                       {t('customer.booking.driver_selected_message') || 'Driver selected! Ready to book delivery.'}
                     </div>
                     <div className="text-sm text-green-600 mt-0.5">
-                      {/* Fixed: Correctly pass the name parameter */}
-                      {t('customer.booking.driver_waiting', { 
-                        name: drivers.find(d => d.driverId === selectedDriver)?.user.firstName || 'Driver' 
-                      }) || 
-                       `${drivers.find(d => d.driverId === selectedDriver)?.user.firstName} is waiting for your order`}
+                      {getDriverWaitingText(drivers.find(d => d.driverId === selectedDriver)?.user.firstName)}
                     </div>
                   </div>
                 </div>
@@ -1090,7 +1202,7 @@ export function CustomerBooking() {
             <SelectContent>
               {categories.map((cat) => (
                 <SelectItem key={cat.value} value={cat.value}>
-                  {cat.label}
+                  {getTranslatedCategoryLabel(cat.value)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -1221,7 +1333,7 @@ export function CustomerBooking() {
             selectedDriver ? (
               <>
                 <Check className="mr-2 h-5 w-5" />
-                {t('customer.booking.book_delivery', { amount: priceData.price_usd.toFixed(2) }) || `Book Delivery for $${priceData.price_usd.toFixed(2)}`}
+                {getBookDeliveryText(priceData.price_usd)}
               </>
             ) : (
               <>
