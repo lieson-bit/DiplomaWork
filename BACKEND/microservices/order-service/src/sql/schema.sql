@@ -285,6 +285,66 @@ CREATE TABLE IF NOT EXISTS notifications (
     INDEX idx_notifications_read (read_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Driver Capacity Tracking Table
+CREATE TABLE IF NOT EXISTS driver_capacity_tracking (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    driver_id VARCHAR(36) NOT NULL,
+    date DATE NOT NULL,
+    vehicle_max_weight DECIMAL(8,2),
+    vehicle_max_volume DECIMAL(8,2),
+    orders_accepted INT DEFAULT 0,
+    orders_completed INT DEFAULT 0,
+    total_weight_carried DECIMAL(10,2) DEFAULT 0.00,
+    total_volume_carried DECIMAL(10,2) DEFAULT 0.00,
+    capacity_utilization DECIMAL(5,2), -- percentage
+    efficiency_score DECIMAL(5,2),
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    UNIQUE KEY unique_driver_date (driver_id, date),
+    INDEX idx_capacity_driver (driver_id),
+    INDEX idx_capacity_date (date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Update orders table with capacity tracking
+ALTER TABLE orders 
+ADD COLUMN capacity_check_passed BOOLEAN DEFAULT TRUE,
+ADD COLUMN capacity_check_data JSON,
+ADD INDEX idx_orders_capacity_check (capacity_check_passed);
+
+-- Create view for driver daily capacity
+CREATE VIEW driver_daily_capacity AS
+SELECT 
+    d.driver_id,
+    d.date,
+    d.vehicle_max_weight,
+    d.vehicle_max_volume,
+    d.orders_accepted,
+    d.orders_completed,
+    d.total_weight_carried,
+    d.total_volume_carried,
+    d.capacity_utilization,
+    d.efficiency_score,
+    
+    -- Calculate remaining capacity
+    (d.vehicle_max_weight - d.total_weight_carried) as remaining_weight,
+    (d.vehicle_max_volume - d.total_volume_carried) as remaining_volume,
+    
+    -- Calculate utilization percentages
+    (d.total_weight_carried / d.vehicle_max_weight * 100) as weight_utilization_percent,
+    (d.total_volume_carried / d.vehicle_max_volume * 100) as volume_utilization_percent,
+    
+    -- Recommendations
+    CASE 
+        WHEN (d.total_weight_carried / d.vehicle_max_weight * 100) > 90 THEN 'Weight capacity nearly full'
+        WHEN (d.total_volume_carried / d.vehicle_max_volume * 100) > 90 THEN 'Volume capacity nearly full'
+        ELSE 'Capacity available'
+    END as capacity_status
+    
+FROM driver_capacity_tracking d
+WHERE d.date = CURDATE();
+
 -- Create view for order progress
 CREATE VIEW order_progress_view AS
 SELECT 
