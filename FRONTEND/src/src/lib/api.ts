@@ -333,28 +333,6 @@ export const driverApi = {
     return makeRequest('/api/drivers/status', 'PATCH', data, 'driver');
   },
 
- /*
-  updateLocation: async (data: { location: string }) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/drivers/location`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getToken()}`,
-        },
-        body: JSON.stringify(data),
-      });
-
-      const result = await response.json();
-      return result;
-    } catch (error) {
-      console.error('Error updating location:', error);
-      return {
-        success: false,
-        error: 'Failed to update location'
-      };
-    }
-  },*/
 
   // Vehicles
   getVehicles: async () => {

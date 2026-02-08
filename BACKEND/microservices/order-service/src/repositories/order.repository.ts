@@ -692,6 +692,53 @@ export class OrderRepository {
     }
   }
 
+  // Add this method to your OrderRepository class in order.repository.ts:
+async findByDriverIdWithStatus(
+  driverId: string, 
+  statuses: string[]
+): Promise<Order[]> {
+  try {
+    if (statuses.length === 0) {
+      return [];
+    }
+    
+    const placeholders = statuses.map(() => '?').join(',');
+    const sql = `
+      SELECT * FROM orders 
+      WHERE driver_id = ? 
+        AND status IN (${placeholders})
+      ORDER BY created_at ASC
+    `;
+    
+    const params = [driverId, ...statuses];
+    return await db.query<Order>(sql, params);
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to find orders by driver ID with statuses:', errorMessage);
+    throw error;
+  }
+}
+
+// Add this method to check for column existence (for compatibility)
+async columnExists(tableName: string, columnName: string): Promise<boolean> {
+  try {
+    const sql = `
+      SELECT COUNT(*) as exists_flag
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+    `;
+    
+    const result = await db.queryOne<{ exists_flag: number }>(sql, [tableName, columnName]);
+    return result?.exists_flag === 1;
+  } catch (error) {
+    this.logger.warn(`Could not check if column ${columnName} exists in ${tableName}`);
+    return false;
+  }
+}
+
   async getOrderStatistics(customerId?: string, driverId?: string): Promise<{
     totalOrders: number;
     completedOrders: number;

@@ -178,6 +178,86 @@ export class CapacityOptimizationService {
     }
   }
 
+  async canDriverAcceptMultipleOrders(
+    driverId: string,
+    orders: Array<{
+      weight: number;
+      volume: number;
+      orderId: string;
+    }>
+  ): Promise<{
+    canAccept: boolean;
+    capacityCheck: any;
+    recommendations: string[];
+  }> {
+    try {
+      const vehicleCapacity = await this.getDriverVehicleCapacity(driverId);
+      
+      if (!vehicleCapacity) {
+        return {
+          canAccept: false,
+          capacityCheck: null,
+          recommendations: ['Vehicle capacity information not available']
+        };
+      }
+      
+      // Calculate total requirements
+      const totalWeight = orders.reduce((sum, order) => sum + order.weight, 0);
+      const totalVolume = orders.reduce((sum, order) => sum + order.volume, 0);
+      const totalOrders = orders.length;
+      
+      // Check against capacity
+      const weightPasses = (vehicleCapacity.currentWeight + totalWeight) <= vehicleCapacity.maxWeight;
+      const volumePasses = (vehicleCapacity.currentVolume + totalVolume) <= vehicleCapacity.maxVolume;
+      const ordersPasses = (vehicleCapacity.currentOrders + totalOrders) <= vehicleCapacity.maxOrders;
+      
+      const canAccept = weightPasses && volumePasses && ordersPasses;
+      
+      const recommendations: string[] = [];
+      if (!canAccept) {
+        if (!weightPasses) {
+          recommendations.push(`Total weight ${totalWeight}kg exceeds available capacity`);
+        }
+        if (!volumePasses) {
+          recommendations.push(`Total volume ${totalVolume}m³ exceeds available capacity`);
+        }
+        if (!ordersPasses) {
+          recommendations.push(`Too many orders (${totalOrders}) for current capacity`);
+        }
+      }
+      
+      return {
+        canAccept,
+        capacityCheck: {
+          weight: {
+            current: vehicleCapacity.currentWeight,
+            additional: totalWeight,
+            max: vehicleCapacity.maxWeight,
+            passes: weightPasses
+          },
+          volume: {
+            current: vehicleCapacity.currentVolume,
+            additional: totalVolume,
+            max: vehicleCapacity.maxVolume,
+            passes: volumePasses
+          },
+          orders: {
+            current: vehicleCapacity.currentOrders,
+            additional: totalOrders,
+            max: vehicleCapacity.maxOrders,
+            passes: ordersPasses
+          }
+        },
+        recommendations
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Multiple orders capacity check failed:', errorMessage);
+      throw error;
+    }
+  }
+
   // Get driver's vehicle capacity
   private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
     try {

@@ -1,159 +1,74 @@
 import express from 'express';
-import { OrderController } from '../controllers/order.controller';
-import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer } from '../middleware/auth.middleware';
-import { validate, validationSchemas } from '../middleware/validation.middleware';
-import { validateOrderCapacity } from '../middleware/capacity.middleware';
-import { verifyCustomerBalance, validatePaymentMethod, verifyServiceSecret } from '../middleware/payment.middleware';
-import multer from 'multer';
-import Joi from 'joi';
+import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
+import { orderController } from '../controllers/order.controller';
 
 const router = express.Router();
-const orderController = new OrderController();
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760') // 10MB default
-  }
-});
-
-// Extended validation schemas
-const extendedValidationSchemas = {
-  ...validationSchemas,
-  message: {
-    send: Joi.object({
-      content: Joi.string().required().max(1000),
-      messageType: Joi.string().valid('text', 'location', 'image', 'status_update').default('text'),
-      metadata: Joi.object()
-    })
-  },
-  location: {
-    update: Joi.object({
-      latitude: Joi.number().required().min(-90).max(90),
-      longitude: Joi.number().required().min(-180).max(180),
-      speed: Joi.number().optional().min(0),
-      bearing: Joi.number().optional().min(0).max(360),
-      accuracy: Joi.number().optional().min(0)
-    })
-  }
-};
 
 /**
  * @swagger
- * /orders:
+ * /orders/receive:
  *   post:
- *     summary: Create a new order
- *     description: Create a new delivery order with pickup and delivery details
+ *     summary: Receive order from external service
+ *     description: External service sends complete order with driver assigned
  *     tags: [Orders]
  *     security:
- *       - BearerAuth: []
+ *       - ServiceSecret: []
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/CreateOrderRequest'
- *     responses:
- *       201:
- *         description: Order created successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders',
-  authenticate,
-  authorizeCustomer,
-  validateOrderCapacity,
-  verifyCustomerBalance,
-  validate(validationSchemas.order.create),
-  orderController.createOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/bulk:
- *   post:
- *     summary: Create multiple orders in bulk
- *     description: Create multiple orders at once (max 100 orders per request)
- *     tags: [Bulk]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/BulkOrderRequest'
- *     responses:
- *       200:
- *         description: Bulk orders processed
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 message:
- *                   type: string
- *                 data:
- *                   type: object
- *                   properties:
- *                     successful:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Order'
- *                     failed:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           data:
- *                             type: object
- *                           error:
- *                             type: string
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders/bulk',
-  authenticate,
-  authorizeCustomer,
-  validate(validationSchemas.order.bulk),
-  orderController.createBulkOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/upload:
- *   post:
- *     summary: Upload Excel file for bulk orders
- *     description: Upload an Excel file containing multiple orders for batch processing
- *     tags: [Bulk]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required:
+ *               - orderId
+ *               - customerInfo
+ *               - driverInfo
  *             properties:
- *               file:
+ *               orderId:
  *                 type: string
- *                 format: binary
- *                 description: Excel file (.xlsx) with order data
+ *                 example: "ORD-1770553176518-8cpawr9wa"
+ *               customerInfo:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   name:
+ *                     type: string
+ *                   email:
+ *                     type: string
+ *                   phone:
+ *                     type: string
+ *                   userType:
+ *                     type: string
+ *                     enum: [customer]
+ *               driverInfo:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   name:
+ *                     type: string
+ *                   email:
+ *                     type: string
+ *                   phone:
+ *                     type: string
+ *                   rating:
+ *                     type: number
+ *                   matchScore:
+ *                     type: number
+ *               locations:
+ *                 type: object
+ *               packageDetails:
+ *                 type: object
+ *               vehicleInfo:
+ *                 type: object
+ *               pricing:
+ *                 type: object
+ *               timing:
+ *                 type: object
  *     responses:
- *       200:
- *         description: Excel file processed successfully
+ *       202:
+ *         description: Order received and processing started
  *         content:
  *           application/json:
  *             schema:
@@ -161,124 +76,18 @@ router.post('/orders/bulk',
  *               properties:
  *                 success:
  *                   type: boolean
+ *                 order:
+ *                   type: object
  *                 message:
  *                   type: string
- *                 data:
- *                   type: object
- *                   properties:
- *                     successful:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Order'
- *                     failed:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           data:
- *                             type: object
- *                           error:
- *                             type: string
  *       400:
  *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       413:
- *         description: File too large (max 10MB)
- */
-router.post('/orders/upload',
-  authenticate,
-  authorizeCustomer,
-  upload.single('file'),
-  orderController.uploadExcel.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders:
- *   get:
- *     summary: Get orders with filters
- *     description: Retrieve orders based on user role and filters
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
- *         description: Filter by order status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of items per page
- *     responses:
- *       200:
- *         description: Orders retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       500:
- *         description: Server error
- */
-router.get('/orders',
-  authenticate,
-  orderController.getOrders.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}:
- *   get:
- *     summary: Get order details by ID
- *     description: Retrieve detailed information about a specific order
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *       - in: query
- *         name: optimize
- *         schema:
- *           type: boolean
- *           default: false
- *         description: Include knapsack optimization data
- *     responses:
- *       200:
- *         description: Order retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       404:
- *         $ref: '#/components/responses/NotFound'
- *       401:
+ *       403:
  *         $ref: '#/components/responses/Unauthorized'
  */
-router.get('/orders/:id',
-  authenticate,
-  orderController.getOrder.bind(orderController)
+router.post('/orders/receive',
+  verifyServiceSecret,
+  orderController.receiveOrder.bind(orderController)
 );
 
 /**
@@ -296,21 +105,25 @@ router.get('/orders/:id',
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
+ *         description: Order ID or order number
  *     responses:
  *       200:
  *         description: Order accepted successfully
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Order'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 order:
+ *                   type: object
+ *                 message:
+ *                   type: string
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- *       403:
- *         description: Driver not assigned to this order
  */
 router.post('/orders/:id/accept',
   authenticate,
@@ -320,10 +133,10 @@ router.post('/orders/:id/accept',
 
 /**
  * @swagger
- * /orders/{id}/start:
+ * /orders/{id}/reject:
  *   post:
- *     summary: Start order pickup
- *     description: Driver starts the pickup process for an accepted order
+ *     summary: Driver rejects an order
+ *     description: Driver rejects an assigned order
  *     tags: [Driver]
  *     security:
  *       - BearerAuth: []
@@ -333,40 +146,38 @@ router.post('/orders/:id/accept',
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
+ *         description: Order ID or order number
  *     requestBody:
- *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/LocationUpdateRequest'
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 description: Reason for rejection
+ *                 example: "Too far from current location"
  *     responses:
  *       200:
- *         description: Pickup started successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
+ *         description: Order rejected successfully
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
-router.post('/orders/:id/start',
+router.post('/orders/:id/reject',
   authenticate,
   authorizeDriver,
-  validate(extendedValidationSchemas.location.update),
-  orderController.startPickup.bind(orderController)
+  orderController.rejectOrder.bind(orderController)
 );
 
 /**
  * @swagger
- * /orders/{id}/location:
- *   post:
- *     summary: Update driver location during order delivery
- *     description: Update driver's current location during order delivery for real-time tracking
- *     tags: [Driver]
+ * /orders/{id}/progress:
+ *   get:
+ *     summary: Get order with full progress tracking
+ *     description: Get order details including progress bar, tracking, and messages
+ *     tags: [Orders, Customer, Driver]
  *     security:
  *       - BearerAuth: []
  *     parameters:
@@ -375,69 +186,10 @@ router.post('/orders/:id/start',
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/LocationUpdateRequest'
+ *         description: Order ID or order number
  *     responses:
  *       200:
- *         description: Location updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 eta:
- *                   type: number
- *                   description: Estimated time of arrival in minutes
- *                 remaining_distance_km:
- *                   type: number
- *                 order_id:
- *                   type: string
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders/:id/location',
-  authenticate,
-  authorizeDriver,
-  validate(extendedValidationSchemas.location.update),
-  orderController.updateLocation.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}/complete:
- *   post:
- *     summary: Complete order
- *     description: Mark order as delivered and process payment
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/CompleteOrderRequest'
- *     responses:
- *       200:
- *         description: Order completed successfully
+ *         description: Order details with progress retrieved successfully
  *         content:
  *           application/json:
  *             schema:
@@ -446,34 +198,37 @@ router.post('/orders/:id/location',
  *                 success:
  *                   type: boolean
  *                 order:
- *                   $ref: '#/components/schemas/Order'
- *                 payment:
  *                   type: object
- *                   properties:
- *                     success:
- *                       type: boolean
- *                     message:
- *                       type: string
+ *                 progress:
+ *                   type: object
+ *                 messages:
+ *                   type: array
+ *                 tracking:
+ *                   type: array
+ *                 driverLocation:
+ *                   type: object
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
  */
-router.post('/orders/:id/complete',
+router.get('/orders/:id/progress',
   authenticate,
-  authorizeDriver,
-  validatePaymentMethod,
-  validate(validationSchemas.order.complete),
-  orderController.completeOrder.bind(orderController)
+  authorizeDriverOrCustomer,
+  orderController.getOrderWithProgress.bind(orderController)
 );
 
 /**
  * @swagger
- * /orders/{id}/cancel:
- *   post:
- *     summary: Cancel an order
- *     description: Cancel an order (customer or driver can cancel based on permissions)
- *     tags: [Orders]
+ * /orders/{id}/status:
+ *   patch:
+ *     summary: Update order status (driver only)
+ *     description: Driver updates order status through the workflow (driver_enroute, pickup_started, in_transit, delivered, completed)
+ *     tags: [Driver]
  *     security:
  *       - BearerAuth: []
  *     parameters:
@@ -482,89 +237,149 @@ router.post('/orders/:id/complete',
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
+ *         description: Order ID or order number
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/CancelOrderRequest'
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [driver_enroute, pickup_started, in_transit, delivered, completed]
+ *                 example: "in_transit"
+ *               location:
+ *                 type: object
+ *                 properties:
+ *                   latitude:
+ *                     type: number
+ *                     example: 59.925209
+ *                   longitude:
+ *                     type: number
+ *                     example: 30.341745
  *     responses:
  *       200:
- *         description: Order cancelled successfully
+ *         description: Order status updated successfully
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+router.patch('/orders/:id/status',
+  authenticate,
+  authorizeDriver,
+  orderController.updateOrderStatus.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /driver/route/optimized:
+ *   get:
+ *     summary: Get driver's optimized route for multiple orders
+ *     description: Returns optimized route using TSP algorithm for driver's active orders
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Optimized route retrieved successfully
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/Order'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 route:
+ *                   type: object
+ *                   properties:
+ *                     driverId:
+ *                       type: string
+ *                     optimizedSequence:
+ *                       type: array
+ *                     totalDistance:
+ *                       type: number
+ *                     totalDuration:
+ *                       type: number
+ *                     estimatedSavings:
+ *                       type: object
+ *                     polyline:
+ *                       type: string
+ *                     orders:
+ *                       type: array
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+router.get('/driver/route/optimized',
+  authenticate,
+  authorizeDriver,
+  orderController.getOptimizedRoute.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /orders/{id}/tracking:
+ *   get:
+ *     summary: Get order tracking data
+ *     description: Get real-time tracking points for an order
+ *     tags: [Orders, Customer, Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID or order number
+ *     responses:
+ *       200:
+ *         description: Tracking data retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       latitude:
+ *                         type: number
+ *                       longitude:
+ *                         type: number
+ *                       timestamp:
+ *                         type: string
+ *                         format: date-time
+ *                       speed:
+ *                         type: number
+ *                       bearing:
+ *                         type: number
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  *       403:
- *         description: Permission denied
+ *         $ref: '#/components/responses/Forbidden'
  */
-router.post('/orders/:id/cancel',
+router.get('/orders/:id/tracking',
   authenticate,
-  validate(validationSchemas.order.cancel),
-  orderController.cancelOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /driver/orders:
- *   get:
- *     summary: Get driver's orders
- *     description: Retrieve orders assigned to the authenticated driver
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
- *         description: Filter by order status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of items per page
- *     responses:
- *       200:
- *         description: Driver orders retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       500:
- *         description: Server error
- */
-router.get('/driver/orders',
-  authenticate,
-  authorizeDriver,
-  orderController.getDriverOrders.bind(orderController)
+  authorizeDriverOrCustomer,
+  orderController.getOrderTracking.bind(orderController)
 );
 
 /**
  * @swagger
  * /customer/orders:
  *   get:
- *     summary: Get customer's orders
- *     description: Retrieve orders belonging to the authenticated customer
+ *     summary: Get customer orders with progress
+ *     description: Get all orders for a customer with progress tracking
  *     tags: [Customer]
  *     security:
  *       - BearerAuth: []
@@ -573,7 +388,6 @@ router.get('/driver/orders',
  *         name: status
  *         schema:
  *           type: string
- *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
  *         description: Filter by order status
  *       - in: query
  *         name: page
@@ -581,7 +395,7 @@ router.get('/driver/orders',
  *           type: integer
  *           minimum: 1
  *           default: 1
- *         description: Page number for pagination
+ *         description: Page number
  *       - in: query
  *         name: limit
  *         schema:
@@ -589,18 +403,23 @@ router.get('/driver/orders',
  *           minimum: 1
  *           maximum: 100
  *           default: 20
- *         description: Number of items per page
+ *         description: Items per page
  *     responses:
  *       200:
  *         description: Customer orders retrieved successfully
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 orders:
+ *                   type: array
+ *                 pagination:
+ *                   type: object
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- *       500:
- *         description: Server error
  */
 router.get('/customer/orders',
   authenticate,
@@ -610,11 +429,66 @@ router.get('/customer/orders',
 
 /**
  * @swagger
- * /tracking/{id}:
+ * /driver/orders:
  *   get:
- *     summary: Get order tracking
- *     description: Get real-time tracking information for an order
- *     tags: [Tracking]
+ *     summary: Get driver orders
+ *     description: Get all orders for a driver
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: Driver orders retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 orders:
+ *                   type: array
+ *                 optimization:
+ *                   type: object
+ *                 pagination:
+ *                   type: object
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+router.get('/driver/orders',
+  authenticate,
+  authorizeDriver,
+  orderController.getDriverOrders.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /orders/{id}/messages:
+ *   post:
+ *     summary: Send message to driver/customer
+ *     description: Send in-app message between customer and driver
+ *     tags: [Messages]
  *     security:
  *       - BearerAuth: []
  *     parameters:
@@ -623,47 +497,217 @@ router.get('/customer/orders',
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
+ *         description: Order ID or order number
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - content
+ *             properties:
+ *               content:
+ *                 type: string
+ *                 maxLength: 1000
+ *                 example: "Hello, where are you?"
+ *               messageType:
+ *                 type: string
+ *                 enum: [text, location, image, status_update]
+ *                 default: text
+ *               metadata:
+ *                 type: object
  *     responses:
  *       200:
- *         description: Tracking data retrieved
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/TrackingData'
+ *         description: Message sent successfully
  *       400:
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- *       403:
- *         description: Access denied to this order
  */
-router.get('/tracking/:id',
+router.post('/orders/:id/messages',
   authenticate,
-  orderController.getTracking.bind(orderController)
+  authorizeDriverOrCustomer,
+  orderController.sendMessage.bind(orderController)
 );
 
 /**
  * @swagger
- * /internal/match/{id}:
- *   post:
- *     summary: Match order (internal use)
- *     description: Internal endpoint to trigger order-driver matching
- *     tags: [Orders]
+ * /orders/{id}/messages:
+ *   get:
+ *     summary: Get order messages
+ *     description: Get all messages for an order
+ *     tags: [Messages]
  *     security:
- *       - ServiceSecret: []
+ *       - BearerAuth: []
  *     parameters:
  *       - in: path
  *         name: id
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
+ *         description: Order ID or order number
  *     responses:
  *       200:
- *         description: Order matching initiated
+ *         description: Messages retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 messages:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       senderType:
+ *                         type: string
+ *                       senderName:
+ *                         type: string
+ *                       content:
+ *                         type: string
+ *                       createdAt:
+ *                         type: string
+ *                         format: date-time
+ *                       readStatus:
+ *                         type: boolean
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       403:
+ *         $ref: '#/components/responses/Forbidden'
+ */
+router.get('/orders/:id/messages',
+  authenticate,
+  authorizeDriverOrCustomer,
+  orderController.getMessages.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /orders/{id}/rate:
+ *   post:
+ *     summary: Rate driver after order delivery
+ *     description: Customer rates driver after delivery (rating = (current + new) / 2)
+ *     tags: [Orders]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Order ID or order number
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - rating
+ *             properties:
+ *               rating:
+ *                 type: number
+ *                 minimum: 1
+ *                 maximum: 5
+ *                 example: 5
+ *               review:
+ *                 type: string
+ *                 example: "Excellent service!"
+ *     responses:
+ *       200:
+ *         description: Driver rated successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 newAverageRating:
+ *                   type: number
+ *                 message:
+ *                   type: string
+ *       400:
+ *         $ref: '#/components/responses/BadRequest'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+router.post('/orders/:id/rate',
+  authenticate,
+  authorizeCustomer,
+  orderController.rateDriver.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /balance:
+ *   get:
+ *     summary: Get user balance
+ *     description: Get customer or driver balance information
+ *     tags: [Customer, Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Balance retrieved successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 balance:
+ *                   type: object
+ *                   properties:
+ *                     userId:
+ *                       type: string
+ *                     userType:
+ *                       type: string
+ *                     availableBalance:
+ *                       type: number
+ *                     pendingBalance:
+ *                       type: number
+ *                     thisWeekSpent:
+ *                       type: number
+ *                     thisWeekEarned:
+ *                       type: number
+ *                     totalEarned:
+ *                       type: number
+ *                     totalSpent:
+ *                       type: number
+ *                     currency:
+ *                       type: string
+ *                 recentTransactions:
+ *                   type: array
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+router.get('/balance',
+  authenticate,
+  orderController.getBalance.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /driver/route/optimize:
+ *   post:
+ *     summary: Optimize driver route for multiple orders
+ *     description: Trigger manual route optimization for driver's active orders
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Route optimization triggered
  *         content:
  *           application/json:
  *             schema:
@@ -673,150 +717,121 @@ router.get('/tracking/:id',
  *                   type: boolean
  *                 message:
  *                   type: string
- *                 data:
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ */
+router.post('/driver/route/optimize',
+  authenticate,
+  authorizeDriver,
+  orderController.optimizeRoute.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /driver/orders/optimized:
+ *   get:
+ *     summary: Get driver orders with optimization
+ *     description: Get driver orders with route optimization data
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: Orders with optimization data retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 orders:
+ *                   type: array
+ *                 optimization:
  *                   type: object
- *                   properties:
- *                     order_id:
- *                       type: string
- *                     driver_id:
- *                       type: string
- *       403:
- *         description: Invalid service secret
- *       500:
- *         description: Failed to match order
- */
-router.post('/internal/match/:id',
-  verifyServiceSecret,
-  orderController.matchOrder.bind(orderController)
-);
-
-// Add these routes (for future implementation)
-
-/**
- * @swagger
- * /orders/{id}/messages:
- *   post:
- *     summary: Send message to driver/customer
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/MessageRequest'
- *     responses:
- *       200:
- *         description: Message sent successfully
+ *                 pagination:
+ *                   type: object
  *       401:
- *         description: Unauthorized
- *       403:
- *         description: Access denied to this order
+ *         $ref: '#/components/responses/Unauthorized'
  */
-router.post('/orders/:id/messages',
+router.get('/driver/orders/optimized',
   authenticate,
-  authorizeDriverOrCustomer,
-  validate(extendedValidationSchemas.message.send),
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
+  authorizeDriver,
+  orderController.getDriverOrders.bind(orderController)
 );
 
 /**
  * @swagger
- * /orders/{id}/messages:
+ * /customer/orders/with-tracking:
  *   get:
- *     summary: Get order messages
- *     tags: [Orders]
+ *     summary: Get customer orders with tracking data
+ *     description: Get customer orders with real-time tracking information
+ *     tags: [Customer]
  *     security:
  *       - BearerAuth: []
  *     parameters:
- *       - in: path
- *         name: id
- *         required: true
+ *       - in: query
+ *         name: status
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Messages retrieved successfully
- *       401:
- *         description: Unauthorized
- */
-router.get('/orders/:id/messages',
-  authenticate,
-  authorizeDriverOrCustomer,
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
-);
-
-/**
- * @swagger
- * /messages/unread:
- *   get:
- *     summary: Get unread message count
- *     tags: [Messages]
- *     security:
- *       - BearerAuth: []
- *     responses:
- *       200:
- *         description: Unread count retrieved
- *       401:
- *         description: Unauthorized
- */
-router.get('/messages/unread',
-  authenticate,
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
-);
-
-/**
- * @swagger
- * /messages/{id}/read:
- *   patch:
- *     summary: Mark message as read
- *     tags: [Messages]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
  *         schema:
- *           type: string
- *           format: uuid
- *         description: Message ID
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page
  *     responses:
  *       200:
- *         description: Message marked as read
+ *         description: Orders with tracking data retrieved
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 orders:
+ *                   type: array
+ *                 pagination:
+ *                   type: object
  *       401:
- *         description: Unauthorized
+ *         $ref: '#/components/responses/Unauthorized'
  */
-router.patch('/messages/:id/read',
+router.get('/customer/orders/with-tracking',
   authenticate,
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
+  authorizeCustomer,
+  orderController.getCustomerOrders.bind(orderController)
 );
 
 export default router;

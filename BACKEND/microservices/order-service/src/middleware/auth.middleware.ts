@@ -143,3 +143,28 @@ export const optionalAuth = (
     next();
   }
 };
+
+export const verifyServiceSecret = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Response | void => {
+  const serviceSecret = req.headers['x-service-secret'];
+  
+  if (!serviceSecret) {
+    return ResponseUtil.unauthorized(res, 'Service secret required');
+  }
+  
+  const validSecret = process.env.SERVICE_SECRET;
+  
+  if (!validSecret) {
+    logger.error('SERVICE_SECRET not configured');
+    return ResponseUtil.error(res, 'Server configuration error', 500);
+  }
+  
+  if (serviceSecret !== validSecret) {
+    return ResponseUtil.unauthorized(res, 'Invalid service secret');
+  }
+  
+  next();
+};

@@ -37,7 +37,8 @@ src
     ├── httpClient.ts
     ├── logger.ts
     ├── response.util.ts
-    └── validation.util.ts
+    ├── validation.util.ts
+    └── websocket.util.ts
 
 ```
 
@@ -744,111 +745,98 @@ export class OrderController {
     this.orderService = new OrderService();
   }
   
-  async createOrder(req: Request, res: Response) {
+  // New endpoint to receive order from external service
+  async receiveOrder(req: Request, res: Response) {
     try {
-      const userId = req.user!.userId;
-      const order = await this.orderService.createOrder(userId, req.body);
+      this.logger.info('Receiving order from external service:', req.body.orderId);
       
-      return ResponseUtil.success(
-        res,
-        order,
-        'Order created successfully',
-        201
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Create order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to create order', 400, errorMessage);
-    }
-  }
-  
-  async createBulkOrder(req: Request, res: Response) {
-    try {
-      const userId = req.user!.userId;
-      const result = await this.orderService.createBulkOrder(userId, req.body.orders);
-      
-      return ResponseUtil.success(
-        res,
-        result,
-        `Bulk orders processed: ${result.successful?.length || 0} successful, ${result.failed?.length || 0} failed`
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Create bulk order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to process bulk orders', 400, errorMessage);
-    }
-  }
-  
-  async uploadExcel(req: Request, res: Response) {
-    try {
-      const userId = req.user!.userId;
-      
-      if (!req.file) {
-        return ResponseUtil.error(res, 'No file uploaded', 400);
+      // Validate the incoming order structure
+      if (!req.body.orderId || !req.body.customerInfo || !req.body.driverInfo) {
+        return ResponseUtil.error(res, 'Invalid order structure', 400);
       }
       
-      const result = await this.orderService.processExcelUpload(userId, req.file.buffer);
+      // Process the order
+      const result = await this.orderService.createOrderFromRequest(req.body);
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Excel file processed successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Upload Excel error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to process Excel file', 400, errorMessage);
-    }
-  }
-  
-  async getOrders(req: Request, res: Response) {
-    try {
-      const userId = req.user!.userId;
-      const userType = req.user!.userType;
-      const { status, page, limit } = req.query;
-      
-      let result;
-      if (userType === 'driver') {
-        result = await this.orderService.getDriverOrders(
-          userId,
-          status as string,
-          parseInt(page as string) || 1,
-          parseInt(limit as string) || 20
-        );
-      } else if (userType === 'customer') {
-        result = await this.orderService.getCustomerOrders(
-          userId,
-          status as string,
-          parseInt(page as string) || 1,
-          parseInt(limit as string) || 20
-        );
-      } else {
-        // Admin or other user types
-        result = await this.orderService.getAllOrders(
-          status as string,
-          parseInt(page as string) || 1,
-          parseInt(limit as string) || 20
-        );
+      if (!result.success) {
+        return ResponseUtil.error(res, result.message, 400, {
+          reason: result.reason,
+          recommendations: result.recommendations
+        });
       }
       
       return ResponseUtil.success(
         res,
         result,
-        'Orders retrieved successfully'
+        'Order received and processing started',
+        202 // Accepted
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Get orders error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get orders', 500, errorMessage);
+      this.logger.error('Receive order error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to process order', 500, errorMessage);
     }
   }
-
+  
+  // Driver accepts order
+  async acceptOrder(req: Request, res: Response) {
+    try {
+      const orderId = req.params.id;
+      const driverId = req.user!.userId;
+      
+      const result = await this.orderService.acceptOrder(orderId, driverId);
+      
+      return ResponseUtil.success(
+        res,
+        result,
+        'Order accepted successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Accept order error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to accept order', 400, errorMessage);
+    }
+  }
+  
+  // Driver rejects order
+  async rejectOrder(req: Request, res: Response) {
+    try {
+      const orderId = req.params.id;
+      const driverId = req.user!.userId;
+      const { reason } = req.body;
+      
+      const result = await this.orderService.rejectOrder(orderId, driverId, reason);
+      
+      return ResponseUtil.success(
+        res,
+        result,
+        'Order rejected successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Reject order error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to reject order', 400, errorMessage);
+    }
+  }
+  
+  // Get order details (for both customer and driver)
   async getOrder(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
       const includeOptimization = req.query.optimize === 'true';
+      const userId = req.user!.userId;
+      const userType = req.user!.userType;
       
       const order = await this.orderService.getOrder(orderId, includeOptimization);
+      
+      // Verify access
+      if (userType === 'customer' && order.customerInfo.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
+      
+      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
       
       return ResponseUtil.success(
         res,
@@ -861,136 +849,108 @@ export class OrderController {
       return ResponseUtil.error(res, 'Failed to get order', 404, errorMessage);
     }
   }
-
-  async acceptOrder(req: Request, res: Response) {
+  
+  // Send message
+  async sendMessage(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
-      const driverId = req.user!.userId;
+      const senderId = req.user!.userId;
+      const senderType = req.user!.userType;
+      const { content, messageType, metadata } = req.body;
       
-      const order = await this.orderService.acceptOrder(orderId, driverId);
-      
-      return ResponseUtil.success(
-        res,
-        order,
-        'Order accepted successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Accept order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to accept order', 400, errorMessage);
-    }
-  }
-
-  async startPickup(req: Request, res: Response) {
-    try {
-      const orderId = req.params.id;
-      const driverId = req.user!.userId;
-      const { latitude, longitude } = req.body;
-      
-      const order = await this.orderService.startPickup(orderId, driverId, { latitude, longitude });
-      
-      return ResponseUtil.success(
-        res,
-        order,
-        'Pickup started successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Start pickup error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to start pickup', 400, errorMessage);
-    }
-  }
-
-  async updateLocation(req: Request, res: Response) {
-    try {
-      const orderId = req.params.id;
-      const driverId = req.user!.userId;
-      const location = req.body;
-      
-      const result = await this.orderService.updateLocation(orderId, driverId, location);
-      
-      return ResponseUtil.success(
-        res,
-        result,
-        'Location updated successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Update location error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to update location', 400, errorMessage);
-    }
-  }
-
-  async completeOrder(req: Request, res: Response) {
-    try {
-      const orderId = req.params.id;
-      const driverId = req.user!.userId;
-      const { payment_method, proof_image, delivery_notes } = req.body;
-      
-      const result = await this.orderService.completeOrder(
-        orderId, 
-        driverId, 
-        payment_method, 
-        { proof_image, delivery_notes }
+      const result = await this.orderService.sendMessage(
+        orderId,
+        senderId,
+        senderType,
+        content,
+        messageType,
+        metadata
       );
       
       return ResponseUtil.success(
         res,
         result,
-        'Order completed successfully'
+        'Message sent successfully'
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Complete order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to complete order', 400, errorMessage);
+      this.logger.error('Send message error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to send message', 400, errorMessage);
     }
   }
-
-  async cancelOrder(req: Request, res: Response) {
+  
+  // Get order messages
+  async getMessages(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
       const userId = req.user!.userId;
       const userType = req.user!.userType;
-      const { reason } = req.body;
       
-      const order = await this.orderService.cancelOrder(orderId, userId, userType, reason);
+      // Get order to verify access
+      const order = await this.orderService.getOrder(orderId, false);
+      
+      if (userType === 'customer' && order.customerInfo.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
+      
+      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
       
       return ResponseUtil.success(
         res,
-        order,
-        'Order cancelled successfully'
+        order.messages,
+        'Messages retrieved successfully'
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Cancel order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to cancel order', 400, errorMessage);
+      this.logger.error('Get messages error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to get messages', 400, errorMessage);
     }
   }
-
-  async getDriverOrders(req: Request, res: Response) {
+  
+  // Rate driver
+  async rateDriver(req: Request, res: Response) {
     try {
-      const driverId = req.user!.userId;
-      const { status, page, limit } = req.query;
+      const orderId = req.params.id;
+      const customerId = req.user!.userId;
+      const { rating, review } = req.body;
       
-      const result = await this.orderService.getDriverOrders(
-        driverId,
-        status as string,
-        parseInt(page as string) || 1,
-        parseInt(limit as string) || 20
-      );
+      const result = await this.orderService.rateDriver(orderId, customerId, rating, review);
       
       return ResponseUtil.success(
         res,
         result,
-        'Driver orders retrieved successfully'
+        'Driver rated successfully'
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Get driver orders error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get driver orders', 500, errorMessage);
+      this.logger.error('Rate driver error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to rate driver', 400, errorMessage);
     }
   }
-
+  
+  // Get user balance
+  async getBalance(req: Request, res: Response) {
+    try {
+      const userId = req.user!.userId;
+      const userType = req.user!.userType;
+      
+      const result = await this.orderService.getUserBalance(userId, userType);
+      
+      return ResponseUtil.success(
+        res,
+        result,
+        'Balance retrieved successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get balance error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to get balance', 500, errorMessage);
+    }
+  }
+  
+  // Get customer orders
   async getCustomerOrders(req: Request, res: Response) {
     try {
       const customerId = req.user!.userId;
@@ -1014,29 +974,53 @@ export class OrderController {
       return ResponseUtil.error(res, 'Failed to get customer orders', 500, errorMessage);
     }
   }
-
+  
+  // Get driver orders
+  async getDriverOrders(req: Request, res: Response) {
+    try {
+      const driverId = req.user!.userId;
+      const { status, page, limit } = req.query;
+      
+      const result = await this.orderService.getDriverOrders(
+        driverId,
+        status as string,
+        parseInt(page as string) || 1,
+        parseInt(limit as string) || 20
+      );
+      
+      return ResponseUtil.success(
+        res,
+        result,
+        'Driver orders retrieved successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get driver orders error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to get driver orders', 500, errorMessage);
+    }
+  }
+  
+  // Get order tracking
   async getTracking(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
       const userId = req.user!.userId;
       const userType = req.user!.userType;
       
-      // Check if user has access to this order
+      // Get order to verify access
       const order = await this.orderService.getOrder(orderId, false);
       
-      if (userType === 'customer' && order.customer_id !== userId) {
+      if (userType === 'customer' && order.customerInfo.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      if (userType === 'driver' && order.driver_id !== userId) {
+      if (userType === 'driver' && order.driverInfo?.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
-      
-      const trackingData = await this.orderService.getOrderTracking(orderId);
       
       return ResponseUtil.success(
         res,
-        trackingData,
+        order.tracking,
         'Tracking data retrieved'
       );
     } catch (error: unknown) {
@@ -1045,22 +1029,23 @@ export class OrderController {
       return ResponseUtil.error(res, 'Failed to get tracking data', 400, errorMessage);
     }
   }
-
-  async matchOrder(req: Request, res: Response) {
+  
+  // Optimize driver route
+  async optimizeRoute(req: Request, res: Response) {
     try {
-      const orderId = req.params.id;
+      const driverId = req.user!.userId;
       
-      const result = await this.orderService.matchOrder(orderId);
-      
+      // This would trigger re-optimization
+      // In practice, optimization happens automatically when driver accepts new orders
       return ResponseUtil.success(
         res,
-        result,
-        'Order matching initiated'
+        { message: 'Route optimization is automatic when accepting new orders' },
+        'Route optimization info'
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Match order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to match order', 500, errorMessage);
+      this.logger.error('Optimize route error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to optimize route', 500, errorMessage);
     }
   }
 }
@@ -2295,6 +2280,53 @@ export class OrderRepository {
     }
   }
 
+  // Add this method to your OrderRepository class in order.repository.ts:
+async findByDriverIdWithStatus(
+  driverId: string, 
+  statuses: string[]
+): Promise<Order[]> {
+  try {
+    if (statuses.length === 0) {
+      return [];
+    }
+    
+    const placeholders = statuses.map(() => '?').join(',');
+    const sql = `
+      SELECT * FROM orders 
+      WHERE driver_id = ? 
+        AND status IN (${placeholders})
+      ORDER BY created_at ASC
+    `;
+    
+    const params = [driverId, ...statuses];
+    return await db.query<Order>(sql, params);
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to find orders by driver ID with statuses:', errorMessage);
+    throw error;
+  }
+}
+
+// Add this method to check for column existence (for compatibility)
+async columnExists(tableName: string, columnName: string): Promise<boolean> {
+  try {
+    const sql = `
+      SELECT COUNT(*) as exists_flag
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+        AND TABLE_NAME = ? 
+        AND COLUMN_NAME = ?
+    `;
+    
+    const result = await db.queryOne<{ exists_flag: number }>(sql, [tableName, columnName]);
+    return result?.exists_flag === 1;
+  } catch (error) {
+    this.logger.warn(`Could not check if column ${columnName} exists in ${tableName}`);
+    return false;
+  }
+}
+
   async getOrderStatistics(customerId?: string, driverId?: string): Promise<{
     totalOrders: number;
     completedOrders: number;
@@ -2822,332 +2854,59 @@ export default trackingRepository;
 `routes\order.routes.ts`:
 
 ```ts
-import express from 'express';
-import { OrderController } from '../controllers/order.controller';
-import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer } from '../middleware/auth.middleware';
-import { validate, validationSchemas } from '../middleware/validation.middleware';
-import { validateOrderCapacity } from '../middleware/capacity.middleware';
-import { verifyCustomerBalance, validatePaymentMethod, verifyServiceSecret } from '../middleware/payment.middleware';
-import multer from 'multer';
-import Joi from 'joi';
-
-const router = express.Router();
-const orderController = new OrderController();
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE || '10485760') // 10MB default
-  }
-});
-
-// Extended validation schemas
-const extendedValidationSchemas = {
-  ...validationSchemas,
-  message: {
-    send: Joi.object({
-      content: Joi.string().required().max(1000),
-      messageType: Joi.string().valid('text', 'location', 'image', 'status_update').default('text'),
-      metadata: Joi.object()
-    })
-  },
-  location: {
-    update: Joi.object({
-      latitude: Joi.number().required().min(-90).max(90),
-      longitude: Joi.number().required().min(-180).max(180),
-      speed: Joi.number().optional().min(0),
-      bearing: Joi.number().optional().min(0).max(360),
-      accuracy: Joi.number().optional().min(0)
-    })
-  }
-};
+// Add these routes to your existing order.routes.ts
+// After the existing routes, add:
 
 /**
  * @swagger
- * /orders:
+ * /orders/{id}/rate:
  *   post:
- *     summary: Create a new order
- *     description: Create a new delivery order with pickup and delivery details
+ *     summary: Rate driver after order delivery
  *     tags: [Orders]
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/CreateOrderRequest'
- *     responses:
- *       201:
- *         description: Order created successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders',
-  authenticate,
-  authorizeCustomer,
-  validateOrderCapacity,
-  verifyCustomerBalance,
-  validate(validationSchemas.order.create),
-  orderController.createOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/bulk:
- *   post:
- *     summary: Create multiple orders in bulk
- *     description: Create multiple orders at once (max 100 orders per request)
- *     tags: [Bulk]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/BulkOrderRequest'
- *     responses:
- *       200:
- *         description: Bulk orders processed
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 message:
- *                   type: string
- *                 data:
- *                   type: object
- *                   properties:
- *                     successful:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Order'
- *                     failed:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           data:
- *                             type: object
- *                           error:
- *                             type: string
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders/bulk',
-  authenticate,
-  authorizeCustomer,
-  validate(validationSchemas.order.bulk),
-  orderController.createBulkOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/upload:
- *   post:
- *     summary: Upload Excel file for bulk orders
- *     description: Upload an Excel file containing multiple orders for batch processing
- *     tags: [Bulk]
- *     security:
- *       - BearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         multipart/form-data:
  *           schema:
  *             type: object
+ *             required:
+ *               - rating
  *             properties:
- *               file:
+ *               rating:
+ *                 type: number
+ *                 minimum: 1
+ *                 maximum: 5
+ *               review:
  *                 type: string
- *                 format: binary
- *                 description: Excel file (.xlsx) with order data
  *     responses:
  *       200:
- *         description: Excel file processed successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 message:
- *                   type: string
- *                 data:
- *                   type: object
- *                   properties:
- *                     successful:
- *                       type: array
- *                       items:
- *                         $ref: '#/components/schemas/Order'
- *                     failed:
- *                       type: array
- *                       items:
- *                         type: object
- *                         properties:
- *                           data:
- *                             type: object
- *                           error:
- *                             type: string
+ *         description: Driver rated successfully
  *       400:
- *         $ref: '#/components/responses/BadRequest'
+ *         description: Invalid rating or order not delivered
  *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       413:
- *         description: File too large (max 10MB)
+ *         description: Unauthorized
  */
-router.post('/orders/upload',
+router.post('/orders/:id/rate',
   authenticate,
   authorizeCustomer,
-  upload.single('file'),
-  orderController.uploadExcel.bind(orderController)
+  orderController.rateDriver.bind(orderController)
 );
 
 /**
  * @swagger
- * /orders:
- *   get:
- *     summary: Get orders with filters
- *     description: Retrieve orders based on user role and filters
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
- *         description: Filter by order status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of items per page
- *     responses:
- *       200:
- *         description: Orders retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       500:
- *         description: Server error
- */
-router.get('/orders',
-  authenticate,
-  orderController.getOrders.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}:
- *   get:
- *     summary: Get order details by ID
- *     description: Retrieve detailed information about a specific order
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *       - in: query
- *         name: optimize
- *         schema:
- *           type: boolean
- *           default: false
- *         description: Include knapsack optimization data
- *     responses:
- *       200:
- *         description: Order retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       404:
- *         $ref: '#/components/responses/NotFound'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.get('/orders/:id',
-  authenticate,
-  orderController.getOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}/accept:
- *   post:
- *     summary: Driver accepts an order
- *     description: Driver accepts an assigned order
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Order accepted successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       403:
- *         description: Driver not assigned to this order
- */
-router.post('/orders/:id/accept',
-  authenticate,
-  authorizeDriver,
-  orderController.acceptOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}/start:
- *   post:
- *     summary: Start order pickup
- *     description: Driver starts the pickup process for an accepted order
+ * /orders/{id}/status:
+ *   patch:
+ *     summary: Update order status (driver only)
  *     tags: [Driver]
  *     security:
  *       - BearerAuth: []
@@ -3164,391 +2923,77 @@ router.post('/orders/:id/accept',
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/LocationUpdateRequest'
+ *             type: object
+ *             required:
+ *               - status
+ *             properties:
+ *               status:
+ *                 type: string
+ *                 enum: [driver_enroute, pickup_started, in_transit, arrived, delivered]
+ *               location:
+ *                 type: object
+ *                 properties:
+ *                   latitude:
+ *                     type: number
+ *                   longitude:
+ *                     type: number
  *     responses:
  *       200:
- *         description: Pickup started successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
+ *         description: Order status updated
  *       400:
- *         $ref: '#/components/responses/BadRequest'
+ *         description: Invalid status
  *       401:
- *         $ref: '#/components/responses/Unauthorized'
+ *         description: Unauthorized
  */
-router.post('/orders/:id/start',
+router.patch('/orders/:id/status',
   authenticate,
   authorizeDriver,
-  validate(extendedValidationSchemas.location.update),
-  orderController.startPickup.bind(orderController)
+  orderController.updateOrderStatus.bind(orderController)
 );
-
-/**
- * @swagger
- * /orders/{id}/location:
- *   post:
- *     summary: Update driver location during order delivery
- *     description: Update driver's current location during order delivery for real-time tracking
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/LocationUpdateRequest'
- *     responses:
- *       200:
- *         description: Location updated successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 eta:
- *                   type: number
- *                   description: Estimated time of arrival in minutes
- *                 remaining_distance_km:
- *                   type: number
- *                 order_id:
- *                   type: string
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders/:id/location',
-  authenticate,
-  authorizeDriver,
-  validate(extendedValidationSchemas.location.update),
-  orderController.updateLocation.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}/complete:
- *   post:
- *     summary: Complete order
- *     description: Mark order as delivered and process payment
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/CompleteOrderRequest'
- *     responses:
- *       200:
- *         description: Order completed successfully
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 order:
- *                   $ref: '#/components/schemas/Order'
- *                 payment:
- *                   type: object
- *                   properties:
- *                     success:
- *                       type: boolean
- *                     message:
- *                       type: string
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- */
-router.post('/orders/:id/complete',
-  authenticate,
-  authorizeDriver,
-  validatePaymentMethod,
-  validate(validationSchemas.order.complete),
-  orderController.completeOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /orders/{id}/cancel:
- *   post:
- *     summary: Cancel an order
- *     description: Cancel an order (customer or driver can cancel based on permissions)
- *     tags: [Orders]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             $ref: '#/components/schemas/CancelOrderRequest'
- *     responses:
- *       200:
- *         description: Order cancelled successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/Order'
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       403:
- *         description: Permission denied
- */
-router.post('/orders/:id/cancel',
-  authenticate,
-  validate(validationSchemas.order.cancel),
-  orderController.cancelOrder.bind(orderController)
-);
-
-/**
- * @swagger
- * /driver/orders:
- *   get:
- *     summary: Get driver's orders
- *     description: Retrieve orders assigned to the authenticated driver
- *     tags: [Driver]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
- *         description: Filter by order status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of items per page
- *     responses:
- *       200:
- *         description: Driver orders retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       500:
- *         description: Server error
- */
-router.get('/driver/orders',
-  authenticate,
-  authorizeDriver,
-  orderController.getDriverOrders.bind(orderController)
-);
-
-/**
- * @swagger
- * /customer/orders:
- *   get:
- *     summary: Get customer's orders
- *     description: Retrieve orders belonging to the authenticated customer
- *     tags: [Customer]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: query
- *         name: status
- *         schema:
- *           type: string
- *           enum: [pending, matched, driver_accepted, driver_enroute, pickup_started, in_transit, arrived, delivered, completed, cancelled, failed]
- *         description: Filter by order status
- *       - in: query
- *         name: page
- *         schema:
- *           type: integer
- *           minimum: 1
- *           default: 1
- *         description: Page number for pagination
- *       - in: query
- *         name: limit
- *         schema:
- *           type: integer
- *           minimum: 1
- *           maximum: 100
- *           default: 20
- *         description: Number of items per page
- *     responses:
- *       200:
- *         description: Customer orders retrieved successfully
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/PaginatedResponse'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       500:
- *         description: Server error
- */
-router.get('/customer/orders',
-  authenticate,
-  authorizeCustomer,
-  orderController.getCustomerOrders.bind(orderController)
-);
-
-/**
- * @swagger
- * /tracking/{id}:
- *   get:
- *     summary: Get order tracking
- *     description: Get real-time tracking information for an order
- *     tags: [Tracking]
- *     security:
- *       - BearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Tracking data retrieved
- *         content:
- *           application/json:
- *             schema:
- *               $ref: '#/components/schemas/TrackingData'
- *       400:
- *         $ref: '#/components/responses/BadRequest'
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       403:
- *         description: Access denied to this order
- */
-router.get('/tracking/:id',
-  authenticate,
-  orderController.getTracking.bind(orderController)
-);
-
-/**
- * @swagger
- * /internal/match/{id}:
- *   post:
- *     summary: Match order (internal use)
- *     description: Internal endpoint to trigger order-driver matching
- *     tags: [Orders]
- *     security:
- *       - ServiceSecret: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *           format: uuid
- *         description: Order ID
- *     responses:
- *       200:
- *         description: Order matching initiated
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 message:
- *                   type: string
- *                 data:
- *                   type: object
- *                   properties:
- *                     order_id:
- *                       type: string
- *                     driver_id:
- *                       type: string
- *       403:
- *         description: Invalid service secret
- *       500:
- *         description: Failed to match order
- */
-router.post('/internal/match/:id',
-  verifyServiceSecret,
-  orderController.matchOrder.bind(orderController)
-);
-
-// Add these routes (for future implementation)
 
 /**
  * @swagger
  * /orders/{id}/messages:
  *   post:
  *     summary: Send message to driver/customer
- *     tags: [Orders]
+ *     tags: [Messages]
  *     security:
  *       - BearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *           format: uuid
+ *         description: Order ID
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/MessageRequest'
+ *             type: object
+ *             required:
+ *               - content
+ *             properties:
+ *               content:
+ *                 type: string
+ *               messageType:
+ *                 type: string
+ *                 enum: [text, location, image, status_update]
+ *                 default: text
+ *               metadata:
+ *                 type: object
  *     responses:
  *       200:
  *         description: Message sent successfully
  *       401:
  *         description: Unauthorized
- *       403:
- *         description: Access denied to this order
  */
 router.post('/orders/:id/messages',
   authenticate,
   authorizeDriverOrCustomer,
-  validate(extendedValidationSchemas.message.send),
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
+  orderController.sendMessage.bind(orderController)
 );
 
 /**
@@ -3556,7 +3001,7 @@ router.post('/orders/:id/messages',
  * /orders/{id}/messages:
  *   get:
  *     summary: Get order messages
- *     tags: [Orders]
+ *     tags: [Messages]
  *     security:
  *       - BearerAuth: []
  *     parameters:
@@ -3576,46 +3021,157 @@ router.post('/orders/:id/messages',
 router.get('/orders/:id/messages',
   authenticate,
   authorizeDriverOrCustomer,
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
+  orderController.getMessages.bind(orderController)
 );
 
 /**
  * @swagger
- * /messages/unread:
- *   get:
- *     summary: Get unread message count
- *     tags: [Messages]
+ * /driver/route/optimize:
+ *   post:
+ *     summary: Optimize driver route for multiple orders
+ *     tags: [Driver]
  *     security:
  *       - BearerAuth: []
  *     responses:
  *       200:
- *         description: Unread count retrieved
+ *         description: Route optimized successfully
  *       401:
  *         description: Unauthorized
  */
-router.get('/messages/unread',
+router.post('/driver/route/optimize',
   authenticate,
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
+  authorizeDriver,
+  orderController.optimizeRoute.bind(orderController)
 );
 
 /**
  * @swagger
- * /messages/{id}/read:
- *   patch:
- *     summary: Mark message as read
- *     tags: [Messages]
+ * /driver/orders/optimized:
+ *   get:
+ *     summary: Get driver orders with optimization
+ *     tags: [Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: Orders with optimization data
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/driver/orders/optimized',
+  authenticate,
+  authorizeDriver,
+  orderController.getDriverOrders.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /customer/orders/with-tracking:
+ *   get:
+ *     summary: Get customer orders with tracking data
+ *     tags: [Customer]
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *         description: Filter by order status
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           default: 1
+ *         description: Page number
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           minimum: 1
+ *           maximum: 100
+ *           default: 20
+ *         description: Items per page
+ *     responses:
+ *       200:
+ *         description: Orders with tracking data
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/customer/orders/with-tracking',
+  authenticate,
+  authorizeCustomer,
+  orderController.getCustomerOrders.bind(orderController)
+);
+// Add this route to your existing order.routes.ts
+/**
+ * @swagger
+ * /orders/receive:
+ *   post:
+ *     summary: Receive order from external service
+ *     description: External service sends complete order with driver assigned
+ *     tags: [Orders]
+ *     security:
+ *       - ServiceSecret: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - orderId
+ *               - customerInfo
+ *               - driverInfo
+ *             properties:
+ *               orderId:
+ *                 type: string
+ *               customerInfo:
+ *                 type: object
+ *               driverInfo:
+ *                 type: object
+ *     responses:
+ *       202:
+ *         description: Order received and processing started
+ *       400:
+ *         description: Invalid order structure or capacity exceeded
+ *       403:
+ *         description: Invalid service secret
+ */
+router.post('/orders/receive',
+  verifyServiceSecret,
+  orderController.receiveOrder.bind(orderController)
+);
+
+/**
+ * @swagger
+ * /orders/{id}/reject:
+ *   post:
+ *     summary: Driver rejects an order
+ *     description: Driver rejects an assigned order
+ *     tags: [Driver]
  *     security:
  *       - BearerAuth: []
  *     parameters:
@@ -3624,26 +3180,49 @@ router.get('/messages/unread',
  *         required: true
  *         schema:
  *           type: string
- *           format: uuid
- *         description: Message ID
+ *         description: Order ID
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               reason:
+ *                 type: string
+ *                 description: Reason for rejection
  *     responses:
  *       200:
- *         description: Message marked as read
+ *         description: Order rejected successfully
+ *       400:
+ *         description: Failed to reject order
  *       401:
  *         description: Unauthorized
  */
-router.patch('/messages/:id/read',
+router.post('/orders/:id/reject',
   authenticate,
-  (req, res) => {
-    res.status(501).json({ 
-      success: false, 
-      error: 'Messaging not yet implemented',
-      message: 'This feature is currently under development'
-    });
-  }
+  authorizeDriver,
+  orderController.rejectOrder.bind(orderController)
 );
 
-export default router;
+/**
+ * @swagger
+ * /balance:
+ *   get:
+ *     summary: Get user balance
+ *     description: Get customer or driver balance information
+ *     tags: [Customer, Driver]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Balance retrieved successfully
+ *       401:
+ *         description: Unauthorized
+ */
+router.get('/balance',
+  authenticate,
+  orderController.getBalance.bind(orderController)
+);
 ```
 
 `services\balance.service.ts`:
@@ -3838,60 +3417,60 @@ export class BalanceService {
     }
   }
   
-  // Complete order payment (move from pending to available for driver)
-  async completeOrderPayment(orderId: string): Promise<void> {
-    try {
-      // Get order details
-      const orderQuery = `
-        SELECT driver_id, estimated_price_usd 
-        FROM orders 
-        WHERE id = ?
+  // Fix the completeOrderPayment method - replace lines 102-106:
+async completeOrderPayment(orderId: string): Promise<void> {
+  try {
+    // Get order details - FIXED QUERY
+    const orderQuery = `
+      SELECT driver_id, total_price, driver_earnings 
+      FROM orders 
+      WHERE id = ?
+    `;
+    
+    const order = await db.queryOne<any>(orderQuery, [orderId]);
+    
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    const driverId = order.driver_id;
+    const amount = order.driver_earnings || order.total_price * 0.8; // 80% to driver if not specified
+    
+    await db.transaction(async (connection) => {
+      // Move from pending to available balance for driver
+      const updateQuery = `
+        UPDATE user_balances 
+        SET pending_balance = pending_balance - ?,
+            available_balance = available_balance + ?,
+            total_earned = total_earned + ?,
+            updated_at = NOW()
+        WHERE user_id = ? AND user_type = 'driver'
       `;
       
-      const order = await db.queryOne<any>(orderQuery, [orderId]);
+      await connection.execute(updateQuery, [amount, amount, amount, driverId]);
       
-      if (!order) {
-        throw new Error('Order not found');
-      }
+      // Update driver transaction status
+      const transactionQuery = `
+        UPDATE balance_transactions 
+        SET description = ?
+        WHERE user_id = ? AND order_id = ? AND transaction_type = 'payment' AND amount > 0
+      `;
       
-      const driverId = order.driver_id;
-      const amount = order.estimated_price_usd;
-      
-      await db.transaction(async (connection) => {
-        // Move from pending to available balance for driver
-        const updateQuery = `
-          UPDATE user_balances 
-          SET pending_balance = pending_balance - ?,
-              available_balance = available_balance + ?,
-              total_earned = total_earned + ?,
-              updated_at = NOW()
-          WHERE user_id = ? AND user_type = 'driver'
-        `;
-        
-        await connection.execute(updateQuery, [amount, amount, amount, driverId]);
-        
-        // Update driver transaction status
-        const transactionQuery = `
-          UPDATE balance_transactions 
-          SET description = ?
-          WHERE user_id = ? AND order_id = ? AND transaction_type = 'payment' AND amount > 0
-        `;
-        
-        await connection.execute(transactionQuery, [
-          `Completed earnings from order ${orderId}`,
-          driverId,
-          orderId
-        ]);
-      });
-      
-      this.logger.info(`Order payment completed: $${amount} released to driver ${driverId}`);
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to complete order payment:', errorMessage);
-      throw error;
-    }
+      await connection.execute(transactionQuery, [
+        `Completed earnings from order ${orderId}`,
+        driverId,
+        orderId
+      ]);
+    });
+    
+    this.logger.info(`Order payment completed: $${amount} released to driver ${driverId}`);
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to complete order payment:', errorMessage);
+    throw error;
   }
+}
   
   // Get recent transactions
   async getRecentTransactions(userId: string, limit: number = 10): Promise<Transaction[]> {
@@ -4033,6 +3612,7 @@ export class BalanceService {
 
 ```ts
 import { Logger } from '../utils/logger';
+import { db } from '../config/database';
 
 export interface VehicleCapacity {
   maxWeight: number; // kg
@@ -4215,16 +3795,13 @@ export class CapacityOptimizationService {
   private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
     try {
       // Query database for driver's vehicle capacity
-      // This is a placeholder - implement actual database query
-      const db = require('../config/database').db;
-      
       const query = `
         SELECT 
           vehicle_max_weight,
           vehicle_max_volume,
-          (SELECT COUNT(*) FROM orders WHERE driver_id = ? AND status IN ('pending', 'driver_assigned', 'route_to_pickup', 'in_transit')) as current_orders,
-          (SELECT COALESCE(SUM(weight_kg), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'driver_assigned', 'route_to_pickup', 'in_transit')) as current_weight,
-          (SELECT COALESCE(SUM(volume_m3), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'driver_assigned', 'route_to_pickup', 'in_transit')) as current_volume
+          (SELECT COUNT(*) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_orders,
+          (SELECT COALESCE(SUM(total_weight_kg), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_weight,
+          (SELECT COALESCE(SUM(total_volume_m3), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_volume
         FROM orders 
         WHERE driver_id = ?
         LIMIT 1
@@ -4237,13 +3814,13 @@ export class CapacityOptimizationService {
         return {
           maxWeight: 100, // 100kg default
           maxVolume: 10,  // 10m³ default
-          maxOrders: 5,   // 5 orders default
+          maxOrders: 10,  // 10 orders default
           currentWeight: 0,
           currentVolume: 0,
           currentOrders: 0,
           remainingWeight: 100,
           remainingVolume: 10,
-          remainingOrders: 5,
+          remainingOrders: 10,
           utilization: {
             weight: 0,
             volume: 0,
@@ -4279,6 +3856,79 @@ export class CapacityOptimizationService {
     } catch (error: unknown) {
       this.logger.error('Failed to get vehicle capacity:', error);
       return null;
+    }
+  }
+  
+  // Update the getDriverCapacityDashboard method (replace lines 318-348):
+  async getDriverCapacityDashboard(driverId: string): Promise<{
+    capacity: VehicleCapacity;
+    pendingOrders: number;
+    activeOrders: number;
+    recommendedMaxOrders: number;
+    efficiency: number;
+  }> {
+    try {
+      const capacity = await this.getDriverVehicleCapacity(driverId);
+      
+      if (!capacity) {
+        throw new Error('Could not retrieve capacity information');
+      }
+      
+      // Get order counts
+      const orderQuery = `
+        SELECT 
+          COUNT(CASE WHEN status IN ('pending', 'matched', 'driver_accepted') THEN 1 END) as pending_orders,
+          COUNT(CASE WHEN status IN ('driver_enroute', 'pickup_started', 'in_transit') THEN 1 END) as active_orders
+        FROM orders 
+        WHERE driver_id = ?
+      `;
+      
+      const orderCounts = await db.queryOne<any>(orderQuery, [driverId]);
+    
+      // Calculate recommended max orders based on average size
+      const avgOrderQuery = `
+        SELECT 
+          AVG(total_weight_kg) as avg_weight,
+          AVG(total_volume_m3) as avg_volume
+        FROM orders 
+        WHERE driver_id = ? AND status = 'completed'
+      `;
+      
+      const averages = await db.queryOne<any>(avgOrderQuery, [driverId]);
+      
+      const avgWeight = averages?.avg_weight || 5;
+      const avgVolume = averages?.avg_volume || 0.5;
+      
+      const recommendedByWeight = Math.floor(capacity.maxWeight / avgWeight);
+      const recommendedByVolume = Math.floor(capacity.maxVolume / avgVolume);
+      const recommendedMaxOrders = Math.min(recommendedByWeight, recommendedByVolume, capacity.maxOrders);
+    
+      // Calculate efficiency (orders delivered per day)
+      const efficiencyQuery = `
+        SELECT 
+          COUNT(*) as delivered_today
+        FROM orders 
+        WHERE driver_id = ? 
+          AND status IN ('delivered', 'completed')
+          AND DATE(updated_at) = CURDATE()
+      `;
+      
+      const efficiencyResult = await db.queryOne<any>(efficiencyQuery, [driverId]);
+      const deliveredToday = efficiencyResult?.delivered_today || 0;
+      const efficiency = Math.min(100, (deliveredToday / 10) * 100); // Assuming 10 is target
+    
+      return {
+        capacity,
+        pendingOrders: orderCounts?.pending_orders || 0,
+        activeOrders: orderCounts?.active_orders || 0,
+        recommendedMaxOrders,
+        efficiency: parseFloat(efficiency.toFixed(2))
+      };
+    
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get capacity dashboard:', errorMessage);
+      throw error;
     }
   }
 
@@ -4754,7 +4404,7 @@ export class MessagingService {
       ]);
       
       return {
-        id: result.insertId,
+        id: result.insertId.toString(),
         orderId,
         senderId,
         senderType,
@@ -4847,14 +4497,15 @@ export class MessagingService {
   }
   
   // Get driver ratings
-  async getDriverRatings(driverId: string): Promise<Array<{ rating: number }>> {
+  async getDriverRatings(driverId: string): Promise<{ rating: number }[]> {
     try {
       const query = `
         SELECT rating FROM driver_ratings 
         WHERE driver_id = ?
       `;
       
-      return await db.query<any>(query, [driverId]);
+      const ratings = await db.query<{ rating: number }>(query, [driverId]);
+      return ratings;
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -4867,11 +4518,11 @@ export class MessagingService {
   private async getUserName(userId: string, userType: string): Promise<string> {
     try {
       if (userType === 'customer') {
-        const query = `SELECT customer_name as name FROM orders WHERE customer_id = ? LIMIT 1`;
+        const query = `SELECT pickup_contact_name as name FROM orders WHERE customer_id = ? LIMIT 1`;
         const result = await db.queryOne<any>(query, [userId]);
         return result?.name || 'Customer';
       } else {
-        const query = `SELECT driver_name as name FROM orders WHERE driver_id = ? LIMIT 1`;
+        const query = `SELECT pickup_contact_name as name FROM orders WHERE driver_id = ? LIMIT 1`;
         const result = await db.queryOne<any>(query, [userId]);
         return result?.name || 'Driver';
       }
@@ -4880,6 +4531,9 @@ export class MessagingService {
     }
   }
 }
+
+// Export singleton instance
+export const messagingService = new MessagingService();
 ```
 
 `services\notification.service.ts`:
@@ -4887,270 +4541,62 @@ export class MessagingService {
 ```ts
 import { Logger } from '../utils/logger';
 import { WebSocketUtil } from '../utils/websocket.util';
-import nodemailer from 'nodemailer';
 
 export class NotificationService {
   private logger = new Logger('NotificationService');
   private websocketUtil: WebSocketUtil;
-  private emailTransporter: any;
   
-  constructor(websocketUtil: WebSocketUtil) {
-    this.websocketUtil = websocketUtil;
-    
-    // Setup email transporter if configured
-    if (process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-      this.emailTransporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST,
-        port: parseInt(process.env.EMAIL_PORT || '587'),
-        secure: process.env.EMAIL_PORT === '465',
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS
-        }
-      });
-    }
+  constructor() {
+    this.websocketUtil = new WebSocketUtil();
   }
   
-  // In-app notification via WebSocket (PREFERRED METHOD)
-  async sendInAppNotification(
-    userId: string,
-    type: string,
-    title: string,
-    body: string,
-    data?: any
-  ): Promise<void> {
-    try {
-      const notification = {
-        id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type,
-        title,
-        body,
-        data: {
-          ...data,
-          timestamp: new Date().toISOString(),
-          read: false
-        }
-      };
-      
-      // Send via WebSocket (real-time delivery)
-      await this.websocketUtil.sendToUser(userId, 'in_app_notification', notification);
-      
-      // Also store in database for offline users
-      await this.storeNotification(userId, notification);
-      
-      this.logger.debug(`In-app notification sent to ${userId}: ${type}`);
-    } catch (error) {
-      this.logger.warn(`Failed to send in-app notification to ${userId}:`, error);
-    }
-  }
-  
-  // Email notification (fallback, with in-app like formatting)
-  async sendEmailNotification(
-    userId: string,
-    type: string,
-    title: string,
-    body: string,
-    data?: any
-  ): Promise<void> {
-    if (!this.emailTransporter) return;
-    
-    try {
-      // Get user email from user service
-      const userEmail = await this.getUserEmail(userId);
-      if (!userEmail) return;
-      
-      // Format email to look like in-app message
-      const emailHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
-            .notification { border-left: 4px solid #4CAF50; padding: 15px; background: #f9f9f9; margin: 20px 0; }
-            .title { font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px; }
-            .body { font-size: 14px; color: #666; line-height: 1.6; }
-            .button { display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin-top: 15px; }
-            .footer { margin-top: 20px; font-size: 12px; color: #999; }
-          </style>
-        </head>
-        <body>
-          <div class="notification">
-            <div class="title">${title}</div>
-            <div class="body">${body}</div>
-            ${data?.orderId ? `
-              <a href="${process.env.APP_URL || 'https://app.example.com'}/orders/${data.orderId}" class="button">
-                View in App
-              </a>
-            ` : ''}
-          </div>
-          <div class="footer">
-            This notification was sent from ${process.env.APP_NAME || 'Order Service'}. 
-            You can disable email notifications in your app settings.
-          </div>
-        </body>
-        </html>
-      `;
-      
-      await this.emailTransporter.sendMail({
-        from: process.env.EMAIL_FROM || `"Order App" <${process.env.EMAIL_USER}>`,
-        to: userEmail,
-        subject: title,
-        html: emailHtml
-      });
-      
-      this.logger.debug(`Email sent to ${userEmail}`);
-    } catch (error) {
-      this.logger.warn(`Failed to send email to ${userId}:`, error);
-    }
-  }
-  
-  // Combined notification (in-app + email)
+  // Send order notification
   async sendOrderNotification(
     userId: string,
     orderId: string,
-    notificationType: string,
-    data?: any
-  ): Promise<void> {
-    const notificationContent = this.getNotificationContent(notificationType, orderId, data);
-    
-    // 1. Send in-app notification (primary)
-    await this.sendInAppNotification(
-      userId,
-      notificationType,
-      notificationContent.title,
-      notificationContent.body,
-      { orderId, ...data }
-    );
-    
-    // 2. Send email (secondary, formatted like in-app)
-    await this.sendEmailNotification(
-      userId,
-      notificationType,
-      notificationContent.title,
-      notificationContent.body,
-      { orderId, ...data }
-    );
-  }
-  
-  // Broadcast location updates to customer
-  async broadcastLocationUpdate(
-    orderId: string,
-    driverId: string,
-    location: { lat: number; lng: number },
-    eta?: number,
-    speed?: number
+    type: string,
+    data: any
   ): Promise<void> {
     try {
-      // Get customer ID from order
-      const order = await this.getOrderDetails(orderId);
-      if (!order?.customer_id) return;
-      
       const notification = {
-        type: 'location_update',
+        type,
         orderId,
-        data: {
-          driverId,
-          location,
-          eta,
-          speed,
-          timestamp: new Date().toISOString()
-        }
+        data,
+        timestamp: new Date().toISOString(),
+        read: false
       };
       
-      // Send to customer
-      await this.websocketUtil.sendToUser(order.customer_id, 'driver_location', notification);
+      // Send via WebSocket
+      await this.websocketUtil.sendToUser(userId, 'notification', notification);
       
-      // Also send in-app message
-      await this.sendInAppNotification(
-        order.customer_id,
-        'location_update',
-        'Driver Location Updated',
-        `Driver is on the way to you${eta ? `, ETA: ${eta} minutes` : ''}`,
-        { orderId, location, eta }
-      );
+      this.logger.debug(`Notification sent to ${userId}: ${type}`);
     } catch (error) {
-      this.logger.warn(`Failed to broadcast location for order ${orderId}:`, error);
+      this.logger.warn(`Failed to send notification to ${userId}:`, error);
     }
   }
   
-  private getNotificationContent(
-    type: string,
+  // Send booking failed notification
+  async sendBookingFailedNotification(
+    customerId: string,
     orderId: string,
-    data?: any
-  ): { title: string; body: string } {
-    const orderNumber = orderId.substring(0, 8).toUpperCase();
-    
-    switch (type) {
-      case 'order_created':
-        return {
-          title: 'Order Created',
-          body: `Your order #${orderNumber} has been created successfully. We're looking for a driver.`
-        };
-        
-      case 'driver_assigned':
-        return {
-          title: 'Driver Assigned',
-          body: `A driver has been assigned to your order #${orderNumber}. They will arrive soon.`
-        };
-        
-      case 'driver_enroute':
-        return {
-          title: 'Driver On The Way',
-          body: `Your driver is on the way to pick up your order #${orderNumber}.`
-        };
-        
-      case 'pickup_started':
-        return {
-          title: 'Pickup Started',
-          body: `Driver has picked up your order #${orderNumber} and is on the way to you.`
-        };
-        
-      case 'order_delivered':
-        return {
-          title: 'Order Delivered',
-          body: `Your order #${orderNumber} has been delivered successfully.`
-        };
-        
-      case 'payment_received':
-        return {
-          title: 'Payment Received',
-          body: `Payment of $${data?.amount?.toFixed(2) || '0.00'} for order #${orderNumber} has been processed.`
-        };
-        
-      case 'new_message':
-        return {
-          title: 'New Message',
-          body: `You have a new message for order #${orderNumber}.`
-        };
-        
-      default:
-        return {
-          title: 'Order Update',
-          body: `Your order #${orderNumber} has been updated.`
-        };
-    }
-  }
-  
-  private async getUserEmail(userId: string): Promise<string | null> {
-    try {
-      // Call user service to get email
-      // For now, return mock
-      return `${userId}@example.com`;
-    } catch (error) {
-      return null;
-    }
-  }
-  
-  private async getOrderDetails(orderId: string): Promise<any> {
-    // Call your order repository
-    return { customer_id: 'customer_' + orderId };
-  }
-  
-  private async storeNotification(userId: string, notification: any): Promise<void> {
-    // Store in database for offline access
-    // Implementation depends on your database setup
+    reason: string,
+    recommendations: string[]
+  ): Promise<void> {
+    await this.sendOrderNotification(
+      customerId,
+      orderId,
+      'booking_failed',
+      {
+        reason,
+        recommendations,
+        message: 'Booking failed. Please try again with different parameters.'
+      }
+    );
   }
 }
+
+// Export singleton instance
+export const notificationService = new NotificationService();
 ```
 
 `services\order.service.ts`:
@@ -5159,18 +4605,14 @@ export class NotificationService {
 import { Logger } from '../utils/logger';
 import { orderRepository, Order, CreateOrderData } from '../repositories/order.repository';
 import { trackingRepository } from '../repositories/tracking.repository';
-import { RouteOptimizationService } from './route-optimization.service';
 import { NotificationService } from './notification.service';
 import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
-import { distanceUtil } from '../utils/distance.util';
-import { CreateOrderRequest, OrderResponse, OrderProgress } from '../types';
 import { CapacityOptimizationService } from './capacity-optimization.service';
+import { WebSocketUtil } from '../utils/websocket.util';
 
 export class OrderService {
   private logger: Logger;
-  private routeOptimizationService: RouteOptimizationService;
-  private paymentService: PaymentService;
   private notificationService: NotificationService;
   private messagingService: MessagingService;
   private balanceService: BalanceService;
@@ -5179,8 +4621,6 @@ export class OrderService {
   
   constructor() {
     this.logger = new Logger('OrderService');
-    this.routeOptimizationService = new RouteOptimizationService();
-    this.paymentService = new PaymentService();
     this.notificationService = new NotificationService();
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
@@ -5188,47 +4628,78 @@ export class OrderService {
     this.capacityOptimizationService = new CapacityOptimizationService();
   }
   
-  // Create order from your structure
-  async createOrderFromRequest(orderData: CreateOrderRequest): Promise<OrderResponse> {
+  // Main method to create order from your exact structure
+  async createOrderFromRequest(orderData: any): Promise<any> {
     try {
-      this.logger.info(`Creating order: ${orderData.orderId}`);
+      this.logger.info(`Processing order: ${orderData.orderId}`);
       
-      // 1. Create order in database
+      // 1. Check driver capacity
+      const capacityCheck = await this.checkDriverCapacity(
+        orderData.driverInfo.driverId,
+        orderData
+      );
+      
+      if (!capacityCheck.canAccept) {
+        // Notify customer that booking failed
+        await this.notificationService.sendOrderNotification(
+          orderData.customerInfo.id,
+          orderData.orderId,
+          'booking_failed',
+          {
+            reason: capacityCheck.reason,
+            recommendations: capacityCheck.recommendations
+          }
+        );
+        
+        return {
+          success: false,
+          orderId: orderData.orderId,
+          reason: capacityCheck.reason,
+          recommendations: capacityCheck.recommendations,
+          message: 'Booking failed - driver capacity exceeded'
+        };
+      }
+      
+      // 2. Create order in database
       const order = await this.createOrderRecord(orderData);
       
-      // 2. Send notification to driver
-      await this.notificationService.sendDriverNotification(
+      // 3. Send notification to driver to accept/reject
+      await this.notificationService.sendOrderNotification(
         orderData.driverInfo.driverId,
-        'order_created',
+        orderData.orderId,
+        'order_assigned',
         {
-          orderId: order.id,
-          orderNumber: order.orderNumber,
+          orderId: orderData.orderId,
+          orderNumber: order.order_number,
           customerName: orderData.customerInfo.name,
           pickupAddress: orderData.locations.pickup.address,
-          estimatedPrice: orderData.pricing.estimatedPrice.usd
+          deliveryAddress: orderData.locations.delivery.address,
+          estimatedPrice: orderData.pricing.estimatedPrice.usd,
+          estimatedDuration: orderData.timing.estimatedDuration.minutes,
+          packageWeight: orderData.packageDetails.weight.value,
+          packageVolume: orderData.packageDetails.volume.value
         }
       );
       
-      // 3. Initialize order progress
-      const progress = this.calculateOrderProgress(order);
-      
-      // 4. Send real-time update via WebSocket
+      // 4. Send real-time update to customer via WebSocket
       await this.websocketUtil.sendToUser(
         orderData.customerInfo.id,
-        'order_created',
-        { order, progress }
-      );
-      
-      await this.websocketUtil.sendToUser(
-        orderData.driverInfo.driverId,
-        'new_order_assigned',
-        { order }
+        'order_pending_driver_acceptance',
+        { 
+          orderId: orderData.orderId,
+          orderNumber: order.order_number,
+          driverName: orderData.driverInfo.name,
+          driverRating: orderData.driverInfo.rating,
+          vehicleType: orderData.vehicleInfo.typeFormatted,
+          message: 'Order created. Waiting for driver acceptance...'
+        }
       );
       
       return {
         success: true,
-        order,
-        progress
+        order: this.formatOrderForUI(order, orderData),
+        capacityCheck,
+        message: 'Order created successfully. Waiting for driver acceptance.'
       };
       
     } catch (error: unknown) {
@@ -5238,208 +4709,132 @@ export class OrderService {
     }
   }
   
-  private async createOrderRecord(data: CreateOrderRequest): Promise<Order> {
-    // Convert your structure to our database format
-    const orderPayload: any = {
+  // Check driver capacity before accepting order
+  private async checkDriverCapacity(driverId: string, orderData: any): Promise<any> {
+    try {
+      // Convert order data to capacity format
+      const orderCapacity = {
+        orderId: orderData.orderId,
+        weight: orderData.packageDetails.weight.value,
+        volume: orderData.packageDetails.volume.value,
+        priority: orderData.packageDetails.urgency || 'normal',
+        pickupLocation: {
+          lat: orderData.locations.pickup.coordinates.lat,
+          lng: orderData.locations.pickup.coordinates.lng
+        },
+        deliveryLocation: {
+          lat: orderData.locations.delivery.coordinates.lat,
+          lng: orderData.locations.delivery.coordinates.lng
+        },
+        estimatedValue: orderData.pricing.estimatedPrice.usd
+      };
+      
+      // Get driver's active orders
+      const activeOrders = await orderRepository.findByDriverId(driverId, {
+        status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+      });
+      
+      // Convert active orders to capacity format
+      const existingOrdersCapacity = activeOrders.map(order => ({
+        orderId: order.id,
+        weight: order.total_weight_kg,
+        volume: order.total_volume_m3,
+        priority: order.priority || 'normal',
+        pickupLocation: {
+          lat: order.pickup_latitude,
+          lng: order.pickup_longitude
+        },
+        deliveryLocation: {
+          lat: order.delivery_latitude,
+          lng: order.delivery_longitude
+        }
+      }));
+      
+      // Check capacity with existing orders
+      const capacityResult = await this.capacityOptimizationService.canDriverAcceptOrder(
+        driverId,
+        orderCapacity,
+        existingOrdersCapacity
+      );
+      
+      return capacityResult;
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Capacity check failed:', errorMessage);
+      
+      // Default to allowing order if capacity check fails
+      return {
+        canAccept: true,
+        reason: 'Capacity check unavailable',
+        capacityCheck: {
+          weight: { required: 0, available: 100, passes: true },
+          volume: { required: 0, available: 10, passes: true },
+          orders: { required: 1, available: 10, passes: true }
+        },
+        estimatedUtilization: { weight: 0, volume: 0, orders: 0 },
+        recommendations: []
+      };
+    }
+  }
+  
+  // Convert your structure to database format
+  private async createOrderRecord(data: any): Promise<Order> {
+    const orderPayload: CreateOrderData = {
       order_number: data.orderId,
       customer_id: data.customerInfo.id,
       driver_id: data.driverInfo.driverId,
-      status: 'pending',
       
-      // Customer Info
-      customer_name: data.customerInfo.name,
-      customer_email: data.customerInfo.email,
-      customer_phone: data.customerInfo.phone,
-      
-      // Locations
+      // Pickup Information
       pickup_address: data.locations.pickup.address,
-      pickup_lat: data.locations.pickup.coordinates.lat,
-      pickup_lng: data.locations.pickup.coordinates.lng,
+      pickup_latitude: data.locations.pickup.coordinates.lat,
+      pickup_longitude: data.locations.pickup.coordinates.lng,
+      pickup_contact_name: data.customerInfo.name,
+      pickup_contact_phone: data.customerInfo.phone,
+      pickup_instructions: data.specialRequirements.requirementsList?.join(', ') || '',
       
+      // Delivery Information
       delivery_address: data.locations.delivery.address,
-      delivery_lat: data.locations.delivery.coordinates.lat,
-      delivery_lng: data.locations.delivery.coordinates.lng,
+      delivery_latitude: data.locations.delivery.coordinates.lat,
+      delivery_longitude: data.locations.delivery.coordinates.lng,
+      delivery_contact_name: data.customerInfo.name,
+      delivery_contact_phone: data.customerInfo.phone,
+      delivery_instructions: '',
       
-      distance_km: data.locations.distance.km,
-      
-      // Package Details
-      package_category: data.packageDetails.category,
-      weight_kg: data.packageDetails.weight.value,
-      volume_m3: data.packageDetails.volume.value,
-      urgency: data.packageDetails.urgency,
-      
-      // Special Requirements
-      fragile: data.specialRequirements?.fragile || false,
-      refrigerated: data.specialRequirements?.refrigerated || false,
-      oversized: data.specialRequirements?.oversized || false,
-      hazardous: data.specialRequirements?.hazardous || false,
-      
-      // Driver Info
-      driver_name: data.driverInfo.name,
-      driver_phone: data.driverInfo.phone,
-      driver_email: data.driverInfo.email,
-      driver_rating: data.driverInfo.rating,
-      driver_match_score: data.driverInfo.matchScore,
-      
-      // Vehicle Info
-      vehicle_type: data.vehicleInfo.type,
-      vehicle_make: data.vehicleInfo.make,
-      vehicle_model: data.vehicleInfo.model,
-      vehicle_license_plate: data.vehicleInfo.licensePlate,
-      vehicle_max_weight: data.vehicleInfo.capacity.maxWeight,
-      vehicle_max_volume: data.vehicleInfo.capacity.maxVolume,
-      vehicle_image_url: data.vehicleInfo.imageUrl,
+      // Package Information
+      total_weight_kg: data.packageDetails.weight.value,
+      total_volume_m3: data.packageDetails.volume.value,
+      package_description: `${data.packageDetails.categoryLabel} - ${data.packageDetails.weight.value}kg, ${data.packageDetails.volume.value}m³`,
+      fragile_items: data.specialRequirements.fragile,
+      temperature_controlled: data.specialRequirements.refrigerated,
       
       // Pricing
-      estimated_price_usd: data.pricing.estimatedPrice.usd,
-      estimated_price_local: data.pricing.estimatedPrice.rub,
-      currency: data.pricing.currency,
-      base_currency: data.pricing.baseCurrency,
+      base_price: data.pricing.estimatedPrice.usd * 0.3, // 30% base
+      distance_fee: data.pricing.estimatedPrice.usd * 0.5, // 50% distance
+      weight_fee: data.pricing.estimatedPrice.usd * 0.1, // 10% weight
+      volume_fee: data.pricing.estimatedPrice.usd * 0.1, // 10% volume
+      total_price: data.pricing.estimatedPrice.usd,
+      subtotal_price: data.pricing.estimatedPrice.usd,
       
-      // Timing
+      // Route Information
+      estimated_distance_km: data.locations.distance.km,
       estimated_duration_minutes: data.timing.estimatedDuration.minutes,
-      pickup_time_estimated: new Date(data.timing.pickupTime.estimated),
-      delivery_time_estimated: new Date(data.timing.deliveryTime.estimated),
       
-      // Payment
-      amount_paid: 0,
-      payment_status: 'pending',
+      // Status
+      priority: data.packageDetails.urgency,
       
-      // Progress
-      driver_accepted: false,
-      route_order_index: 0
+      // Additional
+      customer_notes: `Urgency: ${data.packageDetails.urgencyLabel}, Category: ${data.packageDetails.categoryLabel}`,
+      is_bulk_order: false
     };
     
-    // Use your existing order repository
     return await orderRepository.create(orderPayload);
   }
   
-  async checkDriverCapacity(driverId: string, orderId: string): Promise<any> {
-  try {
-    const order = await orderRepository.findById(orderId);
-    if (!order) {
-      throw new Error('Order not found');
-    }
-
-    // Convert order to capacity format
-    const orderCapacity = {
-      orderId: order.id,
-      weight: order.weight_kg,
-      volume: order.volume_m3,
-      priority: order.urgency || 'normal',
-      pickupLocation: {
-        lat: order.pickup_lat,
-        lng: order.pickup_lng
-      },
-      deliveryLocation: {
-        lat: order.delivery_lat,
-        lng: order.delivery_lng
-      }
-    };
-
-    // Check capacity
-    const capacityResult = await this.capacityOptimizationService.canDriverAcceptOrder(
-      driverId,
-      orderCapacity
-    );
-
-    // Get driver capacity dashboard
-    const dashboard = await this.capacityOptimizationService.getDriverCapacityDashboard(driverId);
-
-    return {
-      canAccept: capacityResult.canAccept,
-      reason: capacityResult.reason,
-      capacityCheck: capacityResult.capacityCheck,
-      dashboard,
-      recommendations: capacityResult.recommendations
-    };
-
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Capacity check failed:', errorMessage);
-    throw error;
-  }
-}
-
-// Update acceptOrder method to include capacity check
-async acceptOrder(orderId: string, driverId: string): Promise<OrderResponse> {
-  try {
-    // First check capacity
-    const capacityCheck = await this.checkDriverCapacity(driverId, orderId);
-    
-    if (!capacityCheck.canAccept) {
-      throw new Error(`Cannot accept order: ${capacityCheck.reason}`);
-    }
-
-    const order = await orderRepository.findById(orderId);
-    if (!order) {
-      throw new Error('Order not found');
-    }
-    
-    // Rest of the existing acceptOrder logic...
-    // ...
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Failed to accept order:', errorMessage);
-    throw error;
-  }
-}
-
-// Add method to get driver capacity dashboard
-async getDriverCapacityInfo(driverId: string): Promise<any> {
-  try {
-    const dashboard = await this.capacityOptimizationService.getDriverCapacityDashboard(driverId);
-    
-    // Get optimization suggestions
-    const pendingOrders = await orderRepository.findByDriverId(driverId, {
-      status: ['pending', 'driver_assigned']
-    });
-    
-    const orderCapacities = pendingOrders.map(order => ({
-      orderId: order.id,
-      weight: order.weight_kg,
-      volume: order.volume_m3,
-      priority: order.urgency || 'normal',
-      pickupLocation: {
-        lat: order.pickup_lat,
-        lng: order.pickup_lng
-      },
-      deliveryLocation: {
-        lat: order.delivery_lat,
-        lng: order.delivery_lng
-      }
-    }));
-    
-    const suggestions = await this.capacityOptimizationService.suggestOptimalOrderMix(
-      driverId,
-      orderCapacities
-    );
-    
-    return {
-      success: true,
-      dashboard,
-      suggestions,
-      message: 'Capacity information retrieved'
-    };
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Failed to get driver capacity info:', errorMessage);
-    throw error;
-  }
-}
-  
-  // Update order status (for driver updates)
-  async updateOrderStatus(
-    orderId: string, 
-    driverId: string, 
-    status: 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled',
-    location?: { lat: number; lng: number },
-    notes?: string
-  ): Promise<OrderResponse> {
+  // Driver accepts the order
+  async acceptOrder(orderId: string, driverId: string): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await orderRepository.findByOrderNumber(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -5448,164 +4843,616 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
         throw new Error('Driver not assigned to this order');
       }
       
-      const updateData: any = { status };
+      // Update order status
+      const updatedOrder = await orderRepository.update(order.id, {
+        status: 'driver_accepted',
+        accepted_at: new Date()
+      });
       
-      // Set timestamps based on status
-      switch (status) {
-        case 'route_to_pickup':
-          updateData.delivery_started_at = new Date();
-          break;
-        case 'delivered':
-          updateData.delivery_completed_at = new Date();
-          updateData.payment_status = 'completed';
-          // Release payment to driver
-          await this.paymentService.completeOrderPayment(order.id);
-          break;
+      if (!updatedOrder) {
+        throw new Error('Failed to update order');
       }
-      
-      // Update location if provided
-      if (location) {
-        updateData.driver_current_lat = location.lat;
-        updateData.driver_current_lng = location.lng;
-        updateData.driver_last_updated = new Date();
-        
-        // Record location for tracking
-        await trackingRepository.create({
-          order_id: orderId,
-          driver_id: driverId,
-          latitude: location.lat,
-          longitude: location.lng
-        });
-      }
-      
-      const updatedOrder = await orderRepository.update(orderId, updateData) as Order;
-      
-      // Record status change
-      await this.recordStatusChange(orderId, status, 'driver', driverId, notes);
       
       // Send notification to customer
-      let notificationType = '';
-      let notificationData = {};
+      await this.notificationService.sendOrderNotification(
+        order.customer_id,
+        orderId,
+        'driver_accepted',
+        {
+          driverName: await this.getDriverName(driverId),
+          driverRating: await this.getDriverRating(driverId),
+          vehicleInfo: await this.getVehicleInfo(driverId),
+          estimatedArrival: 'Calculating...'
+        }
+      );
       
-      switch (status) {
-        case 'route_to_pickup':
-          notificationType = 'order_picked_up';
-          notificationData = { orderId: order.id };
-          break;
-        case 'in_transit':
-          notificationType = 'order_in_transit';
-          notificationData = { 
-            orderId: order.id,
-            estimatedDelivery: order.delivery_time_estimated 
-          };
-          break;
-        case 'delivered':
-          notificationType = 'order_delivered';
-          notificationData = { 
-            orderId: order.id,
-            deliveryTime: new Date().toISOString()
-          };
-          break;
-      }
-      
-      if (notificationType) {
-        await this.notificationService.sendCustomerNotification(
-          order.customer_id,
-          notificationType,
-          notificationData
-        );
-      }
-      
-      // Calculate progress
-      const progress = this.calculateOrderProgress(updatedOrder);
-      
-      // Send real-time update
+      // Send real-time updates
       await this.websocketUtil.sendToUser(
         order.customer_id,
         'order_status_changed',
-        { order: updatedOrder, progress, location }
+        {
+          orderId: order.order_number,
+          status: 'driver_accepted',
+          message: 'Driver has accepted your order',
+          driverId,
+          timestamp: new Date().toISOString()
+        }
       );
+      
+      // Start simulation if this is the first order for driver today
+      const driverOrders = await orderRepository.findByDriverId(driverId, {
+        status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+      });
+      
+      if (driverOrders.length === 1) {
+        // Start simulation for this order
+        await this.startRouteSimulation(order.id, driverId);
+      } else if (driverOrders.length > 1) {
+        // Re-optimize route for multiple orders
+        await this.optimizeAndSimulateDriverRoute(driverId);
+      }
       
       return {
         success: true,
-        order: updatedOrder,
-        progress
+        order: this.formatOrderForUI(updatedOrder, null),
+        message: 'Order accepted successfully'
       };
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to update order status:', errorMessage);
+      this.logger.error('Failed to accept order:', errorMessage);
       throw error;
     }
   }
   
-  // Get order with full details for UI
-  async getOrderDetails(orderId: string, userId: string, userType: 'customer' | 'driver'): Promise<OrderResponse> {
+  // Driver rejects the order
+  async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
+    try {
+      const order = await orderRepository.findByOrderNumber(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      if (order.driver_id !== driverId) {
+        throw new Error('Driver not assigned to this order');
+      }
+      
+      // Update order status to cancelled
+      const updatedOrder = await orderRepository.update(order.id, {
+        status: 'cancelled',
+        cancelled_at: new Date(),
+        driver_notes: reason || 'Driver rejected the order'
+      });
+      
+      // Notify customer
+      await this.notificationService.sendOrderNotification(
+        order.customer_id,
+        orderId,
+        'order_cancelled',
+        {
+          reason: reason || 'Driver unavailable',
+          message: 'We are looking for another driver for your order'
+        }
+      );
+      
+      // TODO: Implement logic to find another driver
+      
+      return {
+        success: true,
+        orderId,
+        message: 'Order rejected successfully'
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to reject order:', errorMessage);
+      throw error;
+    }
+  }
+  
+  // Start route simulation for an order
+  private async startRouteSimulation(orderId: string, driverId: string): Promise<void> {
     try {
       const order = await orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
       
-      // Verify access
-      if (userType === 'customer' && order.customer_id !== userId) {
-        throw new Error('Access denied');
+      // Simulate driver moving from current location to pickup
+      await this.simulateMovement(
+        orderId,
+        driverId,
+        { lat: 59.925209, lng: 30.34174539999999 }, // Default starting point (St. Petersburg center)
+        { lat: order.pickup_latitude, lng: order.pickup_longitude },
+        'to_pickup'
+      );
+      
+      // Update status to driver_enroute
+      await orderRepository.update(orderId, {
+        status: 'driver_enroute',
+        driver_enroute_at: new Date()
+      });
+      
+      // Notify customer
+      await this.notificationService.sendOrderNotification(
+        order.customer_id,
+        order.order_number,
+        'driver_enroute',
+        {
+          message: 'Driver is on the way to pickup location',
+          estimatedArrival: '10-15 minutes'
+        }
+      );
+      
+      // After pickup simulation, simulate delivery
+      setTimeout(async () => {
+        await this.simulateMovement(
+          orderId,
+          driverId,
+          { lat: order.pickup_latitude, lng: order.pickup_longitude },
+          { lat: order.delivery_latitude, lng: order.delivery_longitude },
+          'to_delivery'
+        );
+        
+        // Update status to delivered
+        await orderRepository.update(orderId, {
+          status: 'delivered',
+          delivered_at: new Date(),
+          completed_at: new Date()
+        });
+        
+        // Process payment
+        await this.processPayment(orderId, order.customer_id, driverId, order.total_price);
+        
+        // Notify customer
+        await this.notificationService.sendOrderNotification(
+          order.customer_id,
+          order.order_number,
+          'order_delivered',
+          {
+            message: 'Your order has been delivered successfully',
+            deliveryTime: new Date().toLocaleTimeString()
+          }
+        );
+        
+        // Ask for rating
+        await this.websocketUtil.sendToUser(
+          order.customer_id,
+          'request_rating',
+          {
+            orderId: order.order_number,
+            driverId,
+            driverName: await this.getDriverName(driverId),
+            message: 'How was your delivery experience?'
+          }
+        );
+        
+      }, 30000); // Wait 30 seconds for pickup simulation
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Route simulation failed:', errorMessage);
+    }
+  }
+  
+  // Simulate driver movement between points
+  private async simulateMovement(
+    orderId: string,
+    driverId: string,
+    startPoint: { lat: number; lng: number },
+    endPoint: { lat: number; lng: number },
+    phase: 'to_pickup' | 'to_delivery'
+  ): Promise<void> {
+    const steps = 10; // Number of simulation steps
+    const interval = 5000; // 5 seconds between updates
+    
+    for (let i = 0; i <= steps; i++) {
+      const progress = i / steps;
+      
+      // Calculate intermediate point
+      const currentLat = startPoint.lat + (endPoint.lat - startPoint.lat) * progress;
+      const currentLng = startPoint.lng + (endPoint.lng - startPoint.lng) * progress;
+      
+      // Create tracking point
+      await trackingRepository.create({
+        order_id: orderId,
+        driver_id: driverId,
+        latitude: currentLat,
+        longitude: currentLng,
+        speed: 30 + Math.random() * 20, // Random speed 30-50 km/h
+        bearing: this.calculateBearing(startPoint.lat, startPoint.lng, endPoint.lat, endPoint.lng),
+        accuracy: 10
+      });
+      
+      // Update order with current location
+      await orderRepository.updateOrderDriverLocation(orderId, currentLat, currentLng);
+      
+      // Get order for customer ID
+      const order = await orderRepository.findById(orderId);
+      if (order) {
+        // Send real-time location update to customer
+        await this.websocketUtil.sendToUser(
+          order.customer_id,
+          'location_update',
+          {
+            orderId: order.order_number,
+            location: { lat: currentLat, lng: currentLng },
+            phase,
+            progress: Math.round(progress * 100),
+            timestamp: new Date().toISOString()
+          }
+        );
       }
-      if (userType === 'driver' && order.driver_id !== userId) {
-        throw new Error('Access denied');
+      
+      // Update status based on progress
+      if (phase === 'to_pickup' && progress >= 0.5 && i === Math.floor(steps / 2)) {
+        await orderRepository.update(orderId, {
+          status: 'pickup_started',
+          pickup_started_at: new Date()
+        });
+        
+        if (order) {
+          await this.notificationService.sendOrderNotification(
+            order.customer_id,
+            order.order_number,
+            'pickup_started',
+            {
+              message: 'Driver has started pickup',
+              timestamp: new Date().toISOString()
+            }
+          );
+        }
       }
+      
+      if (phase === 'to_delivery' && progress >= 0.5 && i === Math.floor(steps / 2)) {
+        await orderRepository.update(orderId, {
+          status: 'in_transit',
+          in_transit_at: new Date()
+        });
+        
+        if (order) {
+          await this.notificationService.sendOrderNotification(
+            order.customer_id,
+            order.order_number,
+            'in_transit',
+            {
+              message: 'Order is in transit to delivery location',
+              timestamp: new Date().toISOString()
+            }
+          );
+        }
+      }
+      
+      // Wait before next update
+      await this.delay(interval);
+    }
+  }
+  
+  // Optimize and simulate route for multiple orders
+  private async optimizeAndSimulateDriverRoute(driverId: string): Promise<void> {
+    try {
+      const activeOrders = await orderRepository.findByDriverId(driverId, {
+        status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+      });
+      
+      if (activeOrders.length <= 1) return;
+      
+      // Convert to capacity format for optimization
+      const orderCapacities = activeOrders.map(order => ({
+        orderId: order.id,
+        weight: order.total_weight_kg,
+        volume: order.total_volume_m3,
+        priority: order.priority || 'normal',
+        pickupLocation: {
+          lat: order.pickup_latitude,
+          lng: order.pickup_longitude
+        },
+        deliveryLocation: {
+          lat: order.delivery_latitude,
+          lng: order.delivery_longitude
+        }
+      }));
+      
+      // Get optimized route
+      const optimization = await this.capacityOptimizationService.optimizeMultipleOrders(
+        driverId,
+        orderCapacities
+      );
+      
+      // Update orders with sequence
+      for (const orderId of optimization.optimalSequence) {
+        const order = activeOrders.find(o => o.id === orderId);
+        if (order) {
+          const sequenceIndex = optimization.optimalSequence.indexOf(orderId);
+          await orderRepository.update(orderId, {
+            route_order_index: sequenceIndex + 1
+          });
+        }
+      }
+      
+      // Send optimized route to driver
+      await this.websocketUtil.sendToUser(
+        driverId,
+        'route_optimized',
+        {
+          optimization,
+          message: `Optimized route for ${activeOrders.length} orders`,
+          totalDistance: optimization.totalDistance,
+          totalDuration: optimization.totalDuration,
+          sequence: optimization.optimalSequence.map((id: string, index: number) => {
+            const order = activeOrders.find(o => o.id === id);
+            return {
+              sequence: index + 1,
+              orderNumber: order?.order_number,
+              address: order?.delivery_address
+            };
+          })
+        }
+      );
+      
+      // Start simulation for optimized route
+      await this.simulateOptimizedRoute(driverId, optimization, activeOrders);
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Route optimization failed:', errorMessage);
+    }
+  }
+  
+  // Simulate optimized route
+  private async simulateOptimizedRoute(
+    driverId: string,
+    optimization: any,
+    orders: Order[]
+  ): Promise<void> {
+    // Get driver's current location (simulated)
+    const startPoint = { lat: 59.925209, lng: 30.34174539999999 };
+    
+    // Follow the optimized sequence
+    for (const orderId of optimization.optimalSequence) {
+      const order = orders.find(o => o.id === orderId);
+      if (!order) continue;
+      
+      // Simulate to pickup
+      await this.simulateMovement(
+        order.id,
+        driverId,
+        startPoint,
+        { lat: order.pickup_latitude, lng: order.pickup_longitude },
+        'to_pickup'
+      );
+      
+      // Update start point to pickup location for next iteration
+      startPoint.lat = order.pickup_latitude;
+      startPoint.lng = order.pickup_longitude;
+      
+      // Simulate to delivery
+      await this.simulateMovement(
+        order.id,
+        driverId,
+        startPoint,
+        { lat: order.delivery_latitude, lng: order.delivery_longitude },
+        'to_delivery'
+      );
+      
+      // Update start point to delivery location for next iteration
+      startPoint.lat = order.delivery_latitude;
+      startPoint.lng = order.delivery_longitude;
+      
+      // Mark order as delivered
+      await orderRepository.update(order.id, {
+        status: 'delivered',
+        delivered_at: new Date(),
+        completed_at: new Date()
+      });
+      
+      // Process payment
+      await this.processPayment(order.id, order.customer_id, driverId, order.total_price);
+      
+      // Notify customer
+      await this.notificationService.sendOrderNotification(
+        order.customer_id,
+        order.order_number,
+        'order_delivered',
+        {
+          message: 'Your order has been delivered successfully',
+          deliveryTime: new Date().toLocaleTimeString()
+        }
+      );
+    }
+  }
+  
+  // Process payment
+  private async processPayment(
+    orderId: string,
+    customerId: string,
+    driverId: string,
+    amount: number
+  ): Promise<void> {
+    try {
+      await this.balanceService.processOrderPayment(
+        customerId,
+        driverId,
+        amount,
+        orderId
+      );
+      
+      this.logger.info(`Payment processed: $${amount} from customer ${customerId} to driver ${driverId}`);
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Payment processing failed:', errorMessage);
+      // Retry logic could be implemented here
+    }
+  }
+  
+  // Get order with full details
+  async getOrder(orderId: string, includeOptimization: boolean = false): Promise<any> {
+    try {
+      const order = await orderRepository.findById(orderId);
+      if (!order) {
+        const orderByNumber = await orderRepository.findByOrderNumber(orderId);
+        if (!orderByNumber) {
+          throw new Error('Order not found');
+        }
+        return await this.getOrder(orderByNumber.id, includeOptimization);
+      }
+      
+      // Get tracking data
+      const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
+      
+      // Get driver info
+      const driverInfo = order.driver_id ? await this.getDriverInfo(order.driver_id) : null;
+      
+      // Get vehicle info
+      const vehicleInfo = order.driver_id ? await this.getVehicleInfo(order.driver_id) : null;
       
       // Get messages
-      const messages = await this.messagingService.getOrderMessages(orderId, userId);
-      
-      // Get tracking locations
-      const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
+      const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
       
       // Calculate progress
       const progress = this.calculateOrderProgress(order);
       
-      // Get driver route if applicable
-      let driverRoute = null;
-      if (order.status === 'in_transit' || order.status === 'route_to_pickup') {
-        driverRoute = await this.routeOptimizationService.getDriverRoute(
-          order.driver_id,
-          new Date()
-        );
+      // Get optimization if requested and driver has multiple orders
+      let optimization = null;
+      if (includeOptimization && order.driver_id) {
+        const driverOrders = await orderRepository.findByDriverId(order.driver_id, {
+          status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+        });
+        
+        if (driverOrders.length > 1) {
+          optimization = await this.getOptimizationForDriver(order.driver_id, driverOrders);
+        }
       }
       
+      // Format response
       return {
-        success: true,
-        order: this.formatOrderForUI(order),
+        id: order.id,
+        orderId: order.order_number,
+        status: order.status,
+        createdAt: order.created_at,
+        
+        customerInfo: {
+          id: order.customer_id,
+          name: order.pickup_contact_name,
+          phone: order.pickup_contact_phone
+        },
+        
+        locations: {
+          pickup: {
+            address: order.pickup_address,
+            coordinates: {
+              lat: order.pickup_latitude,
+              lng: order.pickup_longitude
+            }
+          },
+          delivery: {
+            address: order.delivery_address,
+            coordinates: {
+              lat: order.delivery_latitude,
+              lng: order.delivery_longitude
+            }
+          },
+          distance: {
+            km: order.estimated_distance_km
+          }
+        },
+        
+        packageDetails: {
+          weight: order.total_weight_kg,
+          volume: order.total_volume_m3,
+          description: order.package_description
+        },
+        
+        driverInfo,
+        vehicleInfo,
+        
+        pricing: {
+          total: order.total_price,
+          breakdown: {
+            base: order.base_price,
+            distance: order.distance_fee,
+            weight: order.weight_fee,
+            volume: order.volume_fee
+          }
+        },
+        
+        timing: {
+          estimatedDuration: order.estimated_duration_minutes,
+          actualDuration: order.actual_duration_minutes
+        },
+        
         progress,
-        messages: messages.map(msg => this.formatMessageForUI(msg)),
-        driverRoute
+        tracking: tracking.map(t => ({
+          latitude: t.latitude,
+          longitude: t.longitude,
+          timestamp: t.timestamp,
+          speed: t.speed
+        })),
+        
+        messages: messages.map(msg => ({
+          id: msg.id,
+          senderType: msg.sender_type,
+          senderName: msg.senderName,
+          content: msg.content,
+          createdAt: msg.created_at,
+          readStatus: msg.read_status
+        })),
+        
+        optimization,
+        
+        currentLocation: order.driver_current_lat && order.driver_current_lng ? {
+          latitude: order.driver_current_lat,
+          longitude: order.driver_current_lng,
+          lastUpdated: order.driver_last_updated
+        } : null
       };
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get order details:', errorMessage);
+      this.logger.error('Failed to get order:', errorMessage);
       throw error;
     }
   }
   
   // Get customer orders
-  async getCustomerOrders(customerId: string, pagination: any): Promise<OrdersListResponse> {
+  async getCustomerOrders(customerId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
     try {
-      const result = await orderRepository.searchOrders(
-        { customerId },
-        pagination
-      );
+      const orders = await orderRepository.findByCustomerId(customerId, {
+        status,
+        limit,
+        offset: (page - 1) * limit
+      });
       
-      const orders = result.orders.map(order => this.formatOrderForUI(order));
+      const ordersWithDetails = await Promise.all(
+        orders.map(async (order) => {
+          const progress = this.calculateOrderProgress(order);
+          const driverInfo = order.driver_id ? await this.getDriverInfo(order.driver_id) : null;
+          
+          return {
+            id: order.id,
+            orderId: order.order_number,
+            status: order.status,
+            createdAt: order.created_at,
+            pickupAddress: order.pickup_address,
+            deliveryAddress: order.delivery_address,
+            totalPrice: order.total_price,
+            packageWeight: order.total_weight_kg,
+            packageVolume: order.total_volume_m3,
+            driverInfo,
+            progress
+          };
+        })
+      );
       
       return {
         success: true,
-        orders,
+        orders: ordersWithDetails,
         pagination: {
-          page: result.page,
-          limit: result.limit,
-          total: result.total,
-          totalPages: result.totalPages
+          page,
+          limit,
+          total: orders.length,
+          hasMore: orders.length === limit
         }
       };
       
@@ -5616,24 +5463,60 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
     }
   }
   
-  // Get driver orders
-  async getDriverOrders(driverId: string, pagination: any): Promise<OrdersListResponse> {
+  // Get driver orders with optimization
+  async getDriverOrders(driverId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
     try {
-      const result = await orderRepository.searchOrders(
-        { driverId },
-        pagination
+      const orders = await orderRepository.findByDriverId(driverId, {
+        status: status as any,
+        limit,
+        offset: (page - 1) * limit
+      });
+      
+      // Get optimization for active orders
+      const activeOrders = orders.filter(o => 
+        ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit'].includes(o.status)
       );
       
-      const orders = result.orders.map(order => this.formatOrderForUI(order));
+      let optimization = null;
+      if (activeOrders.length > 1) {
+        optimization = await this.getOptimizationForDriver(driverId, activeOrders);
+      }
+      
+      const ordersWithDetails = await Promise.all(
+        orders.map(async (order) => {
+          const progress = this.calculateOrderProgress(order);
+          const customerInfo = {
+            name: order.pickup_contact_name,
+            phone: order.pickup_contact_phone
+          };
+          
+          return {
+            id: order.id,
+            orderId: order.order_number,
+            status: order.status,
+            createdAt: order.created_at,
+            pickupAddress: order.pickup_address,
+            deliveryAddress: order.delivery_address,
+            totalPrice: order.total_price,
+            driverEarnings: order.driver_earnings,
+            packageWeight: order.total_weight_kg,
+            packageVolume: order.total_volume_m3,
+            customerInfo,
+            progress,
+            routeOrderIndex: order.route_order_index
+          };
+        })
+      );
       
       return {
         success: true,
-        orders,
+        orders: ordersWithDetails,
+        optimization,
         pagination: {
-          page: result.page,
-          limit: result.limit,
-          total: result.total,
-          totalPages: result.totalPages
+          page,
+          limit,
+          total: orders.length,
+          hasMore: orders.length === limit
         }
       };
       
@@ -5644,65 +5527,8 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
     }
   }
   
-  // Optimize driver route
-  async optimizeDriverRoute(driverId: string): Promise<any> {
-    try {
-      // Get driver's pending and active orders
-      const orders = await orderRepository.findByDriverId(driverId, {
-        status: ['pending', 'driver_assigned', 'route_to_pickup']
-      });
-      
-      if (orders.length === 0) {
-        throw new Error('No orders to optimize');
-      }
-      
-      // Optimize route
-      const optimizedRoute = await this.routeOptimizationService.optimizeDriverRoute(
-        driverId,
-        orders
-      );
-      
-      // Update orders with route sequence
-      for (const order of optimizedRoute.orders) {
-        await orderRepository.update(order.orderId, {
-          route_order_index: order.sequence
-        });
-      }
-      
-      // Send notification to driver
-      await this.notificationService.sendDriverNotification(
-        driverId,
-        'route_optimized',
-        {
-          totalOrders: optimizedRoute.orders.length,
-          totalDistance: optimizedRoute.totalDistance,
-          estimatedTime: optimizedRoute.totalDuration,
-          estimatedSavings: optimizedRoute.estimatedSavings
-        }
-      );
-      
-      // Send real-time update
-      await this.websocketUtil.sendToUser(
-        driverId,
-        'route_optimized',
-        { route: optimizedRoute }
-      );
-      
-      return {
-        success: true,
-        route: optimizedRoute,
-        orders: optimizedRoute.orders
-      };
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to optimize driver route:', errorMessage);
-      throw error;
-    }
-  }
-  
-  // Send message between customer and driver
-  async sendOrderMessage(
+  // Send message
+  async sendMessage(
     orderId: string,
     senderId: string,
     senderType: 'customer' | 'driver',
@@ -5716,11 +5542,22 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
         throw new Error('Order not found');
       }
       
-      // Determine receiver
+      // Verify sender access
+      if (senderType === 'customer' && order.customer_id !== senderId) {
+        throw new Error('Customer not authorized');
+      }
+      
+      if (senderType === 'driver' && order.driver_id !== senderId) {
+        throw new Error('Driver not assigned to this order');
+      }
+      
       const receiverId = senderType === 'customer' ? order.driver_id : order.customer_id;
       const receiverType = senderType === 'customer' ? 'driver' : 'customer';
       
-      // Send message
+      if (!receiverId) {
+        throw new Error('No receiver available');
+      }
+      
       const message = await this.messagingService.sendMessage(
         orderId,
         senderId,
@@ -5735,11 +5572,11 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
       // Update unread count
       if (receiverType === 'customer') {
         await orderRepository.update(orderId, {
-          unread_customer_messages: order.unread_customer_messages + 1
+          unread_customer_messages: (order as any).unread_customer_messages + 1 || 1
         });
       } else {
         await orderRepository.update(orderId, {
-          unread_driver_messages: order.unread_driver_messages + 1
+          unread_driver_messages: (order as any).unread_driver_messages + 1 || 1
         });
       }
       
@@ -5748,16 +5585,24 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
         receiverId,
         'new_message',
         {
-          orderId,
-          messageId: message.id,
-          senderName: senderType === 'customer' ? order.customer_name : order.driver_name,
-          preview: content.substring(0, 100)
+          orderId: order.order_number,
+          senderId,
+          senderType,
+          preview: content.length > 100 ? content.substring(0, 100) + '...' : content,
+          timestamp: new Date().toISOString()
         }
       );
       
       return {
         success: true,
-        message: this.formatMessageForUI(message)
+        message: {
+          id: message.id,
+          senderId,
+          senderType,
+          content,
+          messageType,
+          createdAt: new Date()
+        }
       };
       
     } catch (error: unknown) {
@@ -5768,12 +5613,7 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
   }
   
   // Rate driver
-  async rateDriver(
-    orderId: string,
-    customerId: string,
-    rating: number,
-    review?: string
-  ): Promise<any> {
+  async rateDriver(orderId: string, customerId: string, rating: number, review?: string): Promise<any> {
     try {
       const order = await orderRepository.findById(orderId);
       if (!order) {
@@ -5796,36 +5636,22 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
       await this.messagingService.saveDriverRating(
         orderId,
         customerId,
-        order.driver_id,
+        order.driver_id!,
         rating,
         review
       );
       
-      // Calculate new average rating
-      const newAverageRating = await this.calculateNewDriverRating(
-        order.driver_id,
-        rating,
-        order.driver_rating || 0
-      );
+      // Calculate new average (your formula: (current + new) / 2)
+      const currentRating = await this.getDriverRating(order.driver_id!);
+      const newAverage = (currentRating + rating) / 2;
       
-      // Update driver rating
-      await orderRepository.updateDriverRating(order.driver_id, newAverageRating);
-      
-      // Send notification to driver
-      await this.notificationService.sendDriverNotification(
-        order.driver_id,
-        'rating_received',
-        {
-          orderId,
-          rating,
-          review,
-          newAverageRating
-        }
-      );
+      // Update driver rating in database
+      // This would typically update the driver service, but for now we'll log it
+      this.logger.info(`Driver ${order.driver_id} rated ${rating}. Current: ${currentRating}, New average: ${newAverage}`);
       
       return {
         success: true,
-        newAverageRating,
+        newAverageRating: parseFloat(newAverage.toFixed(2)),
         message: 'Rating submitted successfully'
       };
       
@@ -5844,9 +5670,38 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
       // Get recent transactions
       const recentTransactions = await this.balanceService.getRecentTransactions(userId, 10);
       
+      // Calculate this week's totals from orders
+      const startOfWeek = new Date();
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+      startOfWeek.setHours(0, 0, 0, 0);
+      
+      let thisWeekTotal = 0;
+      if (userType === 'customer') {
+        const thisWeekOrders = await orderRepository.findByCustomerId(userId, {
+          status: 'completed',
+          limit: 100
+        });
+        
+        thisWeekTotal = thisWeekOrders
+          .filter(order => order.completed_at && new Date(order.completed_at) >= startOfWeek)
+          .reduce((sum, order) => sum + order.total_price, 0);
+      } else {
+        const thisWeekOrders = await orderRepository.findByDriverId(userId, {
+          status: 'completed',
+          limit: 100
+        });
+        
+        thisWeekTotal = thisWeekOrders
+          .filter(order => order.completed_at && new Date(order.completed_at) >= startOfWeek)
+          .reduce((sum, order) => sum + (order.driver_earnings || 0), 0);
+      }
+      
       return {
         success: true,
-        balance,
+        balance: {
+          ...balance,
+          thisWeekTotal: parseFloat(thisWeekTotal.toFixed(2))
+        },
         recentTransactions
       };
       
@@ -5858,184 +5713,208 @@ async getDriverCapacityInfo(driverId: string): Promise<any> {
   }
   
   // Helper methods
-  private calculateOrderProgress(order: Order): OrderProgress {
-    const progress: OrderProgress = {
-      orderPlaced: order.created_at,
-      driverAssigned: order.driver_accepted_at,
-      routeToPickup: order.delivery_started_at,
-      delivered: order.delivery_completed_at,
-      progressPercentage: 0,
-      currentStep: 'order_placed'
-    };
+  private calculateOrderProgress(order: Order): any {
+    const steps = [
+      { key: 'order_placed', label: 'Order Placed', date: order.created_at },
+      { key: 'driver_assigned', label: 'Driver Assigned', date: order.matched_at },
+      { key: 'driver_accepted', label: 'Driver Accepted', date: order.accepted_at },
+      { key: 'driver_enroute', label: 'Enroute to Pickup', date: order.driver_enroute_at },
+      { key: 'pickup_started', label: 'Pickup Started', date: order.pickup_started_at },
+      { key: 'in_transit', label: 'In Transit', date: order.in_transit_at },
+      { key: 'delivered', label: 'Delivered', date: order.delivered_at }
+    ];
     
-    // Calculate progress percentage
+    let currentStep = 0;
+    let progressPercentage = 0;
+    
     switch (order.status) {
       case 'pending':
-        progress.progressPercentage = 0;
-        progress.currentStep = 'order_placed';
+        currentStep = 0;
+        progressPercentage = 10;
         break;
-      case 'driver_assigned':
-        progress.progressPercentage = 25;
-        progress.currentStep = 'driver_assigned';
+      case 'matched':
+        currentStep = 1;
+        progressPercentage = 20;
         break;
-      case 'route_to_pickup':
-        progress.progressPercentage = 50;
-        progress.currentStep = 'route_to_pickup';
+      case 'driver_accepted':
+        currentStep = 2;
+        progressPercentage = 30;
+        break;
+      case 'driver_enroute':
+        currentStep = 3;
+        progressPercentage = 40;
+        break;
+      case 'pickup_started':
+        currentStep = 4;
+        progressPercentage = 50;
         break;
       case 'in_transit':
-        progress.progressPercentage = 75;
-        progress.currentStep = 'in_transit';
+        currentStep = 5;
+        progressPercentage = 70;
         break;
       case 'delivered':
       case 'completed':
-        progress.progressPercentage = 100;
-        progress.currentStep = 'delivered';
+        currentStep = 6;
+        progressPercentage = 100;
         break;
+      default:
+        currentStep = 0;
+        progressPercentage = 0;
     }
     
-    return progress;
+    return {
+      steps: steps.slice(0, currentStep + 1),
+      currentStep,
+      progressPercentage,
+      currentStatus: order.status
+    };
   }
   
-  private async recordStatusChange(
-    orderId: string,
-    status: string,
-    changedByType: string,
-    changedById: string,
-    notes?: string
-  ): Promise<void> {
-    // Implementation depends on your status history repository
-    // This is a placeholder
-    this.logger.info(`Status changed for order ${orderId}: ${status}`);
-  }
-  
-  private formatOrderForUI(order: any): any {
-    // Format order for UI display
+  private formatOrderForUI(order: Order, originalData: any | null): any {
+    if (originalData) {
+      // Use original data for rich formatting
+      return {
+        ...originalData,
+        databaseId: order.id,
+        status: order.status,
+        createdAt: order.created_at,
+        updatedAt: order.updated_at,
+        
+        // Add database fields
+        driverEarnings: order.driver_earnings,
+        paymentStatus: order.payment_status,
+        
+        // Add progress
+        progress: this.calculateOrderProgress(order)
+      };
+    }
+    
+    // Fallback to database data
     return {
       id: order.id,
       orderId: order.order_number,
-      orderNumber: order.order_number,
       status: order.status,
       createdAt: order.created_at,
-      lastUpdated: order.updated_at,
       
       customerInfo: {
         id: order.customer_id,
-        name: order.customer_name,
-        email: order.customer_email,
-        phone: order.customer_phone,
-        userType: 'customer'
+        name: order.pickup_contact_name,
+        phone: order.pickup_contact_phone
       },
       
       locations: {
         pickup: {
           address: order.pickup_address,
           coordinates: {
-            lat: order.pickup_lat,
-            lng: order.pickup_lng
+            lat: order.pickup_latitude,
+            lng: order.pickup_longitude
           }
         },
         delivery: {
           address: order.delivery_address,
           coordinates: {
-            lat: order.delivery_lat,
-            lng: order.delivery_lng
+            lat: order.delivery_latitude,
+            lng: order.delivery_longitude
           }
         },
         distance: {
-          km: order.distance_km
+          km: order.estimated_distance_km
         }
       },
       
       packageDetails: {
-        weight: {
-          value: order.weight_kg,
-          unit: 'kg'
-        },
-        volume: {
-          value: order.volume_m3,
-          unit: 'm³'
-        },
-        urgency: order.urgency
-      },
-      
-      driverInfo: {
-        id: order.driver_id,
-        name: order.driver_name,
-        phone: order.driver_phone,
-        email: order.driver_email,
-        rating: order.driver_rating,
-        matchScore: order.driver_match_score,
-        profileImage: order.driver_image_url
-      },
-      
-      vehicleInfo: {
-        type: order.vehicle_type,
-        make: order.vehicle_make,
-        model: order.vehicle_model,
-        licensePlate: order.vehicle_license_plate,
-        capacity: {
-          maxWeight: order.vehicle_max_weight,
-          maxVolume: order.vehicle_max_volume
-        },
-        imageUrl: order.vehicle_image_url
+        weight: order.total_weight_kg,
+        volume: order.total_volume_m3,
+        description: order.package_description
       },
       
       pricing: {
-        estimatedPrice: {
-          usd: order.estimated_price_usd,
-          rub: order.estimated_price_local
-        },
-        currency: order.currency
+        total: order.total_price
       },
       
-      timing: {
-        estimatedDuration: {
-          minutes: order.estimated_duration_minutes
-        }
-      },
-      
-      // Additional fields
-      driverAccepted: order.driver_accepted,
-      driverAcceptedAt: order.driver_accepted_at,
-      deliveryStartedAt: order.delivery_started_at,
-      deliveryCompletedAt: order.delivery_completed_at,
-      customerRating: order.customer_rating,
-      routeOrderIndex: order.route_order_index,
-      
-      // For UI display
-      displayPrice: `$${order.estimated_price_usd.toFixed(2)}`,
-      displayWeight: `${order.weight_kg} kg`,
-      displayVolume: `${order.volume_m3} m³`
+      progress: this.calculateOrderProgress(order)
     };
   }
   
-  private formatMessageForUI(message: any): any {
+  private async getDriverInfo(driverId: string): Promise<any> {
+    // In production, this would call your driver service
+    // For simulation, return mock data
     return {
-      id: message.id,
-      senderId: message.sender_id,
-      senderType: message.sender_type,
-      senderName: message.sender_name,
-      content: message.content,
-      messageType: message.message_type,
-      readStatus: message.read_status,
-      readAt: message.read_at,
-      createdAt: message.created_at
+      id: driverId,
+      name: `Driver ${driverId.substring(0, 8)}`,
+      phone: '+1234567890',
+      email: `driver${driverId.substring(0, 8)}@example.com`,
+      rating: 4.5,
+      profileImage: `https://ui-avatars.com/api/?name=Driver&background=random`,
+      totalDeliveries: Math.floor(Math.random() * 100) + 10
     };
   }
   
-  private async calculateNewDriverRating(
-    driverId: string,
-    newRating: number,
-    currentRating: number
-  ): Promise<number> {
-    // Get all ratings for this driver
-    const ratings = await this.messagingService.getDriverRatings(driverId);
+  private async getDriverName(driverId: string): Promise<string> {
+    const info = await this.getDriverInfo(driverId);
+    return info.name;
+  }
+  
+  private async getDriverRating(driverId: string): Promise<number> {
+    const info = await this.getDriverInfo(driverId);
+    return info.rating;
+  }
+  
+  private async getVehicleInfo(driverId: string): Promise<any> {
+    // In production, this would call your vehicle service
+    return {
+      type: 'Small Van',
+      make: 'Ford',
+      model: 'Transit',
+      licensePlate: 'ABC-123',
+      capacity: {
+        maxWeight: 100,
+        maxVolume: 10
+      },
+      imageUrl: 'https://example.com/van.jpg'
+    };
+  }
+  
+  private async getOptimizationForDriver(driverId: string, orders: Order[]): Promise<any> {
+    const orderCapacities = orders.map(order => ({
+      orderId: order.id,
+      weight: order.total_weight_kg,
+      volume: order.total_volume_m3,
+      priority: order.priority || 'normal',
+      pickupLocation: {
+        lat: order.pickup_latitude,
+        lng: order.pickup_longitude
+      },
+      deliveryLocation: {
+        lat: order.delivery_latitude,
+        lng: order.delivery_longitude
+      }
+    }));
     
-    // Calculate new average
-    const totalRatings = ratings.length + 1;
-    const sumRatings = ratings.reduce((sum, r) => sum + r.rating, 0) + newRating;
+    return await this.capacityOptimizationService.optimizeMultipleOrders(
+      driverId,
+      orderCapacities
+    );
+  }
+  
+  private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const toRad = (degrees: number) => degrees * (Math.PI / 180);
+    const toDeg = (radians: number) => radians * (180 / Math.PI);
     
-    return parseFloat((sumRatings / totalRatings).toFixed(2));
+    const dLon = toRad(lon2 - lon1);
+    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+    
+    let bearing = Math.atan2(y, x);
+    bearing = toDeg(bearing);
+    bearing = (bearing + 360) % 360;
+    
+    return Math.round(bearing);
+  }
+  
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
 
@@ -8871,56 +8750,28 @@ export const geocodingUtil = new GeocodingUtil();
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import { Logger } from './logger';
 
-export interface HttpClientConfig {
-  baseURL?: string;
-  timeout?: number;
-  headers?: Record<string, string>;
-  withCredentials?: boolean;
-}
-
-export interface RequestConfig extends AxiosRequestConfig {
-  retries?: number;
-  retryDelay?: number;
-  timeout?: number;
-}
-
-export interface Response<T = any> {
-  status: number;
-  statusText: string;
-  headers: any;
-  data: T;
-  config: RequestConfig;
-}
-
 export class HttpClient {
   private client: AxiosInstance;
   private logger: Logger;
-  private defaultConfig: HttpClientConfig;
 
-  constructor(config: HttpClientConfig = {}) {
+  constructor() {
     this.logger = new Logger('HttpClient');
-    this.defaultConfig = {
-      timeout: 30000, // 30 seconds default timeout
+    this.client = axios.create({
+      timeout: 10000,
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      ...config
-    };
-
-    this.client = axios.create(this.defaultConfig);
+        'x-service-secret': process.env.SERVICE_SECRET
+      }
+    });
 
     // Add request interceptor
     this.client.interceptors.request.use(
       (config) => {
-        this.logger.debug(`Request: ${config.method?.toUpperCase()} ${config.url}`);
-        if (config.data && !(config.data instanceof FormData)) {
-          this.logger.debug('Request data:', JSON.stringify(config.data));
-        }
+        this.logger.debug(`Service call: ${config.method?.toUpperCase()} ${config.url}`);
         return config;
       },
       (error) => {
-        this.logger.error('Request error:', error);
+        this.logger.error('Service call error:', error);
         return Promise.reject(error);
       }
     );
@@ -8928,25 +8779,23 @@ export class HttpClient {
     // Add response interceptor
     this.client.interceptors.response.use(
       (response) => {
-        this.logger.debug(`Response: ${response.status} ${response.config.url}`);
         return response;
       },
       async (error: AxiosError) => {
-        this.logger.error('Response error:', {
+        this.logger.error('Service call failed:', {
           url: error.config?.url,
           method: error.config?.method,
           status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data
+          statusText: error.response?.statusText
         });
         
         // Handle specific error cases
         if (error.code === 'ECONNABORTED') {
-          throw new Error(`Request timeout after ${error.config?.timeout}ms`);
+          throw new Error(`Service timeout after ${error.config?.timeout}ms`);
         }
         
         if (error.code === 'ENOTFOUND') {
-          throw new Error(`Unable to connect to ${error.config?.baseURL || error.config?.url}`);
+          throw new Error(`Service not available: ${error.config?.baseURL || error.config?.url}`);
         }
         
         return Promise.reject(error);
@@ -8954,212 +8803,84 @@ export class HttpClient {
     );
   }
 
-  async request<T = any>(config: RequestConfig): Promise<Response<T>> {
-    const {
-      retries = 3,
-      retryDelay = 1000,
-      ...axiosConfig
-    } = config;
-
-    let lastError: any;
-    
-    for (let attempt = 1; attempt <= retries; attempt++) {
-      try {
-        const response = await this.client.request<T>(axiosConfig);
-        return {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-          data: response.data,
-          config: config
-        };
-      } catch (error: any) {
-        lastError = error;
-        
-        // Don't retry on 4xx errors (except 429 - rate limiting)
-        if (error.response?.status >= 400 && error.response?.status < 500 && error.response?.status !== 429) {
-          throw this.formatError(error);
-        }
-        
-        // Don't retry on non-retryable errors
-        if (this.isNonRetryableError(error)) {
-          throw this.formatError(error);
-        }
-        
-        if (attempt < retries) {
-          const delay = retryDelay * Math.pow(2, attempt - 1); // Exponential backoff
-          this.logger.warn(`Request failed, retrying in ${delay}ms (attempt ${attempt}/${retries})`);
-          await this.delay(delay);
-        }
+  async request<T = any>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    try {
+      return await this.client.request<T>(config);
+    } catch (error: any) {
+      if (error.response) {
+        throw new Error(`Service error ${error.response.status}: ${JSON.stringify(error.response.data)}`);
+      } else if (error.request) {
+        throw new Error('Service not responding');
+      } else {
+        throw error;
       }
     }
-    
-    throw this.formatError(lastError);
   }
 
-  async get<T = any>(url: string, config?: RequestConfig): Promise<Response<T>> {
-    return this.request<T>({
-      method: 'GET',
-      url,
-      ...config
-    });
+  async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: 'GET', url });
   }
 
-  async post<T = any>(url: string, data?: any, config?: RequestConfig): Promise<Response<T>> {
-    return this.request<T>({
-      method: 'POST',
-      url,
-      data,
-      ...config
-    });
+  async post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: 'POST', url, data });
   }
 
-  async put<T = any>(url: string, data?: any, config?: RequestConfig): Promise<Response<T>> {
-    return this.request<T>({
-      method: 'PUT',
-      url,
-      data,
-      ...config
-    });
+  async patch<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: 'PATCH', url, data });
   }
 
-  async patch<T = any>(url: string, data?: any, config?: RequestConfig): Promise<Response<T>> {
-    return this.request<T>({
-      method: 'PATCH',
-      url,
-      data,
-      ...config
-    });
+  async delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
+    return this.request<T>({ ...config, method: 'DELETE', url });
   }
 
-  async delete<T = any>(url: string, config?: RequestConfig): Promise<Response<T>> {
-    return this.request<T>({
-      method: 'DELETE',
-      url,
-      ...config
-    });
+  // Helper methods for specific service calls
+  async getCustomerDetails(customerId: string): Promise<any> {
+    const response = await this.get(
+      `${process.env.CUSTOMER_SERVICE_URL}/api/customers/${customerId}`
+    );
+    return response.data;
   }
 
-  async uploadFile<T = any>(
-    url: string, 
-    file: File | Buffer, 
-    fieldName: string = 'file',
-    additionalData: Record<string, any> = {},
-    config?: RequestConfig
-  ): Promise<Response<T>> {
-    const formData = new FormData();
-    
-    if (file instanceof File) {
-      formData.append(fieldName, file);
-    } else {
-      const blob = new Blob([file]);
-      formData.append(fieldName, blob, 'upload.xlsx');
+  async getAvailableDrivers(lat: number, lng: number, radius: number = 10): Promise<any[]> {
+    try {
+      const response = await this.get(
+        `${process.env.DRIVER_SERVICE_URL}/api/drivers/available`,
+        { params: { lat, lng, radius } }
+      );
+      return response.data || [];
+    } catch (error) {
+      this.logger.warn('Failed to get available drivers, returning empty array:', error);
+      return [];
     }
-    
-    // Append additional data
-    Object.entries(additionalData).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        formData.append(key, value.toString());
-      }
-    });
-    
-    return this.post<T>(url, formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
-      ...config
-    });
   }
 
-  async downloadFile(url: string, config?: RequestConfig): Promise<Buffer> {
-    const response = await this.request<ArrayBuffer>({
-      method: 'GET',
-      url,
-      responseType: 'arraybuffer',
-      ...config
-    });
-    
-    return Buffer.from(response.data);
+  async getDriverVehicle(driverId: string): Promise<any> {
+    try {
+      const response = await this.get(
+        `${process.env.DRIVER_SERVICE_URL}/api/drivers/${driverId}/vehicle`
+      );
+      return response.data;
+    } catch (error) {
+      this.logger.warn('Failed to get driver vehicle:', error);
+      return null;
+    }
   }
 
-  setBaseURL(baseURL: string): void {
-    this.client.defaults.baseURL = baseURL;
-  }
-
-  setHeader(key: string, value: string): void {
-    this.client.defaults.headers.common[key] = value;
-  }
-
-  removeHeader(key: string): void {
-    delete this.client.defaults.headers.common[key];
-  }
-
-  setAuthToken(token: string, type: string = 'Bearer'): void {
-    this.setHeader('Authorization', `${type} ${token}`);
-  }
-
-  clearAuthToken(): void {
-    this.removeHeader('Authorization');
-  }
-
-  setTimeout(timeout: number): void {
-    this.client.defaults.timeout = timeout;
-  }
-
-  private formatError(error: AxiosError): Error {
-    if (error.response) {
-      // Server responded with error
-      const status = error.response.status;
-      const data = error.response.data;
-      
-      let message = `HTTP ${status}`;
-      if (data && typeof data === 'object') {
-        const anyData = data as any;
-        if (anyData.message) {
-          message = anyData.message;
-        } else if (anyData.error) {
-          message = anyData.error;
+  async notifyDriverAssignment(driverId: string, orderId: string, orderDetails: any): Promise<void> {
+    try {
+      await this.post(
+        `${process.env.DRIVER_SERVICE_URL}/api/drivers/${driverId}/notify`,
+        {
+          type: 'order_assigned',
+          orderId,
+          orderDetails
         }
-      } else if (data && typeof data === 'string') {
-        message = data;
-      }
-      
-      const formattedError = new Error(message);
-      (formattedError as any).status = status;
-      (formattedError as any).data = data;
-      return formattedError;
-    } else if (error.request) {
-      // Request made but no response
-      return new Error('No response received from server');
-    } else {
-      // Error setting up request
-      return error;
+      );
+    } catch (error) {
+      this.logger.warn('Failed to notify driver:', error);
     }
-  }
-
-  private isNonRetryableError(error: any): boolean {
-    // Don't retry on these status codes
-    const nonRetryableStatuses = [400, 401, 403, 404, 409, 422];
-    
-    if (error.response?.status && nonRetryableStatuses.includes(error.response.status)) {
-      return true;
-    }
-    
-    // Don't retry on network errors that are unlikely to succeed
-    if (error.code && ['ENOTFOUND', 'ECONNREFUSED'].includes(error.code)) {
-      return true;
-    }
-    
-    return false;
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
-
-// Singleton instance for global use
-export const httpClient = new HttpClient();
 ```
 
 `utils\logger.ts`:
@@ -9960,4 +9681,248 @@ export class ValidationUtil {
 
 // Singleton instance
 export const validationUtil = new ValidationUtil();
+```
+
+`utils\websocket.util.ts`:
+
+```ts
+import { Server } from 'http';
+import WebSocket, { WebSocketServer } from 'ws';
+import { Logger } from './logger';
+
+export interface WebSocketMessage {
+  type: string;
+  data: any;
+  timestamp: number;
+}
+
+export class WebSocketUtil {
+  private wss: WebSocketServer;
+  private logger: Logger;
+  private connections: Map<string, WebSocket> = new Map(); // connectionId -> WebSocket
+  private userConnections: Map<string, Set<string>> = new Map(); // userId -> connectionIds
+
+  constructor(server?: Server) {
+    this.logger = new Logger('WebSocketUtil');
+    this.wss = new WebSocketServer({ 
+      server, 
+      path: '/ws',
+      perMessageDeflate: false
+    });
+    
+    this.setupWebSocketServer();
+  }
+
+  private setupWebSocketServer(): void {
+    this.wss.on('connection', (ws: WebSocket, request) => {
+      const connectionId = this.generateConnectionId();
+      
+      ws.on('message', (message: string) => {
+        try {
+          const parsed = JSON.parse(message.toString());
+          this.handleMessage(connectionId, ws, parsed);
+        } catch (error) {
+          this.logger.error('Failed to parse WebSocket message:', error);
+        }
+      });
+
+      ws.on('close', () => {
+        this.handleDisconnection(connectionId);
+      });
+
+      ws.on('error', (error) => {
+        this.logger.error('WebSocket error:', error);
+        this.handleDisconnection(connectionId);
+      });
+
+      // Send connection established message
+      ws.send(JSON.stringify({
+        type: 'connection_established',
+        data: { connectionId },
+        timestamp: Date.now()
+      }));
+    });
+
+    this.logger.info('WebSocket server initialized');
+  }
+
+  private handleMessage(connectionId: string, ws: WebSocket, message: WebSocketMessage): void {
+    const { type, data } = message;
+
+    switch (type) {
+      case 'authenticate':
+        this.handleAuthentication(connectionId, ws, data);
+        break;
+      case 'subscribe':
+        this.handleSubscription(connectionId, data);
+        break;
+      case 'unsubscribe':
+        this.handleUnsubscription(connectionId, data);
+        break;
+      case 'ping':
+        ws.send(JSON.stringify({
+          type: 'pong',
+          data: {},
+          timestamp: Date.now()
+        }));
+        break;
+      default:
+        this.logger.warn(`Unknown WebSocket message type: ${type}`);
+    }
+  }
+
+  private handleAuthentication(connectionId: string, ws: WebSocket, data: any): void {
+    const { userId, token } = data;
+    
+    if (!userId) {
+      ws.send(JSON.stringify({
+        type: 'auth_error',
+        data: { error: 'User ID is required' },
+        timestamp: Date.now()
+      }));
+      return;
+    }
+
+    // In production, validate the token here
+    this.connections.set(connectionId, ws);
+    
+    if (!this.userConnections.has(userId)) {
+      this.userConnections.set(userId, new Set());
+    }
+    this.userConnections.get(userId)!.add(connectionId);
+
+    ws.send(JSON.stringify({
+      type: 'authenticated',
+      data: { userId, connectionId },
+      timestamp: Date.now()
+    }));
+
+    this.logger.debug(`User ${userId} authenticated with connection ${connectionId}`);
+  }
+
+  private handleSubscription(connectionId: string, data: any): void {
+    const { channel, orderId } = data;
+    this.logger.debug(`Connection ${connectionId} subscribed to ${channel}:${orderId}`);
+  }
+
+  private handleUnsubscription(connectionId: string, data: any): void {
+    const { channel, orderId } = data;
+    this.logger.debug(`Connection ${connectionId} unsubscribed from ${channel}:${orderId}`);
+  }
+
+  private handleDisconnection(connectionId: string): void {
+    // Remove from connections
+    this.connections.delete(connectionId);
+    
+    // Remove from user connections
+    for (const [userId, connections] of this.userConnections.entries()) {
+      connections.delete(connectionId);
+      if (connections.size === 0) {
+        this.userConnections.delete(userId);
+      }
+    }
+
+    this.logger.debug(`Connection ${connectionId} disconnected`);
+  }
+
+  // Send message to specific user
+  async sendToUser(userId: string, type: string, data: any): Promise<void> {
+    const userConnections = this.userConnections.get(userId);
+    
+    if (!userConnections || userConnections.size === 0) {
+      return; // User is not connected
+    }
+
+    const message: WebSocketMessage = {
+      type,
+      data,
+      timestamp: Date.now()
+    };
+
+    const messageStr = JSON.stringify(message);
+    
+    for (const connectionId of userConnections) {
+      const ws = this.connections.get(connectionId);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(messageStr);
+        } catch (error) {
+          this.logger.error(`Failed to send message to user ${userId}:`, error);
+          // Remove broken connection
+          userConnections.delete(connectionId);
+          this.connections.delete(connectionId);
+        }
+      }
+    }
+  }
+
+  // Send message to specific connection
+  async sendToConnection(connectionId: string, type: string, data: any): Promise<void> {
+    const ws = this.connections.get(connectionId);
+    
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const message: WebSocketMessage = {
+      type,
+      data,
+      timestamp: Date.now()
+    };
+
+    try {
+      ws.send(JSON.stringify(message));
+    } catch (error) {
+      this.logger.error(`Failed to send message to connection ${connectionId}:`, error);
+      this.handleDisconnection(connectionId);
+    }
+  }
+
+  // Broadcast to all connected users
+  broadcast(type: string, data: any): void {
+    const message: WebSocketMessage = {
+      type,
+      data,
+      timestamp: Date.now()
+    };
+
+    const messageStr = JSON.stringify(message);
+    
+    for (const [connectionId, ws] of this.connections.entries()) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(messageStr);
+        } catch (error) {
+          this.logger.error(`Failed to broadcast to connection ${connectionId}:`, error);
+          this.handleDisconnection(connectionId);
+        }
+      }
+    }
+  }
+
+  // Get connection statistics
+  getStats(): {
+    totalConnections: number;
+    totalUsers: number;
+    users: { userId: string; connectionCount: number }[];
+  } {
+    const users = Array.from(this.userConnections.entries()).map(([userId, connections]) => ({
+      userId,
+      connectionCount: connections.size
+    }));
+
+    return {
+      totalConnections: this.connections.size,
+      totalUsers: this.userConnections.size,
+      users
+    };
+  }
+
+  private generateConnectionId(): string {
+    return `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+
+// Export singleton instance
+export const webSocketUtil = new WebSocketUtil();
 ```
