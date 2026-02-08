@@ -2,74 +2,84 @@ import { Request, Response, NextFunction } from 'express';
 import Joi from 'joi';
 
 export const validationSchemas = {
+  // Add to validationSchemas object
   order: {
     create: Joi.object({
-      pickup_address: Joi.string().required(),
-      pickup_latitude: Joi.number().required(),
-      pickup_longitude: Joi.number().required(),
-      pickup_contact_name: Joi.string().required(),
-      pickup_contact_phone: Joi.string().required(),
-      pickup_instructions: Joi.string(),
-      
-      delivery_address: Joi.string().required(),
-      delivery_latitude: Joi.number().required(),
-      delivery_longitude: Joi.number().required(),
-      delivery_contact_name: Joi.string().required(),
-      delivery_contact_phone: Joi.string().required(),
-      delivery_instructions: Joi.string(),
-      
-      total_weight_kg: Joi.number().positive().required(),
-      total_volume_m3: Joi.number().positive().required(),
-      package_description: Joi.string(),
-      fragile_items: Joi.boolean(),
-      temperature_controlled: Joi.boolean(),
-      
-      priority: Joi.string().valid('low', 'normal', 'high', 'urgent'),
-      customer_notes: Joi.string(),
-      
-      order_items: Joi.array().items(Joi.object({
-        item_name: Joi.string().required(),
-        quantity: Joi.number().integer().min(1),
-        weight_per_item_kg: Joi.number().positive(),
-        dimensions_length_cm: Joi.number().positive(),
-        dimensions_width_cm: Joi.number().positive(),
-        dimensions_height_cm: Joi.number().positive(),
-        fragile: Joi.boolean(),
-        temperature_sensitive: Joi.boolean(),
-        special_handling: Joi.string()
-      }))
-    }),
-    
-    bulk: Joi.object({
-      orders: Joi.array().items(Joi.object({
-        pickup_address: Joi.string().required(),
-        pickup_latitude: Joi.number().required(),
-        pickup_longitude: Joi.number().required(),
-        delivery_address: Joi.string().required(),
-        delivery_latitude: Joi.number().required(),
-        delivery_longitude: Joi.number().required(),
-        total_weight_kg: Joi.number().positive().required(),
-        total_volume_m3: Joi.number().positive().required()
-      })).min(1).max(100)
-    }),
-    
-    location: Joi.object({
-      latitude: Joi.number().min(-90).max(90).required(),
-      longitude: Joi.number().min(-180).max(180).required(),
-      speed: Joi.number().min(0).max(200),
-      bearing: Joi.number().min(0).max(360),
-      accuracy: Joi.number().min(0)
-    }),
-    
-    cancel: Joi.object({
-      reason: Joi.string().required(),
-      detailed_reason: Joi.string()
-    }),
-    
-    complete: Joi.object({
-      proof_image: Joi.string().uri(),
-      delivery_notes: Joi.string()
-    })
+      orderId: Joi.string().required(),
+      status: Joi.string().required(),
+      customerInfo: Joi.object({
+        id: Joi.string().required(),
+        name: Joi.string().required(),
+        email: Joi.string().email().required(),
+        phone: Joi.string().required(),
+        userType: Joi.string().valid('customer').required()
+      }).required(),
+      locations: Joi.object({
+        pickup: Joi.object({
+          address: Joi.string().required(),
+          coordinates: Joi.object({
+            lat: Joi.number().required(),
+            lng: Joi.number().required()
+          }).required()
+        }).required(),
+        delivery: Joi.object({
+          address: Joi.string().required(),
+          coordinates: Joi.object({
+            lat: Joi.number().required(),
+            lng: Joi.number().required()
+          }).required()
+        }).required(),
+        distance: Joi.object({
+          km: Joi.number().required(),
+          miles: Joi.number().required()
+        }).required()
+      }).required(),
+      packageDetails: Joi.object({
+        category: Joi.string().required(),
+        weight: Joi.object({
+          value: Joi.number().required(),
+          unit: Joi.string().valid('kg').required()
+        }).required(),
+        volume: Joi.object({
+          value: Joi.number().required(),
+          unit: Joi.string().valid('m³').required()
+        }).required(),
+        urgency: Joi.string().required()
+      }).required(),
+      driverInfo: Joi.object({
+        id: Joi.string().required(),
+        driverId: Joi.string().required(),
+        userId: Joi.string().required(),
+        name: Joi.string().required(),
+        phone: Joi.string().required(),
+        email: Joi.string().email().required(),
+        rating: Joi.number().min(0).max(5).required(),
+        matchScore: Joi.number().min(0).max(100).required()
+      }).required(),
+      vehicleInfo: Joi.object({
+        type: Joi.string().required(),
+        make: Joi.string().required(),
+        model: Joi.string().required(),
+        licensePlate: Joi.string().required(),
+        capacity: Joi.object({
+          maxWeight: Joi.number().required(),
+          maxVolume: Joi.number().required()
+        }).required()
+      }).required(),
+      pricing: Joi.object({
+        estimatedPrice: Joi.object({
+          usd: Joi.number().required(),
+          rub: Joi.number().required()
+        }).required(),
+        currency: Joi.string().required(),
+        baseCurrency: Joi.string().required()
+      }).required(),
+      timing: Joi.object({
+        estimatedDuration: Joi.object({
+          minutes: Joi.number().required()
+        }).required()
+      }).required()
+    }).options({ stripUnknown: true })
   },
   
   query: {
