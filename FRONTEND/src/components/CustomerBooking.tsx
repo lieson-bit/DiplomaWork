@@ -1118,25 +1118,10 @@ export function CustomerBooking() {
       );
     }
 
-    const allSuccess = pickupStatus === 'success' && deliveryStatus === 'success';
+
     const anyError = pickupStatus === 'error' || deliveryStatus === 'error';
 
-    if (allSuccess) {
-      const pickupMethod = geocodingResults.pickup.method;
-      const deliveryMethod = geocodingResults.delivery.method;
-      
-      return (
-        <div className="flex items-center text-green-700 bg-green-50 px-3 py-2 rounded-lg">
-          <Check className="h-4 w-4 mr-2" />
-          <span className="text-sm">
-            Coordinates obtained
-          </span>
-          <Badge variant="outline" className="ml-2 text-xs">
-            {pickupMethod === deliveryMethod ? pickupMethod : `${pickupMethod}/${deliveryMethod}`}
-          </Badge>
-        </div>
-      );
-    }
+  
 
     if (anyError) {
       return (
@@ -1179,22 +1164,7 @@ export function CustomerBooking() {
       }
     };
 
-    return (
-      <div className={`mt-2 text-xs ${getAccuracyColor()} flex items-center justify-between`}>
-        <div className="flex items-center">
-          <Globe className="h-3 w-3 mr-1" />
-          <span className="font-mono">{coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}</span>
-        </div>
-        {method && (
-          <Badge variant="outline" className="ml-2 text-xs">
-            <div className="flex items-center">
-              {getAccuracyIcon()}
-              <span className="ml-1">{method}</span>
-            </div>
-          </Badge>
-        )}
-      </div>
-    );
+   
   };
 
   // Price display component
@@ -1726,8 +1696,7 @@ export function CustomerBooking() {
                             </div>
                           )}
                           {orderData.locations?.pickup?.geocodingMethod && (
-                            <div className="mt-1 text-xs text-gray-500">
-                              Method: {orderData.locations.pickup.geocodingMethod} ({orderData.locations.pickup.accuracy || 'unknown'} accuracy)
+                            <div className="mt-1 text-xs text-gray-500">                      
                             </div>
                           )}
                         </div>
@@ -1752,7 +1721,6 @@ export function CustomerBooking() {
                           )}
                           {orderData.locations?.delivery?.geocodingMethod && (
                             <div className="mt-1 text-xs text-gray-500">
-                              Method: {orderData.locations.delivery.geocodingMethod} ({orderData.locations.delivery.accuracy || 'unknown'} accuracy)
                             </div>
                           )}
                         </div>
