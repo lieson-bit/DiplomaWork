@@ -114,4 +114,78 @@ Calculates estimated savings vs non-optimized route
 
 This solution provides a complete order management system tailored to your specific requirements. The system is ready to receive orders in your format and provide all the UI features you requested.
 
-So I want you to enable this in the order-service. 
+Driver Capacity Management:
+
+Real-time capacity checks before accepting orders
+
+Shows remaining weight/volume capacity
+
+Prevents overloading
+
+Dashboard showing utilization percentages
+
+Knapsack Optimization:
+
+Multi-dimensional knapsack (weight, volume, orders)
+
+Priority-based optimization
+
+Optimal order selection algorithm
+
+Route sequencing
+
+Driver Dashboard:
+
+Available capacity display
+
+Utilization percentages
+
+Efficiency score
+
+Recommendations for optimal loading
+
+Capacity Tracking:
+
+Daily capacity tracking
+
+Historical utilization data
+
+Performance metrics
+
+Automated recommendations
+
+How It Works:
+Before accepting an order: System checks if driver has capacity
+
+Capacity Display: Driver sees real-time capacity info on UI
+
+Optimization: System suggests optimal order mix
+
+Prevention: Stops driver from accepting orders that exceed capacity
+
+Tracking: Monitors capacity utilization over time
+Recommendations for optimal loading
+
+Capacity Tracking:
+
+Daily capacity tracking
+
+Historical utilization data
+
+Performance metrics
+
+Automated recommendations
+
+How It Works:
+Before accepting an order: System checks if driver has capacity
+
+Capacity Display: Driver sees real-time capacity info on UI
+
+Optimization: System suggests optimal order mix
+
+Prevention: Stops driver from accepting orders that exceed capacity
+
+Tracking: Monitors capacity utilization over time
+
+
+Okay these are my current codes, check them through and where you think needs to be rewritten give the the codes specifying the file

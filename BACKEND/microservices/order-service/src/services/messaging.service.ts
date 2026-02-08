@@ -1,168 +1,171 @@
 import { Logger } from '../utils/logger';
-import { WebSocketUtil } from '../utils/websocket.util';
-
-export interface Message {
-  id: string;
-  orderId: string;
-  senderId: string;
-  senderType: 'customer' | 'driver';
-  receiverId: string;
-  content: string;
-  timestamp: Date;
-  read: boolean;
-  messageType: 'text' | 'location' | 'image' | 'status_update';
-  metadata?: any;
-}
+import { db } from '../config/database';
 
 export class MessagingService {
-  private logger = new Logger('MessagingService');
-  private messages: Map<string, Message[]> = new Map(); // orderId -> messages
-  private websocketUtil: WebSocketUtil;
-  
-  constructor(websocketUtil: WebSocketUtil) {
-    this.websocketUtil = websocketUtil;
+  private logger: Logger;
+
+  constructor() {
+    this.logger = new Logger('MessagingService');
   }
-  
+
+  // Send message
   async sendMessage(
     orderId: string,
     senderId: string,
     senderType: 'customer' | 'driver',
+    receiverId: string,
+    receiverType: 'customer' | 'driver',
     content: string,
     messageType: 'text' | 'location' | 'image' | 'status_update' = 'text',
     metadata?: any
-  ): Promise<Message> {
+  ): Promise<any> {
     try {
-      // Get order to find receiver
-      const order = await this.getOrderDetails(orderId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
+      // Get sender name
+      const senderName = await this.getUserName(senderId, senderType);
       
-      const receiverId = senderType === 'customer' ? order.driver_id : order.customer_id;
-      if (!receiverId) {
-        throw new Error('No receiver found for this order');
-      }
+      const query = `
+        INSERT INTO order_messages 
+        (order_id, sender_id, sender_type, message_type, content, metadata)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `;
       
-      const message: Message = {
-        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      const result = await db.execute(query, [
         orderId,
         senderId,
         senderType,
-        receiverId,
-        content,
-        timestamp: new Date(),
-        read: false,
         messageType,
-        metadata
+        content,
+        metadata ? JSON.stringify(metadata) : null
+      ]);
+      
+      return {
+        id: result.insertId.toString(),
+        orderId,
+        senderId,
+        senderType,
+        senderName,
+        content,
+        messageType,
+        metadata,
+        readStatus: false,
+        createdAt: new Date()
       };
       
-      // Store message
-      if (!this.messages.has(orderId)) {
-        this.messages.set(orderId, []);
-      }
-      this.messages.get(orderId)!.push(message);
-      
-      // Send real-time notification via WebSocket
-      await this.websocketUtil.sendToUser(receiverId, 'new_message', {
-        ...message,
-        orderNumber: order.order_number
-      });
-      
-      // Also send to sender for confirmation
-      await this.websocketUtil.sendToUser(senderId, 'message_sent', {
-        ...message,
-        orderNumber: order.order_number
-      });
-      
-      this.logger.info(`Message sent for order ${orderId}: ${senderId} -> ${receiverId}`);
-      
-      return message;
-    } catch (error) {
-      this.logger.error('Failed to send message:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to send message:', errorMessage);
       throw error;
     }
   }
   
-  async sendLocationUpdate(
+  // Get order messages
+  async getOrderMessages(orderId: string, userId: string): Promise<any[]> {
+    try {
+      const query = `
+        SELECT * FROM order_messages 
+        WHERE order_id = ? 
+        ORDER BY created_at ASC
+      `;
+      
+      const messages = await db.query<any>(query, [orderId]);
+      
+      // Get sender names
+      const messagesWithNames = await Promise.all(
+        messages.map(async (msg) => {
+          const senderName = await this.getUserName(msg.sender_id, msg.sender_type);
+          return {
+            ...msg,
+            senderName
+          };
+        })
+      );
+      
+      return messagesWithNames;
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get messages:', errorMessage);
+      throw error;
+    }
+  }
+  
+  // Mark message as read
+  async markMessageAsRead(messageId: string, userId: string): Promise<void> {
+    try {
+      const query = `
+        UPDATE order_messages 
+        SET read_status = TRUE, read_at = NOW()
+        WHERE id = ? AND sender_id != ?
+      `;
+      
+      await db.execute(query, [messageId, userId]);
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to mark message as read:', errorMessage);
+      throw error;
+    }
+  }
+  
+  // Save driver rating
+  async saveDriverRating(
     orderId: string,
+    customerId: string,
     driverId: string,
-    latitude: number,
-    longitude: number,
-    estimatedArrival?: number
-  ): Promise<Message> {
-    return this.sendMessage(
-      orderId,
-      driverId,
-      'driver',
-      `📍 Driver location updated`,
-      'location',
-      {
-        latitude,
-        longitude,
-        estimatedArrival,
-        timestamp: new Date().toISOString()
-      }
-    );
-  }
-  
-  async sendStatusUpdate(
-    orderId: string,
-    senderId: string,
-    senderType: 'customer' | 'driver',
-    status: string,
-    notes?: string
-  ): Promise<Message> {
-    return this.sendMessage(
-      orderId,
-      senderId,
-      senderType,
-      `🔄 Status updated: ${status}`,
-      'status_update',
-      {
-        status,
-        notes,
-        timestamp: new Date().toISOString()
-      }
-    );
-  }
-  
-  async getOrderMessages(orderId: string, userId: string): Promise<Message[]> {
-    // Verify user has access to this order
-    const order = await this.getOrderDetails(orderId);
-    if (!order || (order.customer_id !== userId && order.driver_id !== userId)) {
-      throw new Error('Access denied');
-    }
-    
-    return this.messages.get(orderId) || [];
-  }
-  
-  async markAsRead(messageId: string, userId: string): Promise<void> {
-    for (const messages of this.messages.values()) {
-      const message = messages.find(m => m.id === messageId && m.receiverId === userId);
-      if (message) {
-        message.read = true;
-        break;
-      }
+    rating: number,
+    review?: string
+  ): Promise<void> {
+    try {
+      const query = `
+        INSERT INTO driver_ratings 
+        (driver_id, order_id, customer_id, rating, review)
+        VALUES (?, ?, ?, ?, ?)
+      `;
+      
+      await db.execute(query, [driverId, orderId, customerId, rating, review]);
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to save driver rating:', errorMessage);
+      throw error;
     }
   }
   
-  async getUnreadCount(userId: string): Promise<number> {
-    let count = 0;
-    for (const messages of this.messages.values()) {
-      count += messages.filter(m => m.receiverId === userId && !m.read).length;
+  // Get driver ratings
+  async getDriverRatings(driverId: string): Promise<{ rating: number }[]> {
+    try {
+      const query = `
+        SELECT rating FROM driver_ratings 
+        WHERE driver_id = ?
+      `;
+      
+      const ratings = await db.query<{ rating: number }>(query, [driverId]);
+      return ratings;
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get driver ratings:', errorMessage);
+      throw error;
     }
-    return count;
   }
   
-  private async getOrderDetails(orderId: string): Promise<any> {
-    // In production, this would query your database
-    // For now, return mock data
-    return {
-      id: orderId,
-      order_number: `ORD-${orderId.substr(0, 8)}`,
-      customer_id: 'cust_' + orderId,
-      driver_id: 'driver_' + orderId,
-      status: 'in_transit'
-    };
+  // Get user name
+  private async getUserName(userId: string, userType: string): Promise<string> {
+    try {
+      if (userType === 'customer') {
+        const query = `SELECT pickup_contact_name as name FROM orders WHERE customer_id = ? LIMIT 1`;
+        const result = await db.queryOne<any>(query, [userId]);
+        return result?.name || 'Customer';
+      } else {
+        const query = `SELECT pickup_contact_name as name FROM orders WHERE driver_id = ? LIMIT 1`;
+        const result = await db.queryOne<any>(query, [userId]);
+        return result?.name || 'Driver';
+      }
+    } catch {
+      return userType === 'customer' ? 'Customer' : 'Driver';
+    }
   }
 }
+
+// Export singleton instance
+export const messagingService = new MessagingService();
