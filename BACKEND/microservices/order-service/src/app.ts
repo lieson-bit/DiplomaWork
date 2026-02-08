@@ -396,7 +396,9 @@ app.get('/health', (req: express.Request, res: express.Response) => {
     timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    websocket: 'enabled',
+    api: 'running'
   });
 });
 

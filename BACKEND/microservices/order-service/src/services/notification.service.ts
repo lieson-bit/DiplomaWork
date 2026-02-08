@@ -28,6 +28,9 @@ export class NotificationService {
       // Send via WebSocket
       await this.websocketUtil.sendToUser(userId, 'notification', notification);
       
+      // Also log to database if needed
+      // await this.saveNotificationToDatabase(userId, type, orderId, data);
+      
       this.logger.debug(`Notification sent to ${userId}: ${type}`);
     } catch (error) {
       this.logger.warn(`Failed to send notification to ${userId}:`, error);

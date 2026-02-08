@@ -62,6 +62,7 @@ export interface Order {
   actual_distance_km: number;
   actual_duration_minutes: number;
   route_polyline: string | null;
+  route_order_index: number;
   
   // Status & Timing
   status: 'pending' | 'matched' | 'driver_accepted' | 'driver_enroute' | 
@@ -74,11 +75,13 @@ export interface Order {
   scheduled_pickup_at: Date | null;
   matched_at: Date | null;
   accepted_at: Date | null;
+  driver_enroute_at: Date | null;
   pickup_started_at: Date | null;
   in_transit_at: Date | null;
   delivered_at: Date | null;
   completed_at: Date | null;
   cancelled_at: Date | null;
+  driver_route_at: Date | null;
   
   // Driver Location Tracking
   driver_current_lat: number | null;
@@ -89,6 +92,10 @@ export interface Order {
   customer_balance_updated: boolean;
   driver_balance_updated: boolean;
   balance_update_attempts: number;
+
+  // Communication 
+  unread_customer_messages: number;
+  unread_driver_messages: number;
   
   // Additional metadata
   is_bulk_order: boolean;
@@ -105,6 +112,7 @@ export interface Order {
 export interface CreateOrderData {
   order_number?: string;
   customer_id: string;
+  driver_id?: string;
   pickup_address: string;
   pickup_latitude: number;
   pickup_longitude: number;
@@ -149,6 +157,9 @@ export interface CreateOrderData {
   customer_notes?: string;
   is_bulk_order?: boolean;
   bulk_order_id?: string;
+  route_order_index?: number;
+  unread_customer_messages?: number;
+  unread_driver_messages?: number;
 }
 
 export interface UpdateOrderData {
@@ -158,6 +169,11 @@ export interface UpdateOrderData {
   payment_method?: string;
   payment_transaction_id?: string;
   payment_processed_at?: Date;
+
+  driver_enroute_at?: Date;
+  route_order_index?: number;
+  unread_customer_messages?: number;
+  unread_driver_messages?: number;
   
   actual_distance_km?: number;
   actual_duration_minutes?: number;
@@ -363,31 +379,39 @@ export class OrderRepository {
   }
 
   async findByDriverId(driverId: string, options?: {
-    status?: string;
+    status?: string | string[]; // CHANGE THIS LINE
     limit?: number;
     offset?: number;
   }): Promise<Order[]> {
     try {
       let sql = 'SELECT * FROM orders WHERE driver_id = ?';
       const params: any[] = [driverId];
-      
+
       if (options?.status) {
-        sql += ' AND status = ?';
-        params.push(options.status);
+        if (Array.isArray(options.status)) {
+          // Handle array of statuses
+          const placeholders = options.status.map(() => '?').join(',');
+          sql += ` AND status IN (${placeholders})`;
+          params.push(...options.status);
+        } else {
+          // Handle single status
+          sql += ' AND status = ?';
+          params.push(options.status);
+        }
       }
-      
+
       sql += ' ORDER BY created_at DESC';
-      
+
       if (options?.limit) {
         sql += ' LIMIT ?';
         params.push(options.limit);
       }
-      
+
       if (options?.offset) {
         sql += ' OFFSET ?';
         params.push(options.offset);
       }
-      
+
       return await db.query<Order>(sql, params);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

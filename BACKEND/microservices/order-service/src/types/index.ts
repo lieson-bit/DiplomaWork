@@ -140,6 +140,7 @@ export interface Order {
     serviceHours: string;
   };
   
+  
   // System Info
   systemInfo: {
     geocodingStatus: {
@@ -444,6 +445,34 @@ export interface LocationUpdate {
 // WebSocket Events
 export interface WebSocketEvent {
   type: 'location_update' | 'status_change' | 'new_message' | 'order_update' | 'notification';
+  data: any;
+  timestamp: Date;
+}
+
+export interface OrderProgress {
+  steps: Array<{
+    key: string;
+    label: string;
+    date?: Date;
+    completed: boolean;
+  }>;
+  currentStep: string;
+  progressPercentage: number;
+  currentStatus: string;
+}
+
+export interface OrderWithProgress extends Order {
+  progress: OrderProgress;
+  unreadMessages?: number;
+  currentLocation?: {
+    latitude: number;
+    longitude: number;
+    lastUpdated: Date;
+  };
+}
+export interface WebSocketEvent {
+  type: 'location_update' | 'status_change' | 'new_message' | 'order_update' | 
+        'notification';
   data: any;
   timestamp: Date;
 }

@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     
+    -- Add columns for tracking balance updates
+    customer_balance_updated BOOLEAN DEFAULT FALSE,
+    driver_balance_updated BOOLEAN DEFAULT FALSE,
+    balance_update_attempts INT DEFAULT 0;
+
     -- Indexes
     INDEX idx_orders_customer (customer_id),
     INDEX idx_orders_driver (driver_id),
@@ -305,6 +310,38 @@ CREATE TABLE IF NOT EXISTS driver_capacity_tracking (
     UNIQUE KEY unique_driver_date (driver_id, date),
     INDEX idx_capacity_driver (driver_id),
     INDEX idx_capacity_date (date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
+CREATE TABLE IF NOT EXISTS user_balances (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id VARCHAR(36) NOT NULL UNIQUE,
+    user_type ENUM('customer', 'driver') NOT NULL,
+    available_balance DECIMAL(12, 2) DEFAULT 0.00,
+    pending_balance DECIMAL(12, 2) DEFAULT 0.00,
+    total_earned DECIMAL(12, 2) DEFAULT 0.00,
+    total_spent DECIMAL(12, 2) DEFAULT 0.00,
+    currency VARCHAR(3) DEFAULT 'USD',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_balances_user (user_id),
+    INDEX idx_balances_user_type (user_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS balance_transactions (
+    id VARCHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id VARCHAR(36) NOT NULL,
+    order_id VARCHAR(36) NOT NULL,
+    transaction_type ENUM('payment', 'refund', 'payout', 'adjustment') NOT NULL,
+    amount DECIMAL(10, 2) NOT NULL,
+    previous_balance DECIMAL(12, 2),
+    new_balance DECIMAL(12, 2),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+    INDEX idx_transactions_user (user_id),
+    INDEX idx_transactions_order (order_id),
+    INDEX idx_transactions_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Update orders table with capacity tracking

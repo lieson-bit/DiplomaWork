@@ -217,11 +217,18 @@ export class OrderService {
       estimated_duration_minutes: data.timing.estimatedDuration.minutes,
       
       // Status
-      priority: data.packageDetails.urgency,
+      priority: data.packageDetails.urgency || 'normal',
       
       // Additional
       customer_notes: `Urgency: ${data.packageDetails.urgencyLabel}, Category: ${data.packageDetails.categoryLabel}`,
-      is_bulk_order: false
+      is_bulk_order: false,
+
+      // Initialize communication fields
+      unread_customer_messages: 0,
+      unread_driver_messages: 0,
+
+      // Initialize route order index
+      route_order_index: 0
     };
     
     return await orderRepository.create(orderPayload);
@@ -564,7 +571,7 @@ export class OrderService {
             route_order_index: sequenceIndex + 1
           });
         }
-      }
+      } 
       
       // Send optimized route to driver
       await this.websocketUtil.sendToUser(
@@ -573,8 +580,8 @@ export class OrderService {
         {
           optimization,
           message: `Optimized route for ${activeOrders.length} orders`,
-          totalDistance: optimization.totalDistance,
-          totalDuration: optimization.totalDuration,
+          totalDistance: optimization.totalDistance || 0,
+          totalDuration: optimization.totalDuration || 0,
           sequence: optimization.optimalSequence.map((id: string, index: number) => {
             const order = activeOrders.find(o => o.id === id);
             return {
@@ -968,11 +975,11 @@ export class OrderService {
       // Update unread count
       if (receiverType === 'customer') {
         await orderRepository.update(orderId, {
-          unread_customer_messages: (order as any).unread_customer_messages + 1 || 1
+          unread_customer_messages: ((order as any).unread_customer_messages || 0) + 1
         });
       } else {
         await orderRepository.update(orderId, {
-          unread_driver_messages: (order as any).unread_driver_messages + 1 || 1
+          unread_driver_messages: ((order as any).unread_driver_messages || 0) + 1
         });
       }
       
@@ -1114,7 +1121,7 @@ export class OrderService {
       { key: 'order_placed', label: 'Order Placed', date: order.created_at },
       { key: 'driver_assigned', label: 'Driver Assigned', date: order.matched_at },
       { key: 'driver_accepted', label: 'Driver Accepted', date: order.accepted_at },
-      { key: 'driver_enroute', label: 'Enroute to Pickup', date: order.driver_enroute_at },
+      { key: 'driver_enroute', label: 'Enroute to Pickup', date: order.driver_route_at },
       { key: 'pickup_started', label: 'Pickup Started', date: order.pickup_started_at },
       { key: 'in_transit', label: 'In Transit', date: order.in_transit_at },
       { key: 'delivered', label: 'Delivered', date: order.delivered_at }
@@ -1291,6 +1298,421 @@ export class OrderService {
       driverId,
       orderCapacities
     );
+  }
+
+  async getOrderWithProgress(orderId: string): Promise<{
+  order: any;
+  progress: any;
+  messages: any[];
+  tracking: any[];
+  driverLocation?: any;
+}> {
+  try {
+    const order = await orderRepository.findById(orderId);
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Calculate progress
+    const progress = this.calculateOrderProgress(order);
+    
+    // Get messages
+    const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
+    
+    // Get tracking data
+    const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
+    
+    // Get current driver location
+    const driverLocation = order.driver_current_lat && order.driver_current_lng ? {
+      latitude: order.driver_current_lat,
+      longitude: order.driver_current_lng,
+      lastUpdated: order.driver_last_updated
+    } : undefined;
+    
+    // Format order response
+    const formattedOrder = this.formatOrderForUI(order, null);
+    
+    return {
+      order: formattedOrder,
+      progress,
+      messages,
+      tracking,
+      driverLocation
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to get order with progress:', errorMessage);
+    throw error;
+  }
+}
+
+  // Update order status (for driver)
+  async updateOrderStatus(
+    orderId: string,
+    driverId: string,
+    status: string,
+    location?: { latitude: number; longitude: number }
+  ): Promise<any> {
+    try {
+      const order = await orderRepository.findById(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      if (order.driver_id !== driverId) {
+        throw new Error('Driver not authorized to update this order');
+      }
+
+      // Validate status transition
+      if (!this.isValidStatusTransition(order.status, status)) {
+        throw new Error(`Invalid status transition from ${order.status} to ${status}`);
+      }
+
+      // Update order with status-specific timestamps
+      const updateData: any = {
+        status: status as any,
+        updated_at: new Date()
+      };
+
+      // Set specific timestamps based on status
+      switch (status) {
+        case 'driver_enroute':
+          updateData.driver_enroute_at = new Date();
+          break;
+        case 'pickup_started':
+          updateData.pickup_started_at = new Date();
+          break;
+        case 'in_transit':
+          updateData.in_transit_at = new Date();
+          break;
+        case 'delivered':
+          updateData.delivered_at = new Date();
+          // Complete payment when delivered
+          await this.balanceService.completeOrderPayment(orderId);
+          break;
+        case 'completed':
+          updateData.completed_at = new Date();
+          break;
+      }
+
+      // Update driver location if provided
+      if (location) {
+        updateData.driver_current_lat = location.latitude;
+        updateData.driver_current_lng = location.longitude;
+        updateData.driver_last_updated = new Date();
+      }
+
+      const updatedOrder = await orderRepository.update(orderId, updateData);
+
+      // Notify customer about status change
+      await this.notifyCustomerStatusChange(order.customer_id, orderId, status, updatedOrder);
+
+      // Send real-time update
+      await this.websocketUtil.sendToUser(
+        order.customer_id,
+        'order_status_changed',
+        {
+          orderId: order.order_number,
+          status,
+          driverId,
+          timestamp: new Date().toISOString(),
+          ...(location && { location })
+        }
+      );
+
+      // If driver has multiple active orders, re-optimize route
+      if (status === 'driver_enroute' || status === 'in_transit') {
+        const activeOrders = await orderRepository.findByDriverIdWithStatus(
+          driverId,
+          ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+        );
+
+        if (activeOrders.length > 1) {
+          await this.optimizeAndSimulateDriverRoute(driverId);
+        }
+      }
+
+      return {
+        success: true,
+        order: this.formatOrderForUI(updatedOrder!, null),
+        message: `Order status updated to ${status}`
+      };
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to update order status:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Validate status transition
+  private isValidStatusTransition(currentStatus: string, newStatus: string): boolean {
+    const validTransitions: Record<string, string[]> = {
+      'pending': ['matched'],
+      'matched': ['driver_accepted', 'cancelled'],
+      'driver_accepted': ['driver_enroute', 'cancelled'],
+      'driver_enroute': ['pickup_started', 'cancelled'],
+      'pickup_started': ['in_transit', 'cancelled'],
+      'in_transit': ['delivered', 'cancelled'],
+      'delivered': ['completed'],
+      'completed': [],
+      'cancelled': []
+    };
+
+    return validTransitions[currentStatus]?.includes(newStatus) || false;
+  }
+
+  // Notify customer about status change
+  private async notifyCustomerStatusChange(
+    customerId: string,
+    orderId: string,
+    status: string,
+    order: any
+  ): Promise<void> {
+    const statusMessages: Record<string, string> = {
+      'driver_accepted': 'Driver has accepted your order',
+      'driver_enroute': 'Driver is on the way to pickup location',
+      'pickup_started': 'Driver has started pickup',
+      'in_transit': 'Order is in transit to delivery location',
+      'delivered': 'Your order has been delivered',
+      'completed': 'Order completed successfully'
+    };
+
+    const message = statusMessages[status];
+    if (message) {
+      await this.notificationService.sendOrderNotification(
+        customerId,
+        orderId,
+        'status_change',
+        {
+          status,
+          message,
+          orderNumber: order.order_number,
+          timestamp: new Date().toISOString()
+        }
+      );
+    }
+  }
+
+  // Get driver's optimized route
+  async getDriverOptimizedRoute(driverId: string): Promise<any> {
+    try {
+      const activeOrders = await orderRepository.findByDriverIdWithStatus(
+        driverId,
+        ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+      );
+
+      if (activeOrders.length === 0) {
+        return {
+          success: true,
+          message: 'No active orders',
+          route: null
+        };
+      }
+
+      // Convert to route optimization format
+      const orderPoints = activeOrders.flatMap(order => [
+        {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          type: 'pickup',
+          address: order.pickup_address,
+          coordinates: {
+            lat: order.pickup_latitude,
+            lng: order.pickup_longitude
+          }
+        },
+        {
+          orderId: order.id,
+          orderNumber: order.order_number,
+          type: 'delivery',
+          address: order.delivery_address,
+          coordinates: {
+            lat: order.delivery_latitude,
+            lng: order.delivery_longitude
+          }
+        }
+      ]);
+
+      // Get driver's current location
+      const driverLocation = await this.getDriverCurrentLocation(driverId);
+
+      // Optimize route using TSP algorithm
+      const optimizedRoute = this.optimizeRoute(driverLocation, orderPoints);
+
+      // Calculate route metrics
+      const routeMetrics = this.calculateRouteMetrics(optimizedRoute);
+
+      // Generate polyline for map
+      const polyline = this.generateRoutePolyline(optimizedRoute);
+
+      return {
+        success: true,
+        route: {
+          driverId,
+          optimizedSequence: optimizedRoute,
+          totalDistance: routeMetrics.distance,
+          totalDuration: routeMetrics.duration,
+          estimatedSavings: routeMetrics.savings,
+          polyline,
+          orders: activeOrders.map(order => ({
+            id: order.id,
+            orderNumber: order.order_number,
+            pickupAddress: order.pickup_address,
+            deliveryAddress: order.delivery_address,
+            currentLocation: order.driver_current_lat && order.driver_current_lng ? {
+              lat: order.driver_current_lat,
+              lng: order.driver_current_lng
+            } : null
+          }))
+        }
+      };
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get optimized route:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Simple TSP optimization (nearest neighbor)
+  private optimizeRoute(startPoint: any, points: any[]): any[] {
+    if (points.length === 0) return [];
+
+    const result: any[] = [];
+    const visited = new Set<string>();
+    let currentPoint = startPoint;
+
+    // Ensure pickup comes before delivery
+    const pendingDeliveries = new Map<string, boolean>(); // orderId -> pickupVisited
+
+    while (result.length < points.length) {
+      let nearestIndex = -1;
+      let nearestDistance = Infinity;
+
+      for (let i = 0; i < points.length; i++) {
+        if (!visited.has(points[i].orderId + '_' + points[i].type)) {
+          // Check constraints: delivery only after pickup
+          if (points[i].type === 'delivery') {
+            const pickupVisited = pendingDeliveries.get(points[i].orderId);
+            if (!pickupVisited) continue; // Skip delivery if pickup not visited yet
+          }
+
+          const distance = this.calculateHaversineDistance(
+            { lat: currentPoint.lat, lng: currentPoint.lng },
+            points[i].coordinates
+          );
+
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = i;
+          }
+        }
+      }
+
+      if (nearestIndex !== -1) {
+        const selectedPoint = points[nearestIndex];
+        visited.add(selectedPoint.orderId + '_' + selectedPoint.type);
+        result.push(selectedPoint);
+        currentPoint = selectedPoint.coordinates;
+
+        // Mark pickup as visited
+        if (selectedPoint.type === 'pickup') {
+          pendingDeliveries.set(selectedPoint.orderId, true);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  // Calculate route metrics
+  private calculateRouteMetrics(route: any[]): { distance: number; duration: number; savings: any } {
+    let totalDistance = 0;
+
+    for (let i = 0; i < route.length - 1; i++) {
+      totalDistance += this.calculateHaversineDistance(
+        route[i].coordinates,
+        route[i + 1].coordinates
+      );
+    }
+
+    const duration = (totalDistance / 30) * 60; // Assuming 30 km/h average
+
+    // Compare with simple sequential route (pickup1, delivery1, pickup2, delivery2...)
+    const sequentialDistance = this.calculateSequentialDistance(route);
+    const savings = {
+      distance: sequentialDistance - totalDistance,
+      time: ((sequentialDistance - totalDistance) / 30) * 60
+    };
+
+    return {
+      distance: parseFloat(totalDistance.toFixed(2)),
+      duration: Math.ceil(duration),
+      savings
+    };
+  }
+
+  // Calculate sequential distance for comparison
+  private calculateSequentialDistance(points: any[]): number {
+    let distance = 0;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      distance += this.calculateHaversineDistance(
+        points[i].coordinates,
+        points[i + 1].coordinates
+      );
+    }
+
+    return distance;
+  }
+
+  // Generate polyline for map
+  private generateRoutePolyline(route: any[]): string {
+    const coordinates = route.map(point => [point.coordinates.lat, point.coordinates.lng]);
+    return JSON.stringify(coordinates); // Simple JSON array for now
+  }
+
+  // Get driver current location
+  private async getDriverCurrentLocation(driverId: string): Promise<any> {
+    const latestTracking = await trackingRepository.getDriverLatestLocation(driverId);
+    if (latestTracking) {
+      return { lat: latestTracking.latitude, lng: latestTracking.longitude };
+    }
+
+    // Fallback to first active order's pickup location
+    const activeOrders = await orderRepository.findByDriverIdWithStatus(
+      driverId,
+      ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+    );
+
+    if (activeOrders.length > 0) {
+      return { 
+        lat: activeOrders[0].pickup_latitude, 
+        lng: activeOrders[0].pickup_longitude 
+      };
+    }
+
+    // Default location
+    return { lat: 59.925209, lng: 30.34174539999999 };
+  }
+
+  // Haversine distance calculation
+  private calculateHaversineDistance(point1: any, point2: any): number {
+    const R = 6371; // Earth's radius in km
+    const dLat = this.toRad(point2.lat - point1.lat);
+    const dLon = this.toRad(point2.lng - point1.lng);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(this.toRad(point1.lat)) * Math.cos(this.toRad(point2.lat)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  private toRad(degrees: number): number {
+    return degrees * (Math.PI / 180);
   }
   
   private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {

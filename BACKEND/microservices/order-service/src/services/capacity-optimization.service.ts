@@ -71,6 +71,8 @@ export interface MultiOrderOptimization {
   optimalSequence: string[];
   capacityScore: number;
   routeEfficiency: number;
+  totalDistance?: number;
+  totalDuration?: number;
 }
 
 export class CapacityOptimizationService {
@@ -192,7 +194,7 @@ export class CapacityOptimizationService {
   }> {
     try {
       const vehicleCapacity = await this.getDriverVehicleCapacity(driverId);
-      
+
       if (!vehicleCapacity) {
         return {
           canAccept: false,
@@ -200,19 +202,19 @@ export class CapacityOptimizationService {
           recommendations: ['Vehicle capacity information not available']
         };
       }
-      
+
       // Calculate total requirements
       const totalWeight = orders.reduce((sum, order) => sum + order.weight, 0);
       const totalVolume = orders.reduce((sum, order) => sum + order.volume, 0);
       const totalOrders = orders.length;
-      
+
       // Check against capacity
       const weightPasses = (vehicleCapacity.currentWeight + totalWeight) <= vehicleCapacity.maxWeight;
       const volumePasses = (vehicleCapacity.currentVolume + totalVolume) <= vehicleCapacity.maxVolume;
       const ordersPasses = (vehicleCapacity.currentOrders + totalOrders) <= vehicleCapacity.maxOrders;
-      
+
       const canAccept = weightPasses && volumePasses && ordersPasses;
-      
+
       const recommendations: string[] = [];
       if (!canAccept) {
         if (!weightPasses) {
@@ -225,7 +227,7 @@ export class CapacityOptimizationService {
           recommendations.push(`Too many orders (${totalOrders}) for current capacity`);
         }
       }
-      
+
       return {
         canAccept,
         capacityCheck: {
@@ -250,7 +252,7 @@ export class CapacityOptimizationService {
         },
         recommendations
       };
-      
+
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Multiple orders capacity check failed:', errorMessage);
@@ -449,7 +451,8 @@ export class CapacityOptimizationService {
 
       // Calculate route efficiency
       const routeEfficiency = this.calculateRouteEfficiency(optimalSequence);
-
+      const totalDistance = this.calculateTotalDistance(multiDimensionalOptimized.orders);
+      const totalDuration = this.calculateTotalDuration(multiDimensionalOptimized.orders);
       return {
         driverId,
         orders: multiDimensionalOptimized.orders,
@@ -458,7 +461,9 @@ export class CapacityOptimizationService {
         totalOrders: multiDimensionalOptimized.orders.length,
         optimalSequence,
         capacityScore,
-        routeEfficiency
+        routeEfficiency,
+        totalDistance, 
+        totalDuration
       };
 
     } catch (error: unknown) {
@@ -466,6 +471,40 @@ export class CapacityOptimizationService {
       this.logger.error('Multi-order optimization failed:', errorMessage);
       throw error;
     }
+  }
+
+  private calculateTotalDistance(orders: OrderCapacity[]): number {
+    // Simplified calculation - in production, use actual routing
+    return orders.reduce((sum, order) => {
+      // Calculate distance between pickup and delivery
+      const distance = this.calculateHaversineDistance(
+        order.pickupLocation.lat, order.pickupLocation.lng,
+        order.deliveryLocation.lat, order.deliveryLocation.lng
+      );
+      return sum + distance;
+    }, 0);
+  }
+
+  private calculateTotalDuration(orders: OrderCapacity[]): number {
+    // Assuming 30 km/h average speed
+    const totalDistance = this.calculateTotalDistance(orders);
+    return (totalDistance / 30) * 60; // Convert to minutes
+  }
+
+  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Earth's radius in km
+    const dLat = this.toRad(lat2 - lat1);
+    const dLon = this.toRad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) *
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  private toRad(degrees: number): number {
+    return degrees * (Math.PI / 180);
   }
 
   // 0/1 Knapsack algorithm for single dimension
@@ -670,81 +709,7 @@ export class CapacityOptimizationService {
     }
   }
 
-  // Get driver capacity dashboard
-  async getDriverCapacityDashboard(driverId: string): Promise<{
-    capacity: VehicleCapacity;
-    pendingOrders: number;
-    activeOrders: number;
-    recommendedMaxOrders: number;
-    efficiency: number;
-  }> {
-    try {
-      const capacity = await this.getDriverVehicleCapacity(driverId);
-      
-      if (!capacity) {
-        throw new Error('Could not retrieve capacity information');
-      }
-
-      const db = require('../config/database').db;
-      
-      // Get order counts
-      const orderQuery = `
-        SELECT 
-          COUNT(CASE WHEN status IN ('pending', 'driver_assigned') THEN 1 END) as pending_orders,
-          COUNT(CASE WHEN status IN ('route_to_pickup', 'in_transit') THEN 1 END) as active_orders
-        FROM orders 
-        WHERE driver_id = ?
-      `;
-      
-      const orderCounts = await db.queryOne<any>(orderQuery, [driverId]);
-
-      // Calculate recommended max orders based on average size
-      const avgOrderQuery = `
-        SELECT 
-          AVG(weight_kg) as avg_weight,
-          AVG(volume_m3) as avg_volume
-        FROM orders 
-        WHERE driver_id = ? AND status = 'completed'
-      `;
-      
-      const averages = await db.queryOne<any>(avgOrderQuery, [driverId]);
-      
-      const avgWeight = averages?.avg_weight || 5;
-      const avgVolume = averages?.avg_volume || 0.5;
-      
-      const recommendedByWeight = Math.floor(capacity.maxWeight / avgWeight);
-      const recommendedByVolume = Math.floor(capacity.maxVolume / avgVolume);
-      const recommendedMaxOrders = Math.min(recommendedByWeight, recommendedByVolume, capacity.maxOrders);
-
-      // Calculate efficiency (orders delivered per day)
-      const efficiencyQuery = `
-        SELECT 
-          COUNT(*) as delivered_today
-        FROM orders 
-        WHERE driver_id = ? 
-          AND status = 'completed'
-          AND DATE(delivery_completed_at) = CURDATE()
-      `;
-      
-      const efficiencyResult = await db.queryOne<any>(efficiencyQuery, [driverId]);
-      const deliveredToday = efficiencyResult?.delivered_today || 0;
-      const efficiency = Math.min(100, (deliveredToday / 10) * 100); // Assuming 10 is target
-
-      return {
-        capacity,
-        pendingOrders: orderCounts?.pending_orders || 0,
-        activeOrders: orderCounts?.active_orders || 0,
-        recommendedMaxOrders,
-        efficiency: parseFloat(efficiency.toFixed(2))
-      };
-
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get capacity dashboard:', errorMessage);
-      throw error;
-    }
-  }
-
+  
   // Suggest optimal order mix for driver
   async suggestOptimalOrderMix(
     driverId: string,

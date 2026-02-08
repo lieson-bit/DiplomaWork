@@ -8,7 +8,7 @@ declare global {
     interface Request {
       user?: {
         userId: string;
-        userType: 'customer' | 'driver' | 'admin';
+        userType: 'customer' | 'driver';
         email?: string;
       };
     }

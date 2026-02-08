@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service';
 import { ResponseUtil } from '../utils/response.util';
 import { Logger } from '../utils/logger';
+import { trackingRepository } from '../repositories/tracking.repository';
+import { LocationTracking } from '../repositories/tracking.repository';
 
 export class OrderController {
   private orderService: OrderService;
@@ -116,7 +118,135 @@ export class OrderController {
       return ResponseUtil.error(res, 'Failed to get order', 404, errorMessage);
     }
   }
-  
+
+  // Get order with full progress tracking
+  async getOrderWithProgress(req: Request, res: Response) {
+    try {
+      const orderId = req.params.id;
+      const userId = req.user!.userId;
+      const userType = req.user!.userType;
+
+      const result = await this.orderService.getOrderWithProgress(orderId);
+
+      // Verify access
+      const order = await this.orderService.getOrder(orderId, false);
+
+      if (userType === 'customer' && order.customerInfo.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
+
+      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
+
+      return ResponseUtil.success(
+        res,
+        result,
+        'Order with progress retrieved successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get order with progress error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to get order details', 400, errorMessage);
+    }
+  }
+
+  // Update order status (driver)
+  async updateOrderStatus(req: Request, res: Response) {
+    try {
+      const orderId = req.params.id;
+      const driverId = req.user!.userId;
+      const { status, location } = req.body;
+
+      if (!status) {
+        return ResponseUtil.error(res, 'Status is required', 400);
+      }
+
+      const result = await this.orderService.updateOrderStatus(
+        orderId,
+        driverId,
+        status,
+        location
+      );
+
+      return ResponseUtil.success(
+        res,
+        result,
+        'Order status updated successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Update order status error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to update order status', 400, errorMessage);
+    }
+  }
+
+  // Get driver's optimized route
+  async getOptimizedRoute(req: Request, res: Response) {
+    try {
+      const driverId = req.user!.userId;
+
+      const result = await this.orderService.getDriverOptimizedRoute(driverId);
+
+      return ResponseUtil.success(
+        res,
+        result,
+        'Optimized route retrieved successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get optimized route error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to get optimized route', 400, errorMessage);
+    }
+  }
+
+  // Get order tracking data
+  async getOrderTracking(req: Request, res: Response) {
+    try {
+      const orderId = req.params.id;
+      const userId = req.user!.userId;
+      const userType = req.user!.userType;
+      
+      // Verify access - you need to get the order first
+      // Since we don't have getOrder method in controller, let's call the service
+      const order = await this.orderService.getOrder(orderId, false);
+      
+      if (!order) {
+        return ResponseUtil.notFound(res, 'Order not found');
+      }
+      
+      if (userType === 'customer' && order.customerInfo.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
+      
+      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+        return ResponseUtil.forbidden(res, 'Access denied');
+      }
+      
+      // Get tracking data with proper typing
+      const tracking = await trackingRepository.findByOrderId(orderId, { 
+        limit: 100,
+        orderBy: 'ASC' as const // Add type assertion
+      });
+      
+      return ResponseUtil.success(
+        res,
+        tracking.map((t: LocationTracking) => ({
+          latitude: t.latitude,
+          longitude: t.longitude,
+          timestamp: t.timestamp,
+          speed: t.speed,
+          bearing: t.bearing
+        })),
+        'Tracking data retrieved successfully'
+      );
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get tracking error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to get tracking data', 400, errorMessage);
+    }
+  }
+
   // Send message
   async sendMessage(req: Request, res: Response) {
     try {
