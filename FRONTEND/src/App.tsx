@@ -148,31 +148,44 @@ function AppContent() {
               <TabsTrigger value="notifications">{t('nav.notifications')}</TabsTrigger>
               <TabsTrigger value="profile">{t('nav.profile')}</TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="dashboard">
-              <DriverDashboard />
-            </TabsContent>
-            
-            <TabsContent value="orders">
-              <OrderTracking userType="driver" />
-            </TabsContent>
-            
-            <TabsContent value="route">
-              <DriverRouteOptimization />
-            </TabsContent>
-            
-            <TabsContent value="earnings">
-              <DriverEarnings />
-            </TabsContent>
-            
-            <TabsContent value="notifications">
-              <NotificationCenter userType="driver" />
-            </TabsContent>
-            
-            <TabsContent value="profile">
-              <DriverProfile />
-              
-            </TabsContent>
+
+            <div className="relative">
+              <div className={activeView === 'dashboard' ? 'block' : 'hidden'}>
+                <TabsContent value="dashboard" forceMount className="mt-6">
+                  <DriverDashboard />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'orders' ? 'block' : 'hidden'}>
+                <TabsContent value="orders" forceMount className="mt-6">
+                  <OrderTracking userType="driver" />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'route' ? 'block' : 'hidden'}>
+                <TabsContent value="route" forceMount className="mt-6">
+                  <DriverRouteOptimization />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'earnings' ? 'block' : 'hidden'}>
+                <TabsContent value="earnings" forceMount className="mt-6">
+                  <DriverEarnings />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'notifications' ? 'block' : 'hidden'}>
+                <TabsContent value="notifications" forceMount className="mt-6">
+                  <NotificationCenter userType="driver" />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'profile' ? 'block' : 'hidden'}>
+                <TabsContent value="profile" forceMount className="mt-6">
+                  <DriverProfile />
+                </TabsContent>
+              </div>
+            </div>
           </Tabs>
         ) : (
           <Tabs value={activeView} onValueChange={setActiveView} className="w-full">
@@ -184,33 +197,47 @@ function AppContent() {
               <TabsTrigger value="notifications">{t('nav.notifications')}</TabsTrigger>
               <TabsTrigger value="profile">{t('nav.profile')}</TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="booking">
-              <CustomerBooking />
-            </TabsContent>
-            
-            <TabsContent value="bulk">
-              <BulkBooking />
-            </TabsContent>
-            
-            <TabsContent value="tracking">
-              <OrderTracking userType="customer" />
-            </TabsContent>
-            
-            <TabsContent value="matching">
-              <MatchingEngine />
-            </TabsContent>
-            
-            <TabsContent value="notifications">
-              <NotificationCenter userType="customer" />
-            </TabsContent>
-            
-            <TabsContent value="profile">
-              <CustomerProfile />
-            </TabsContent>
+
+            <div className="relative">
+              <div className={activeView === 'booking' ? 'block' : 'hidden'}>
+                <TabsContent value="booking" forceMount className="mt-6">
+                  <CustomerBooking />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'bulk' ? 'block' : 'hidden'}>
+                <TabsContent value="bulk" forceMount className="mt-6">
+                  <BulkBooking />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'tracking' ? 'block' : 'hidden'}>
+                <TabsContent value="tracking" forceMount className="mt-6">
+                  <OrderTracking userType="customer" />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'matching' ? 'block' : 'hidden'}>
+                <TabsContent value="matching" forceMount className="mt-6">
+                  <MatchingEngine />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'notifications' ? 'block' : 'hidden'}>
+                <TabsContent value="notifications" forceMount className="mt-6">
+                  <NotificationCenter userType="customer" />
+                </TabsContent>
+              </div>
+
+              <div className={activeView === 'profile' ? 'block' : 'hidden'}>
+                <TabsContent value="profile" forceMount className="mt-6">
+                  <CustomerProfile />
+                </TabsContent>
+              </div>
+            </div>
           </Tabs>
-          )}
-        </main>
+        )}
+      </main>
       </div>
     );
   }

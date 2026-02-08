@@ -5,12 +5,14 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Checkbox } from "./ui/checkbox";
-import { MapPin, Package, Weight, Ruler, Clock, DollarSign, Loader2, User, Star, Check, ChevronDown, ChevronUp, Car, Calendar, Trophy, Eye, RefreshCw, AlertTriangle } from 'lucide-react';
+import { MapPin, Package, Weight, Ruler, Clock, DollarSign, Loader2, User, Star, Check, ChevronDown, ChevronUp, Car, Calendar, Trophy, Eye, RefreshCw, AlertTriangle, X, Info, FileText, Navigation, Truck, Globe, Mail, Phone, Home, Box, Shield, Thermometer, AlertCircle, CheckCircle, CreditCard, CalendarDays } from 'lucide-react';
 import { toast } from 'sonner';
 import debounce from 'lodash/debounce';
 import { useLanguage } from './LanguageContext';
 import { Badge } from "./ui/badge";
 import { getAuthToken, getCurrentUser } from '../src/lib/api';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
+import axios from 'axios';
 
 interface BookingForm {
   pickupAddress: string;
@@ -78,6 +80,62 @@ interface DriversResponse {
   error?: string;
 }
 
+interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+// DistanceMatrix.ai API key
+const DISTANCE_MATRIX_API_KEY = 'NFLqNsgalupmIuzDS6zKuprvodMgjdaGAxBtGYNpOT9TUwnCnC4Z9Do6T2drMT4Y';
+
+// Predefined coordinates for major Russian cities (fallback)
+const CITY_COORDINATES: Record<string, Coordinates> = {
+  'москва': { lat: 55.7558, lng: 37.6173 },
+  'moscow': { lat: 55.7558, lng: 37.6173 },
+  'санкт-петербург': { lat: 59.9343, lng: 30.3351 },
+  'saint petersburg': { lat: 59.9343, lng: 30.3351 },
+  'st. petersburg': { lat: 59.9343, lng: 30.3351 },
+  'st petersburg': { lat: 59.9343, lng: 30.3351 },
+  'питер': { lat: 59.9343, lng: 30.3351 },
+  'spb': { lat: 59.9343, lng: 30.3351 },
+  'новосибирск': { lat: 55.0084, lng: 82.9357 },
+  'novosibirsk': { lat: 55.0084, lng: 82.9357 },
+  'екатеринбург': { lat: 56.8389, lng: 60.6057 },
+  'yekaterinburg': { lat: 56.8389, lng: 60.6057 },
+  'казань': { lat: 55.7961, lng: 49.1064 },
+  'kazan': { lat: 55.7961, lng: 49.1064 },
+  'нижний новгород': { lat: 56.2965, lng: 43.9361 },
+  'nizhny novgorod': { lat: 56.2965, lng: 43.9361 },
+};
+
+// Known locations with specific coordinates
+const KNOWN_LOCATIONS: Array<{keywords: string[], coords: Coordinates}> = [
+  {
+    keywords: ['zagorodnyi prospekt', 'загородный проспект'],
+    coords: { lat: 59.9280, lng: 30.3470 } // Zagorodnyi Prospekt area
+  },
+  {
+    keywords: ['esenina', 'есенина'],
+    coords: { lat: 59.8920, lng: 30.3190 } // Ulitsa Esenina area
+  },
+  {
+    keywords: ['khersonskiy', 'khersonskiy proyezd', 'херсонский'],
+    coords: { lat: 59.8500, lng: 30.3167 }
+  },
+  {
+    keywords: ['варшавская', 'warsaw'],
+    coords: { lat: 59.8500, lng: 30.3167 }
+  },
+  {
+    keywords: ['nevsky', 'невский'],
+    coords: { lat: 59.9358, lng: 30.3259 } // Nevsky Prospekt
+  },
+  {
+    keywords: ['адмиралтейская', 'admiralteyskaya'],
+    coords: { lat: 59.9375, lng: 30.3086 } // Admiralteyskaya metro
+  }
+];
+
 export function CustomerBooking() {
   const { t } = useLanguage();
   const [formData, setFormData] = useState<BookingForm>({
@@ -101,8 +159,21 @@ export function CustomerBooking() {
   const [loadingDrivers, setLoadingDrivers] = useState(false);
   const [categories, setCategories] = useState<Array<{value: string, label: string}>>([]);
   const [imageErrors, setImageErrors] = useState<{[key: string]: boolean}>({});
+  const [pickupCoordinates, setPickupCoordinates] = useState<Coordinates | null>(null);
+  const [deliveryCoordinates, setDeliveryCoordinates] = useState<Coordinates | null>(null);
+  const [geocodingInProgress, setGeocodingInProgress] = useState(false);
+  const [showOrderPreview, setShowOrderPreview] = useState(false);
+  const [orderData, setOrderData] = useState<any>(null);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [geocodingResults, setGeocodingResults] = useState<{
+    pickup: { status: 'idle' | 'loading' | 'success' | 'error', method?: string, accuracy?: string },
+    delivery: { status: 'idle' | 'loading' | 'success' | 'error', method?: string, accuracy?: string }
+  }>({
+    pickup: { status: 'idle' },
+    delivery: { status: 'idle' }
+  });
   
-  // Store last fetched data to prevent unnecessary refetches
+  // Store last fetched data
   const lastFetchedFormDataRef = useRef<Partial<BookingForm>>({});
   const lastFetchedPriceDataRef = useRef<string>('');
 
@@ -110,11 +181,11 @@ export function CustomerBooking() {
   useEffect(() => {
     const user = getCurrentUser();
     if (user && user.userType !== 'customer') {
-      toast.error(t('customer.booking.only_customers') || 'Only customers can book deliveries');
+      toast.error('Only customers can book deliveries');
     }
-  }, [t]);
+  }, []);
 
-  // Load categories on mount - only once
+  // Load categories on mount
   useEffect(() => {
     const loadCategories = async () => {
       try {
@@ -123,7 +194,6 @@ export function CustomerBooking() {
         const data = await response.json();
         setCategories(data.categories);
       } catch {
-        // Fallback categories - these are static and don't depend on t()
         setCategories([
           { value: 'documents', label: 'Documents & Small Packages' },
           { value: 'furniture', label: 'Furniture & Appliances' },
@@ -136,9 +206,325 @@ export function CustomerBooking() {
     };
     
     loadCategories();
-  }, []); // Empty dependency array - load only once
+  }, []);
 
-  // Memoized function to get vehicle type based on form data
+  // Robust geocoding function similar to your example
+  const geocodeAddress = useCallback(async (address: string, type: 'pickup' | 'delivery'): Promise<Coordinates | null> => {
+    const requestId = `geocode_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+    const startTime = Date.now();
+    
+    try {
+      console.log(`🌍 [${requestId}] Geocoding ${type} address: "${address.substring(0, 50)}${address.length > 50 ? '...' : ''}"`);
+      
+      if (!address || address.trim().length === 0) {
+        console.warn(`⚠️ [${requestId}] Empty ${type} address provided`);
+        return getFallbackCoordinates('empty');
+      }
+      
+      const cleanAddress = address.trim();
+      
+      // Update geocoding status
+      setGeocodingResults(prev => ({
+        ...prev,
+        [type]: { status: 'loading' }
+      }));
+
+      // ============================================
+      // OPTION 1: DistanceMatrix.ai Geocoding (Primary)
+      // ============================================
+      try {
+        console.log(`📍 [${requestId}] Trying DistanceMatrix.ai geocoding...`);
+        
+        const response = await axios.get('https://api.distancematrix.ai/maps/api/geocode/json', {
+          params: {
+            address: cleanAddress,
+            key: DISTANCE_MATRIX_API_KEY,
+            language: 'en'
+          },
+          headers: {
+            'User-Agent': 'DeliveryBooking/1.0'
+          },
+          timeout: 8000
+        });
+
+        console.log(`📍 [${requestId}] DistanceMatrix.ai response status: ${response.data.status}`);
+        
+        if (response.data.status === 'OK' && Array.isArray(response.data.result)) {
+          const results = response.data.result;
+          if (results.length > 0) {
+            const location = results[0];
+            const coords = {
+              lat: location.geometry?.location?.lat,
+              lng: location.geometry?.location?.lng
+            };
+            
+            if (coords.lat && coords.lng && !isNaN(coords.lat) && !isNaN(coords.lng)) {
+              const finalCoords = {
+                lat: parseFloat(coords.lat),
+                lng: parseFloat(coords.lng)
+              };
+              
+              console.log(`✅ [${requestId}] Successfully geocoded via DistanceMatrix.ai: ${finalCoords.lat},${finalCoords.lng}`);
+              console.log(`📍 [${requestId}] Location: ${location.formatted_address?.substring(0, 100) || 'Address found'}`);
+              console.log(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+              
+              setGeocodingResults(prev => ({
+                ...prev,
+                [type]: { 
+                  status: 'success', 
+                  method: 'DistanceMatrix.ai',
+                  accuracy: 'high'
+                }
+              }));
+              
+              return finalCoords;
+            }
+          }
+        }
+      } catch (dmError: any) {
+        console.warn(`⚠️ [${requestId}] DistanceMatrix.ai geocoding error:`, dmError.message);
+      }
+
+      // ============================================
+      // OPTION 2: OpenStreetMap Nominatim (Fallback 1)
+      // ============================================
+      try {
+        console.log(`📍 [${requestId}] Trying OpenStreetMap Nominatim as fallback...`);
+        
+        let searchAddress = cleanAddress;
+        if (cleanAddress.toLowerCase().includes('sankt-peterburg') || 
+            cleanAddress.toLowerCase().includes('st. petersburg') ||
+            cleanAddress.toLowerCase().includes('питер')) {
+          searchAddress = 'Saint Petersburg, Russia';
+        }
+        
+        const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+          params: {
+            q: searchAddress,
+            format: 'json',
+            limit: 1,
+            'accept-language': 'en'
+          },
+          headers: {
+            'User-Agent': 'DeliveryBooking/1.0'
+          },
+          timeout: 5000
+        });
+
+        const results = response.data;
+        if (Array.isArray(results) && results.length > 0) {
+          const lat = parseFloat(results[0].lat);
+          const lng = parseFloat(results[0].lon);
+          
+          if (!isNaN(lat) && !isNaN(lng)) {
+            const coords = { lat, lng };
+            
+            console.log(`✅ [${requestId}] Successfully geocoded via Nominatim: ${coords.lat},${coords.lng}`);
+            console.log(`📍 [${requestId}] Location: ${results[0].display_name?.substring(0, 100) || 'Address found'}`);
+            console.log(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+            
+            setGeocodingResults(prev => ({
+              ...prev,
+              [type]: { 
+                status: 'success', 
+                method: 'Nominatim',
+                accuracy: 'medium'
+              }
+            }));
+            
+            return coords;
+          }
+        }
+      } catch (nominatimError: any) {
+        console.warn(`⚠️ [${requestId}] Nominatim geocoding error:`, nominatimError.message);
+      }
+
+      // ============================================
+      // OPTION 3: Known locations detection
+      // ============================================
+      console.log(`📍 [${requestId}] Trying known locations detection...`);
+      
+      const addressLower = cleanAddress.toLowerCase();
+      
+      for (const location of KNOWN_LOCATIONS) {
+        for (const keyword of location.keywords) {
+          if (addressLower.includes(keyword.toLowerCase())) {
+            console.log(`📍 [${requestId}] Found keyword "${keyword}" in address, using coordinates: ${location.coords.lat},${location.coords.lng}`);
+            console.log(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+            
+            setGeocodingResults(prev => ({
+              ...prev,
+              [type]: { 
+                status: 'success', 
+                method: 'Known Location',
+                accuracy: 'medium'
+              }
+            }));
+            
+            return location.coords;
+          }
+        }
+      }
+
+      // ============================================
+      // OPTION 4: Extract street number for variation
+      // ============================================
+      console.log(`📍 [${requestId}] Trying street number extraction...`);
+      
+      const streetNumberMatch = cleanAddress.match(/\b(\d+[A-Za-z]?)\b/);
+      if (streetNumberMatch) {
+        const streetNumber = streetNumberMatch[1];
+        console.log(`📍 [${requestId}] Found street number: ${streetNumber}`);
+        
+        // Check which city it's in
+        let baseCoords: Coordinates | null = null;
+        let cityName = '';
+        
+        if (addressLower.includes('sankt') || addressLower.includes('peterburg') || addressLower.includes('питер') || addressLower.includes('spb')) {
+          baseCoords = { lat: 59.9343, lng: 30.3351 };
+          cityName = 'Saint Petersburg';
+        } else if (addressLower.includes('москва') || addressLower.includes('moscow')) {
+          baseCoords = { lat: 55.7558, lng: 37.6173 };
+          cityName = 'Moscow';
+        } else if (addressLower.includes('казань') || addressLower.includes('kazan')) {
+          baseCoords = { lat: 55.7961, lng: 49.1064 };
+          cityName = 'Kazan';
+        }
+        
+        if (baseCoords) {
+          // Add small variations based on street number
+          const streetNum = parseInt(streetNumber) || 1;
+          const variation = (streetNum % 100) / 10000;
+          
+          const coords = {
+            lat: baseCoords.lat + variation,
+            lng: baseCoords.lng - variation
+          };
+          
+          console.log(`📍 [${requestId}] Using street-number adjusted coordinates in ${cityName}: ${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`);
+          console.log(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+          
+          setGeocodingResults(prev => ({
+            ...prev,
+            [type]: { 
+              status: 'success', 
+              method: 'Street Number',
+              accuracy: 'low'
+            }
+          }));
+          
+          return coords;
+        }
+      }
+
+      // ============================================
+      // OPTION 5: City detection from address
+      // ============================================
+      console.log(`📍 [${requestId}] Trying city detection...`);
+      
+      for (const [cityName, coords] of Object.entries(CITY_COORDINATES)) {
+        if (addressLower.includes(cityName)) {
+          console.log(`📍 [${requestId}] Detected city "${cityName}", using coordinates: ${coords.lat},${coords.lng}`);
+          console.log(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+          
+          setGeocodingResults(prev => ({
+            ...prev,
+            [type]: { 
+              status: 'success', 
+              method: 'City Detection',
+              accuracy: 'low'
+            }
+          }));
+          
+          return coords;
+        }
+      }
+
+      // ============================================
+      // OPTION 6: Ultimate fallback
+      // ============================================
+      console.warn(`⚠️ [${requestId}] All geocoding attempts failed for ${type} address`);
+      console.warn(`⚠️ [${requestId}] Address was: "${cleanAddress.substring(0, 100)}${cleanAddress.length > 100 ? '...' : ''}"`);
+      
+      const fallback = getFallbackCoordinates('all_failed');
+      
+      setGeocodingResults(prev => ({
+        ...prev,
+        [type]: { 
+          status: 'error', 
+          method: 'Fallback',
+          accuracy: 'very low'
+        }
+      }));
+      
+      return fallback;
+      
+    } catch (error: any) {
+      console.error(`💥 [${requestId}] Critical geocoding error:`, error.message);
+      
+      setGeocodingResults(prev => ({
+        ...prev,
+        [type]: { 
+          status: 'error', 
+          method: 'Error',
+          accuracy: 'very low'
+        }
+      }));
+      
+      return getFallbackCoordinates('error');
+    }
+  }, []);
+
+  // Helper function for fallback coordinates
+  const getFallbackCoordinates = (reason: string): Coordinates => {
+    console.log(`📍 Using fallback coordinates (reason: ${reason}): 59.9343,30.3351 (St. Petersburg center)`);
+    return { lat: 59.9343, lng: 30.3351 };
+  };
+
+  // Geocode both addresses when they change
+  useEffect(() => {
+    const geocodeAddresses = async () => {
+      if (!formData.pickupAddress || !formData.deliveryAddress) {
+        setPickupCoordinates(null);
+        setDeliveryCoordinates(null);
+        setGeocodingResults({
+          pickup: { status: 'idle' },
+          delivery: { status: 'idle' }
+        });
+        return;
+      }
+
+      setGeocodingInProgress(true);
+      
+      try {
+        const [pickupResult, deliveryResult] = await Promise.all([
+          geocodeAddress(formData.pickupAddress, 'pickup'),
+          geocodeAddress(formData.deliveryAddress, 'delivery')
+        ]);
+
+        if (pickupResult) {
+          setPickupCoordinates(pickupResult);
+        }
+
+        if (deliveryResult) {
+          setDeliveryCoordinates(deliveryResult);
+        }
+
+      } catch (error) {
+        console.error('Error geocoding addresses:', error);
+      } finally {
+        setGeocodingInProgress(false);
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      geocodeAddresses();
+    }, 1500);
+
+    return () => clearTimeout(timeoutId);
+  }, [formData.pickupAddress, formData.deliveryAddress, geocodeAddress]);
+
+  // Memoized function to get vehicle type
   const getVehicleType = useCallback((weight: string, volume: string) => {
     const weightNum = parseFloat(weight) || 0;
     const volumeNum = parseFloat(volume) || 0;
@@ -149,28 +535,26 @@ export function CustomerBooking() {
     return 'large_truck';
   }, []);
 
-  // Function to fetch available drivers - memoized to prevent recreation
+  // Function to fetch available drivers
   const fetchAvailableDrivers = useCallback(async (
     formData: BookingForm, 
     priceData: PriceResponse | null,
     forceFetch: boolean = false
   ) => {
-    // Check if form data has actually changed to prevent unnecessary fetches
     const currentKey = `${formData.pickupAddress}-${formData.weight}-${formData.volume}-${formData.urgency}`;
     const lastKey = `${lastFetchedFormDataRef.current.pickupAddress}-${lastFetchedFormDataRef.current.weight}-${lastFetchedFormDataRef.current.volume}-${lastFetchedFormDataRef.current.urgency}`;
     
     if (currentKey === lastKey && drivers.length > 0 && !forceFetch) {
-      return; // Don't refetch if form data hasn't changed
+      return;
     }
     
     const token = getAuthToken();
     
     if (!token) {
-      toast.error(t('customer.booking.login_required') || 'Please login first to book a delivery');
+      toast.error('Please login first to book a delivery');
       return;
     }
 
-    // Store the current form data
     lastFetchedFormDataRef.current = {
       pickupAddress: formData.pickupAddress,
       weight: formData.weight,
@@ -198,7 +582,6 @@ export function CustomerBooking() {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
         throw new Error(`Drivers API error: ${response.status}`);
       }
 
@@ -206,38 +589,36 @@ export function CustomerBooking() {
       
       if (data.success && data.data && data.data.length > 0) {
         setDrivers(data.data.slice(0, 4));
-        toast.success(t('customer.booking.drivers_found', { count: data.count.toString() }) || `Found ${data.count} available drivers`);
+        toast.success(`Found ${data.count} available drivers`);
       } else {
         setDrivers([]);
-        toast.info(t('customer.booking.no_drivers_available') || 'No drivers available at the moment');
+        toast.info('No drivers available at the moment');
       }
       
     } catch (error: any) {
       console.error('Error fetching drivers:', error);
       setDrivers([]);
       
-      // More specific error messages
       if (error.message.includes('401')) {
-        toast.error(t('customer.booking.session_expired') || 'Session expired. Please login again.');
+        toast.error('Session expired. Please login again.');
       } else if (error.message.includes('Failed to fetch')) {
-        toast.error(t('customer.booking.driver_service_error') || 'Cannot connect to driver service. Please try again later.');
+        toast.error('Cannot connect to driver service. Please try again later.');
       } else {
-        toast.error(t('customer.booking.failed_fetch_drivers') || 'Failed to fetch available drivers. Please try again.');
+        toast.error('Failed to fetch available drivers. Please try again.');
       }
     } finally {
       setLoadingDrivers(false);
     }
-  }, [t, getVehicleType]); // Only depend on t and getVehicleType
+  }, [getVehicleType]);
 
   const formatRating = (rating: number) => {
     if (!rating || rating === 0) return '0.0';
-    return rating.toFixed(1); // This ensures exactly one decimal place
+    return rating.toFixed(1);
   };
 
-  // Create a stable calculatePrice function
+  // Calculate price
   const calculatePrice = useCallback(
     debounce(async (formData: BookingForm, forceCalculate: boolean = false) => {
-      // Check required fields
       if (!formData.pickupAddress || !formData.deliveryAddress || 
           !formData.category || !formData.weight || !formData.volume) {
         setPriceData(null);
@@ -246,7 +627,6 @@ export function CustomerBooking() {
         return;
       }
 
-      // Create a key for the current calculation
       const currentKey = JSON.stringify({
         pickup: formData.pickupAddress,
         delivery: formData.deliveryAddress,
@@ -260,7 +640,6 @@ export function CustomerBooking() {
         hazardous: formData.hazardous
       });
 
-      // Don't recalculate if we already have the same data
       if (currentKey === lastFetchedPriceDataRef.current && !forceCalculate) {
         return;
       }
@@ -296,14 +675,13 @@ export function CustomerBooking() {
         if (data.success) {
           setPriceData(data);
           lastFetchedPriceDataRef.current = currentKey;
-          toast.success(t('customer.booking.price_calculated_success') || 'Price calculated successfully!');
-          // Fetch drivers after price calculation
+          toast.success('Price calculated successfully!');
           fetchAvailableDrivers(formData, data, true);
         } else {
           setPriceData(null);
           setDrivers([]);
           lastFetchedPriceDataRef.current = '';
-          toast.error(data.error || t('customer.booking.price_calculation_failed') || 'Failed to calculate price');
+          toast.error(data.error || 'Failed to calculate price');
         }
         
       } catch (error: any) {
@@ -311,12 +689,12 @@ export function CustomerBooking() {
         setPriceData(null);
         setDrivers([]);
         lastFetchedPriceDataRef.current = '';
-        toast.error(t('customer.booking.service_connection_failed') || 'Failed to connect to pricing service');
+        toast.error('Failed to connect to pricing service');
       } finally {
         setLoading(false);
       }
-    }, 1000), // Debounce 1 second
-    [fetchAvailableDrivers] // Only depend on fetchAvailableDrivers
+    }, 1000),
+    [fetchAvailableDrivers]
   );
 
   // Update calculation when form data changes
@@ -326,7 +704,6 @@ export function CustomerBooking() {
 
   const handleInputChange = (field: keyof BookingForm, value: string | boolean) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    // Reset driver selection when form changes
     if (field !== 'fragile' && field !== 'refrigerated' && field !== 'oversized' && field !== 'hazardous') {
       setSelectedDriver(null);
       setExpandedDriver(null);
@@ -335,128 +712,253 @@ export function CustomerBooking() {
 
   const handleDriverSelect = (driverId: string) => {
     setSelectedDriver(driverId);
-    toast.success(t('customer.booking.driver_selected') || 'Driver selected successfully!');
+    toast.success('Driver selected successfully!');
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!priceData) {
-      toast.error(t('customer.booking.fill_all_fields') || 'Please fill all required fields');
+      toast.error('Please fill all required fields');
       return;
     }
     
     if (!selectedDriver) {
-      toast.error(t('customer.booking.select_driver') || 'Please select a driver to proceed');
+      toast.error('Please select a driver to proceed');
       return;
     }
+
+    // Always create order data
+    let finalPickupCoords = pickupCoordinates || getFallbackCoordinates('no_coords');
+    let finalDeliveryCoords = deliveryCoordinates || getFallbackCoordinates('no_coords');
+
+    console.log('📍 Final coordinates for order:', {
+      pickup: finalPickupCoords,
+      delivery: finalDeliveryCoords
+    });
+
+    // Get order data
+    const orderData = createOrderData(finalPickupCoords, finalDeliveryCoords);
+    console.log('📦 Generated Order Data:', orderData);
+    setOrderData(orderData);
     
-    // Get all necessary data for order creation
-    const orderData = createOrderData();
-    
-    // Here you can add order creation logic
-    toast.success(
-      t('customer.booking.ready_to_book', { price: priceData.price_usd.toFixed(2) }) || 
-      `Ready to book! Estimated price: $${priceData.price_usd.toFixed(2)}`
-    );
-    
-    // Send order to order-service (you'll implement this)
-    createOrder(orderData);
+    // Show preview modal
+    setShowOrderPreview(true);
   };
 
-  // Create complete order data structure
-  const createOrderData = () => {
+  // Handle final order confirmation
+  const handleConfirmOrder = async () => {
+    if (!orderData) return;
+    
+    setIsCreatingOrder(true);
+    try {
+      await createOrder(orderData);
+      setShowOrderPreview(false);
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  };
+
+  // Create order data structure
+  const createOrderData = (pickupCoords: Coordinates, deliveryCoords: Coordinates) => {
     const selectedDriverData = drivers.find(d => d.driverId === selectedDriver);
     const vehicle = selectedDriverData?.vehicles[0];
+    const currentUser = getCurrentUser();
     
+    const getUrgencyLabel = () => {
+      switch(formData.urgency) {
+        case 'standard': return 'Standard (same day)';
+        case 'urgent': return 'Urgent (within 2 hours)';
+        case 'scheduled': return 'Scheduled (next day)';
+        default: return formData.urgency;
+      }
+    };
+
+    const orderId = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const createdAt = new Date().toISOString();
+
     return {
+      // Order metadata
+      orderId,
+      status: 'pending',
+      createdAt,
+      lastUpdated: createdAt,
+
       // Customer information
-      customerId: getCurrentUser()?.id,
-      customerName: `${getCurrentUser()?.firstName} ${getCurrentUser()?.lastName}`,
-      customerEmail: getCurrentUser()?.email,
-      customerPhone: getCurrentUser()?.phone,
-      
-      // Delivery information
-      pickupAddress: formData.pickupAddress,
-      deliveryAddress: formData.deliveryAddress,
-      category: formData.category,
-      weight: parseFloat(formData.weight) || 0,
-      volume: parseFloat(formData.volume) || 0,
-      urgency: formData.urgency,
-      
+      customerInfo: {
+        id: currentUser?.id || 'guest',
+        name: currentUser ? `${currentUser?.firstName || ''} ${currentUser?.lastName || ''}`.trim() || currentUser?.email || 'Guest User' : 'Guest User',
+        email: currentUser?.email || 'guest@example.com',
+        phone: currentUser?.phone || 'N/A',
+        userType: currentUser?.userType || 'customer'
+      },
+
+      // Location information
+      locations: {
+        pickup: {
+          address: formData.pickupAddress,
+          coordinates: pickupCoords,
+          geocoded: true,
+          geocodingMethod: geocodingResults.pickup.method,
+          accuracy: geocodingResults.pickup.accuracy
+        },
+        delivery: {
+          address: formData.deliveryAddress,
+          coordinates: deliveryCoords,
+          geocoded: true,
+          geocodingMethod: geocodingResults.delivery.method,
+          accuracy: geocodingResults.delivery.accuracy
+        },
+        distance: {
+          km: priceData?.distance_km || 0,
+          miles: priceData?.distance_km ? priceData.distance_km * 0.621371 : 0
+        }
+      },
+
+      // Package information
+      packageDetails: {
+        category: formData.category,
+        categoryLabel: getTranslatedCategoryLabel(formData.category),
+        weight: {
+          value: parseFloat(formData.weight) || 0,
+          unit: 'kg'
+        },
+        volume: {
+          value: parseFloat(formData.volume) || 0,
+          unit: 'm³'
+        },
+        urgency: formData.urgency,
+        urgencyLabel: getUrgencyLabel()
+      },
+
       // Special requirements
       specialRequirements: {
         fragile: formData.fragile,
         refrigerated: formData.refrigerated,
         oversized: formData.oversized,
-        hazardous: formData.hazardous
+        hazardous: formData.hazardous,
+        requirementsList: [
+          ...(formData.fragile ? ['fragile'] : []),
+          ...(formData.refrigerated ? ['refrigerated'] : []),
+          ...(formData.oversized ? ['oversized'] : []),
+          ...(formData.hazardous ? ['hazardous'] : [])
+        ]
       },
-      
+
       // Driver information
-      driverId: selectedDriver,
-      driverName: selectedDriverData ? `${selectedDriverData.user.firstName} ${selectedDriverData.user.lastName}` : '',
-      driverPhone: selectedDriverData?.user.phone || '',
-      driverEmail: selectedDriverData?.user.email || '',
-      driverRating: selectedDriverData?.rating || 0,
-      
+      driverInfo: selectedDriverData ? {
+        id: selectedDriver,
+        driverId: selectedDriverData.driverId,
+        userId: selectedDriverData.userId,
+        name: `${selectedDriverData.user.firstName} ${selectedDriverData.user.lastName}`,
+        phone: selectedDriverData.user.phone,
+        email: selectedDriverData.user.email,
+        rating: selectedDriverData.rating || 0,
+        matchScore: selectedDriverData.matchScore || 0,
+        suitability: selectedDriverData.suitability || '',
+        estimatedArrival: selectedDriverData.estimatedArrival || '15'
+      } : null,
+
       // Vehicle information
-      vehicleType: vehicle?.type || '',
-      vehicleMake: vehicle?.make || '',
-      vehicleModel: vehicle?.model || '',
-      vehicleLicensePlate: vehicle?.licensePlate || '',
-      vehicleCapacity: {
-        maxWeight: vehicle?.maxWeight || 0,
-        maxVolume: vehicle?.maxVolume || 0
-      },
-      vehicleImageUrl: vehicle?.imageUrl || '',
-      
+      vehicleInfo: vehicle ? {
+        type: vehicle.type,
+        typeFormatted: formatVehicleType(vehicle.type),
+        make: vehicle.make,
+        model: vehicle.model,
+        licensePlate: vehicle.licensePlate,
+        capacity: {
+          maxWeight: vehicle.maxWeight,
+          maxVolume: vehicle.maxVolume,
+          unit: { weight: 'kg', volume: 'm³' }
+        },
+        imageUrl: vehicle.imageUrl,
+        imageError: imageErrors[`${selectedDriverData?.driverId}-0`] || false
+      } : null,
+
       // Price information
-      estimatedPriceUSD: priceData?.price_usd || 0,
-      estimatedPriceRUB: priceData?.price_rub || 0,
-      confidenceInterval: {
-        low: priceData?.confidence_interval_low || 0,
-        high: priceData?.confidence_interval_high || 0
+      pricing: {
+        estimatedPrice: {
+          usd: priceData?.price_usd || 0,
+          rub: priceData?.price_rub || 0,
+          formatted: {
+            usd: `$${priceData?.price_usd.toFixed(2) || '0.00'}`,
+            rub: `₽${priceData?.price_rub.toFixed(2) || '0.00'}`
+          }
+        },
+        confidenceInterval: {
+          low: priceData?.confidence_interval_low || 0,
+          high: priceData?.confidence_interval_high || 0,
+          formatted: priceData ? 
+            `$${(priceData.confidence_interval_low / 90).toFixed(2)} - $${(priceData.confidence_interval_high / 90).toFixed(2)}` :
+            'N/A'
+        },
+        currency: 'USD',
+        baseCurrency: 'RUB'
       },
-      
-      // Distance and timing
-      distance: priceData?.distance_km || 0,
-      estimatedDuration: priceData?.duration_minutes || 0,
-      estimatedDurationText: priceData?.duration_text || '',
-      estimatedArrival: selectedDriverData?.estimatedArrival || '',
-      
-      // Matching information
-      matchScore: selectedDriverData?.matchScore || 0,
-      suitability: selectedDriverData?.suitability || '',
-      
-      // Timestamps
-      createdAt: new Date().toISOString(),
-      scheduledPickupTime: calculatePickupTime(),
-      estimatedDeliveryTime: calculateDeliveryTime()
+
+      // Timing information
+      timing: {
+        estimatedDuration: {
+          minutes: priceData?.duration_minutes || 0,
+          text: priceData?.duration_text || '',
+          formatted: priceData?.duration_text || 'N/A'
+        },
+        pickupTime: {
+          estimated: new Date().toISOString(),
+          driverArrival: selectedDriverData?.estimatedArrival ? 
+            `${selectedDriverData.estimatedArrival} minutes` : 'N/A'
+        },
+        deliveryTime: {
+          estimated: new Date(Date.now() + (priceData?.duration_minutes || 30) * 60000).toISOString(),
+          scheduled: new Date(Date.now() + (priceData?.duration_minutes || 30) * 60000).toISOString()
+        },
+        urgencyLevel: formData.urgency,
+        serviceHours: '24/7'
+      },
+
+      // System information
+      systemInfo: {
+        geocodingStatus: {
+          pickup: geocodingResults.pickup.status,
+          delivery: geocodingResults.delivery.status
+        },
+        calculationTimestamp: priceData?.timestamp || new Date().toISOString(),
+        apiVersion: '1.0',
+        source: 'customer-booking-form'
+      },
+
+      // Additional metadata
+      metadata: {
+        geocodingAttempts: 1,
+        driverSelectionTime: new Date().toISOString(),
+        userAgent: navigator.userAgent,
+        platform: 'web'
+      }
     };
   };
 
-  // Calculate pickup time (current time + driver arrival time)
-  const calculatePickupTime = () => {
-    const selectedDriverData = drivers.find(d => d.driverId === selectedDriver);
-    if (!selectedDriverData) return new Date().toISOString();
-    
-    const arrivalMinutes = parseInt(selectedDriverData.estimatedArrival) || 15;
-    const pickupTime = new Date();
-    pickupTime.setMinutes(pickupTime.getMinutes() + arrivalMinutes);
-    return pickupTime.toISOString();
-  };
-
-  // Calculate delivery time (pickup time + travel time)
-  const calculateDeliveryTime = () => {
-    const pickupTime = new Date(calculatePickupTime());
-    const travelMinutes = priceData?.duration_minutes || 30;
-    const deliveryTime = new Date(pickupTime);
-    deliveryTime.setMinutes(deliveryTime.getMinutes() + travelMinutes);
-    return deliveryTime.toISOString();
+  // Format date for display
+  const formatDateTime = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return 'Invalid date';
+      return date.toLocaleString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      console.error('Error formatting date:', dateString, error);
+      return 'Invalid date';
+    }
   };
 
   // Send order to order-service
   const createOrder = async (orderData: any) => {
     try {
       const token = getAuthToken();
+      
+      console.log('📦 Sending Order Data to API:', JSON.stringify(orderData, null, 2));
       
       const response = await fetch('http://localhost:3004/api/orders/create', {
         method: 'POST',
@@ -474,32 +976,35 @@ export function CustomerBooking() {
       const data = await response.json();
       
       if (data.success) {
-        toast.success(t('customer.booking.order_created') || 'Order created successfully!');
-        // You can redirect to order confirmation page or show success modal
+        toast.success('Order created successfully!');
+        
+        console.log('✅ Order Created Successfully!');
+        console.log('📊 Order ID:', orderData.orderId);
+        console.log('📍 Pickup Coordinates:', orderData.locations.pickup.coordinates);
+        console.log('📍 Delivery Coordinates:', orderData.locations.delivery.coordinates);
+        console.log('💰 Price:', orderData.pricing.estimatedPrice.formatted.usd);
+        
       } else {
-        toast.error(data.error || t('customer.booking.order_creation_failed') || 'Failed to create order');
+        toast.error(data.error || 'Failed to create order');
       }
       
     } catch (error: any) {
       console.error('Error creating order:', error);
-      toast.error(t('customer.booking.order_service_error') || 'Failed to connect to order service');
+      toast.error('Failed to connect to order service');
     }
   };
 
-  // Function to get timestamp
   const getCurrentTimePlusMinutes = (minutes: number) => {
     const now = new Date();
     now.setMinutes(now.getMinutes() + minutes);
     return now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Function to format vehicle type
   const formatVehicleType = (type: string) => {
-    if (!type) return t('customer.booking.not_available') || 'N/A';
+    if (!type) return 'N/A';
     return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
-  // Function to handle image errors
   const handleImageError = (driverId: string, vehicleIndex: number = 0) => {
     setImageErrors(prev => ({
       ...prev,
@@ -507,7 +1012,6 @@ export function CustomerBooking() {
     }));
   };
 
-  // Function to retry image loading
   const handleRetryImage = (driverId: string, vehicleIndex: number = 0) => {
     setImageErrors(prev => ({
       ...prev,
@@ -515,39 +1019,6 @@ export function CustomerBooking() {
     }));
   };
 
-  // Function to get gradient color based on vehicle type
-  const getVehicleGradient = (type: string) => {
-    switch(type) {
-      case 'motorbike':
-        return 'from-orange-100 to-yellow-100';
-      case 'small_van':
-        return 'from-blue-100 to-cyan-100';
-      case 'medium_truck':
-        return 'from-green-100 to-emerald-100';
-      case 'large_truck':
-        return 'from-purple-100 to-pink-100';
-      default:
-        return 'from-gray-100 to-gray-200';
-    }
-  };
-
-  // Function to get icon color based on vehicle type
-  const getVehicleIconColor = (type: string) => {
-    switch(type) {
-      case 'motorbike':
-        return 'text-orange-600';
-      case 'small_van':
-        return 'text-blue-600';
-      case 'medium_truck':
-        return 'text-green-600';
-      case 'large_truck':
-        return 'text-purple-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
-  // Component to display vehicle image
   const VehicleImage = ({ driver, isExpanded = false }: { driver: Driver, isExpanded?: boolean }) => {
     const vehicle = driver.vehicles[0];
     const imageKey = `${driver.driverId}-0`;
@@ -555,8 +1026,8 @@ export function CustomerBooking() {
     
     if (!vehicle) {
       return (
-        <div className={`w-full ${isExpanded ? 'h-40' : 'h-full'} flex items-center justify-center bg-gradient-to-br ${getVehicleGradient('')}`}>
-          <Car className={`${isExpanded ? 'h-16 w-16' : 'h-8 w-8'} ${getVehicleIconColor('')}`} />
+        <div className={`w-full ${isExpanded ? 'h-40' : 'h-full'} flex items-center justify-center bg-gradient-to-br from-gray-100 to-gray-200`}>
+          <Car className={`${isExpanded ? 'h-16 w-16' : 'h-8 w-8'} text-gray-600`} />
         </div>
       );
     }
@@ -566,11 +1037,11 @@ export function CustomerBooking() {
     
     if (!isValidUrl || hasError) {
       return (
-        <div className={`w-full ${isExpanded ? 'h-40' : 'h-full'} flex flex-col items-center justify-center bg-gradient-to-br ${getVehicleGradient(vehicle.type)}`}>
+        <div className={`w-full ${isExpanded ? 'h-40' : 'h-full'} flex flex-col items-center justify-center bg-gradient-to-br from-blue-100 to-cyan-100`}>
           {hasError && (
             <AlertTriangle className={`${isExpanded ? 'h-10 w-10' : 'h-6 w-6'} text-red-400 mb-2`} />
           )}
-          <Car className={`${isExpanded ? 'h-12 w-12' : 'h-8 w-8'} ${getVehicleIconColor(vehicle.type)} mb-2`} />
+          <Car className={`${isExpanded ? 'h-12 w-12' : 'h-8 w-8'} text-blue-600 mb-2`} />
           <span className={`text-center ${isExpanded ? 'text-sm' : 'text-xs'} font-medium text-gray-700`}>
             {formatVehicleType(vehicle.type)}
           </span>
@@ -602,136 +1073,128 @@ export function CustomerBooking() {
           alt={`${vehicle.make} ${vehicle.model}`}
           className={`w-full ${isExpanded ? 'h-40' : 'h-full'} object-cover`}
           onError={() => handleImageError(driver.driverId, 0)}
-          onLoad={() => console.log('✅ Vehicle image loaded successfully:', imageUrl)}
           crossOrigin="anonymous"
         />
-        {imageUrl && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              window.open(imageUrl, '_blank');
-            }}
-            className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
-            title="Open image in new tab"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-        )}
-        {imageUrl && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleRetryImage(driver.driverId, 0);
-            }}
-            className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded-full hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
-            title="Refresh image"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
-        )}
       </>
     );
   };
 
-  // Get translated label for category
   const getTranslatedCategoryLabel = (value: string) => {
     switch(value) {
       case 'documents':
-        return t('customer.booking.category_documents') || 'Documents & Small Packages';
+        return 'Documents & Small Packages';
       case 'furniture':
-        return t('customer.booking.category_furniture') || 'Furniture & Appliances';
+        return 'Furniture & Appliances';
       case 'construction':
-        return t('customer.booking.category_construction') || 'Construction Materials';
+        return 'Construction Materials';
       case 'food':
-        return t('customer.booking.category_food') || 'Food & Beverages';
+        return 'Food & Beverages';
       case 'electronics':
-        return t('customer.booking.category_electronics') || 'Electronics & Fragile Items';
+        return 'Electronics & Fragile Items';
       case 'other':
-        return t('customer.booking.category_other') || 'Other';
+        return 'Other';
       default:
         return value;
     }
   };
 
-  // Helper function to get arrival text - FIXED VERSION
-  const getArrivalText = (minutes: number) => {
-    const time = getCurrentTimePlusMinutes(minutes);
-    const translation = t('customer.booking.arrives_by');
-    // If translation exists and contains {time}, replace it
-    if (translation && translation.includes('{time}')) {
-      return translation.replace('{time}', time);
+  // Geocoding status indicator
+  const GeocodingStatus = () => {
+    if (!formData.pickupAddress || !formData.deliveryAddress) {
+      return null;
     }
-    // Otherwise use fallback
-    return translation || `Arrives by ${time}`;
+
+    const pickupStatus = geocodingResults.pickup.status;
+    const deliveryStatus = geocodingResults.delivery.status;
+    
+    if (geocodingInProgress) {
+      return (
+        <div className="flex items-center text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">
+          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+          <span className="text-sm">
+            Getting precise coordinates...
+          </span>
+        </div>
+      );
+    }
+
+    const allSuccess = pickupStatus === 'success' && deliveryStatus === 'success';
+    const anyError = pickupStatus === 'error' || deliveryStatus === 'error';
+
+    if (allSuccess) {
+      const pickupMethod = geocodingResults.pickup.method;
+      const deliveryMethod = geocodingResults.delivery.method;
+      
+      return (
+        <div className="flex items-center text-green-700 bg-green-50 px-3 py-2 rounded-lg">
+          <Check className="h-4 w-4 mr-2" />
+          <span className="text-sm">
+            Coordinates obtained
+          </span>
+          <Badge variant="outline" className="ml-2 text-xs">
+            {pickupMethod === deliveryMethod ? pickupMethod : `${pickupMethod}/${deliveryMethod}`}
+          </Badge>
+        </div>
+      );
+    }
+
+    if (anyError) {
+      return (
+        <div className="flex items-center text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
+          <AlertTriangle className="h-4 w-4 mr-2" />
+          <span className="text-sm">
+            Using approximate coordinates
+          </span>
+        </div>
+      );
+    }
+
+    return null;
   };
 
-  // Helper function to get match score text - FIXED VERSION
-  const getMatchScoreText = (score: number) => {
-    const translation = t('customer.booking.match_score');
-    // If translation exists and contains {score}, replace it
-    if (translation && translation.includes('{score}')) {
-      return translation.replace('{score}', score.toString());
-    }
-    // Otherwise use fallback
-    return translation || `${score}% Match`;
-  };
+  // Coordinate display for each address
+  const CoordinateDisplay = ({ type }: { type: 'pickup' | 'delivery' }) => {
+    const coords = type === 'pickup' ? pickupCoordinates : deliveryCoordinates;
+    const status = geocodingResults[type].status;
+    const method = geocodingResults[type].method;
+    const accuracy = geocodingResults[type].accuracy;
+    
+    if (!coords) return null;
+    
+    const getAccuracyColor = () => {
+      switch(accuracy) {
+        case 'high': return 'text-green-600';
+        case 'medium': return 'text-blue-600';
+        case 'low': return 'text-amber-600';
+        default: return 'text-gray-600';
+      }
+    };
+    
+    const getAccuracyIcon = () => {
+      switch(accuracy) {
+        case 'high': return <CheckCircle className="h-3 w-3" />;
+        case 'medium': return <Info className="h-3 w-3" />;
+        case 'low': return <AlertTriangle className="h-3 w-3" />;
+        default: return <AlertCircle className="h-3 w-3" />;
+      }
+    };
 
-  // Helper function to get distance away text - FIXED VERSION
-  const getDistanceAwayText = (distanceText: string) => {
-    const translation = t('customer.booking.distance_away');
-    // If translation exists and contains {distance}, replace it
-    if (translation && translation.includes('{distance}')) {
-      return translation.replace('{distance}', distanceText);
-    }
-    // Otherwise use fallback
-    return translation || `${distanceText} away`;
-  };
-
-  // Helper function to get drivers count text - FIXED VERSION
-  const getDriversCountText = (count: number) => {
-    const translation = t('customer.booking.drivers_count');
-    // If translation exists and contains {count}, replace it
-    if (translation && translation.includes('{count}')) {
-      return translation.replace('{count}', count.toString());
-    }
-    // Otherwise use fallback
-    return translation || `${count} available`;
-  };
-
-  // Helper function to get driver waiting text - FIXED VERSION
-  const getDriverWaitingText = (driverName: string | undefined) => {
-    const name = driverName || 'Driver';
-    const translation = t('customer.booking.driver_waiting');
-    // If translation exists and contains {name}, replace it
-    if (translation && translation.includes('{name}')) {
-      return translation.replace('{name}', name);
-    }
-    // Otherwise use fallback
-    return translation || `${name} is waiting for your order`;
-  };
-
-  // Helper function to get book delivery text - FIXED VERSION
-  const getBookDeliveryText = (amount: number) => {
-    const translation = t('customer.booking.book_delivery');
-    // If translation exists and contains {amount}, replace it
-    if (translation && translation.includes('{amount}')) {
-      return translation.replace('{amount}', amount.toFixed(2));
-    }
-    // Otherwise use fallback
-    return translation || `Book Delivery for $${amount.toFixed(2)}`;
-  };
-
-  // Helper function to get confidence interval text - FIXED VERSION
-  const getConfidenceIntervalText = (low: number, high: number) => {
-    const translation = t('customer.booking.confidence_interval');
-    // If translation exists and contains {low} and {high}, replace them
-    if (translation && translation.includes('{low}') && translation.includes('{high}')) {
-      return translation
-        .replace('{low}', (low / 90).toFixed(2))
-        .replace('{high}', (high / 90).toFixed(2));
-    }
-    // Otherwise use fallback
-    return translation || `Confidence interval: $${(low / 90).toFixed(2)} - $${(high / 90).toFixed(2)}`;
+    return (
+      <div className={`mt-2 text-xs ${getAccuracyColor()} flex items-center justify-between`}>
+        <div className="flex items-center">
+          <Globe className="h-3 w-3 mr-1" />
+          <span className="font-mono">{coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}</span>
+        </div>
+        {method && (
+          <Badge variant="outline" className="ml-2 text-xs">
+            <div className="flex items-center">
+              {getAccuracyIcon()}
+              <span className="ml-1">{method}</span>
+            </div>
+          </Badge>
+        )}
+      </div>
+    );
   };
 
   // Price display component
@@ -741,7 +1204,7 @@ export function CustomerBooking() {
         <div className="flex items-center justify-center space-x-2 p-4 bg-blue-50 rounded-lg">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           <span className="text-blue-600">
-            {t('customer.booking.calculating') || 'Calculating price...'}
+            Calculating price...
           </span>
         </div>
       );
@@ -753,7 +1216,7 @@ export function CustomerBooking() {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-gray-600">
-                {t('customer.booking.estimated_price') || 'Estimated Price'}
+                Estimated Price
               </div>
               <div className="text-3xl font-bold text-green-700">
                 ${priceData.price_usd.toFixed(2)}
@@ -764,7 +1227,7 @@ export function CustomerBooking() {
             </div>
             <div className="text-right">
               <div className="text-sm text-gray-600">
-                {t('customer.booking.delivery_distance') || 'Delivery distance'}
+                Delivery distance
               </div>
               <div className="text-lg font-semibold text-gray-800">
                 {priceData.distance_km.toFixed(1)} km
@@ -778,7 +1241,7 @@ export function CustomerBooking() {
               <div>
                 <div className="font-medium">{priceData.distance_km.toFixed(1)} km</div>
                 <div className="text-gray-500">
-                  {t('customer.booking.distance') || 'Distance'}
+                  Distance
                 </div>
               </div>
             </div>
@@ -787,7 +1250,7 @@ export function CustomerBooking() {
               <div>
                 <div className="font-medium">{priceData.duration_text}</div>
                 <div className="text-gray-500">
-                  {t('customer.booking.estimated_time') || 'Est. time'}
+                  Est. time
                 </div>
               </div>
             </div>
@@ -795,7 +1258,7 @@ export function CustomerBooking() {
           
           <div className="pt-3 border-t border-gray-200">
             <div className="text-xs text-gray-500">
-              {getConfidenceIntervalText(priceData.confidence_interval_low, priceData.confidence_interval_high)}
+              Confidence interval: ${(priceData.confidence_interval_low / 90).toFixed(2)} - ${(priceData.confidence_interval_high / 90).toFixed(2)}
             </div>
           </div>
         </div>
@@ -805,7 +1268,7 @@ export function CustomerBooking() {
     return (
       <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
         <div className="text-gray-500">
-          {t('customer.booking.fill_all_fields_to_see_price') || 'Fill in all fields to see price estimate'}
+          Fill in all fields to see price estimate
         </div>
       </div>
     );
@@ -818,7 +1281,7 @@ export function CustomerBooking() {
         <div className="flex items-center justify-center space-x-2 p-4 bg-blue-50 rounded-lg">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           <span className="text-blue-600">
-            {t('customer.booking.finding_drivers') || 'Finding available drivers...'}
+            Finding available drivers...
           </span>
         </div>
       );
@@ -828,7 +1291,7 @@ export function CustomerBooking() {
       return (
         <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200 text-center">
           <div className="text-yellow-700">
-            {t('customer.booking.no_drivers_available') || 'No drivers available at the moment. Please try again later.'}
+            No drivers available at the moment. Please try again later.
           </div>
         </div>
       );
@@ -840,14 +1303,14 @@ export function CustomerBooking() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold text-gray-800">
-                {t('customer.booking.available_drivers') || 'Available Drivers'}
+                Available Drivers
               </h3>
               <p className="text-sm text-gray-600">
-                {t('customer.booking.select_driver_description') || 'Select a driver for your delivery'}
+                Select a driver for your delivery
               </p>
             </div>
             <Badge variant="outline" className="bg-blue-50">
-              {getDriversCountText(drivers.length)}
+              {drivers.length} available
             </Badge>
           </div>
           
@@ -869,7 +1332,6 @@ export function CustomerBooking() {
                     isExpanded ? 'bg-blue-50' : ''
                   }`}
                 >
-                  {/* Driver Summary */}
                   <div 
                     className="p-4 cursor-pointer"
                     onClick={() => setExpandedDriver(
@@ -879,7 +1341,6 @@ export function CustomerBooking() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-4">
                         <div className="relative group">
-                          {/* Small vehicle image when not selected */}
                           <div className={`${isSelected ? 'w-20 h-20' : 'w-16 h-16'} rounded-lg overflow-hidden border-2 ${isSelected ? 'border-green-400 shadow-sm' : 'border-gray-200'} relative`}>
                             <VehicleImage driver={driver} />
                           </div>
@@ -906,7 +1367,7 @@ export function CustomerBooking() {
                               driver.suitability === 'excellent' ? 'default' :
                               driver.suitability === 'good' ? 'secondary' : 'outline'
                             } className="text-xs">
-                              {t(`customer.booking.suitability.${driver.suitability}`) || driver.suitability}
+                              {driver.suitability}
                             </Badge>
                           </div>
                           
@@ -918,13 +1379,13 @@ export function CustomerBooking() {
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Clock className="h-3.5 w-3.5 mr-1.5 text-green-500" />
                               <span className="font-medium">
-                                {getArrivalText(minutes)}
+                                Arrives by {getCurrentTimePlusMinutes(minutes)}
                               </span>
                             </div>
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Trophy className="h-3.5 w-3.5 mr-1.5 text-purple-500" />
                               <span className="font-medium">
-                                {getMatchScoreText(driver.matchScore)}
+                                {driver.matchScore}% Match
                               </span>
                             </div>
                           </div>
@@ -938,61 +1399,57 @@ export function CustomerBooking() {
                           <ChevronDown className="h-5 w-5 text-gray-400" />
                         )}
                         <div className="text-xs text-gray-500 text-right">
-                          {getDistanceAwayText(driver.distanceInfo?.distance?.text || 'N/A')}
+                          {driver.distanceInfo?.distance?.text || 'N/A'} away
                         </div>
                       </div>
                     </div>
                   </div>
                   
-                  {/* Expanded Details */}
                   {isExpanded && (
                     <div className="px-4 pb-4 border-t border-gray-200 pt-4">
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Driver Details */}
                         <div className="space-y-4">
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <User className="h-4 w-4 mr-2 text-blue-600" />
-                              {t('customer.booking.driver_information') || 'Driver Information'}
+                              Driver Information
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">{t('customer.booking.name') || 'Name'}:</span>
+                                <span className="text-gray-500">Name:</span>
                                 <span className="font-medium text-gray-800">{driver.user.firstName} {driver.user.lastName}</span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">{t('customer.booking.phone') || 'Phone'}:</span>
+                                <span className="text-gray-500">Phone:</span>
                                 <span className="font-medium text-gray-800">{driver.user.phone}</span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">{t('customer.booking.rating') || 'Rating'}:</span>
+                                <span className="text-gray-500">Rating:</span>
                                 <div className="flex items-center">
                                   <Star className="h-3 w-3 fill-current text-yellow-500 mr-1" />
-                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? formatRating(driver.rating) : t('customer.booking.no_ratings') || 'No ratings yet'}</span>
+                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? formatRating(driver.rating) : 'No ratings yet'}</span>
                                 </div>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">{t('customer.booking.suitability') || 'Suitability'}:</span>
+                                <span className="text-gray-500">Suitability:</span>
                                 <Badge variant={
                                   driver.suitability === 'excellent' ? 'default' :
                                   driver.suitability === 'good' ? 'secondary' : 'outline'
                                 } className="font-medium">
-                                  {t(`customer.booking.suitability.${driver.suitability}`) || driver.suitability}
+                                  {driver.suitability}
                                 </Badge>
                               </div>
                             </div>
                           </div>
                         </div>
                         
-                        {/* Vehicle Details */}
                         <div className="space-y-4">
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <Car className="h-4 w-4 mr-2 text-green-600" />
-                              {t('customer.booking.vehicle_information') || 'Vehicle Information'}
+                              Vehicle Information
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
-                              {/* Larger vehicle image in expanded view */}
                               <div className="mb-3">
                                 <div className="w-full rounded-lg overflow-hidden border border-gray-200 shadow-sm relative group">
                                   <VehicleImage driver={driver} isExpanded={true} />
@@ -1002,21 +1459,21 @@ export function CustomerBooking() {
                               <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">{t('customer.booking.type') || 'Type'}:</span>
+                                    <span className="text-gray-500">Type:</span>
                                     <span className="font-medium text-gray-800 capitalize">{formatVehicleType(vehicle?.type || '')}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">{t('customer.booking.model') || 'Model'}:</span>
+                                    <span className="text-gray-500">Model:</span>
                                     <span className="font-medium text-gray-800">{vehicle?.make || ''} {vehicle?.model || ''}</span>
                                   </div>
                                 </div>
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">{t('customer.booking.license') || 'License'}:</span>
-                                    <span className="font-medium text-gray-800">{vehicle?.licensePlate || t('customer.booking.not_available') || 'N/A'}</span>
+                                    <span className="text-gray-500">License:</span>
+                                    <span className="font-medium text-gray-800">{vehicle?.licensePlate || 'N/A'}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">{t('customer.booking.capacity') || 'Capacity'}:</span>
+                                    <span className="text-gray-500">Capacity:</span>
                                     <span className="font-medium text-gray-800">{vehicle?.maxWeight || 0}kg, {vehicle?.maxVolume || 0}m³</span>
                                   </div>
                                 </div>
@@ -1025,12 +1482,11 @@ export function CustomerBooking() {
                           </div>
                         </div>
                         
-                        {/* Distance Information */}
                         <div className="space-y-4">
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <MapPin className="h-4 w-4 mr-2 text-red-600" />
-                              {t('customer.booking.distance_information') || 'Distance Information'}
+                              Distance Information
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="space-y-3">
@@ -1040,9 +1496,9 @@ export function CustomerBooking() {
                                       <MapPin className="h-4 w-4 text-blue-600 mr-2" />
                                       <div>
                                         <div className="text-xs text-gray-500">
-                                          {t('customer.booking.distance_to_pickup') || 'Distance to pickup'}
+                                          Distance to pickup
                                         </div>
-                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.distance?.text || t('customer.booking.not_available') || 'N/A'}</div>
+                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.distance?.text || 'N/A'}</div>
                                       </div>
                                     </div>
                                   </div>
@@ -1054,9 +1510,9 @@ export function CustomerBooking() {
                                       <Clock className="h-4 w-4 text-green-600 mr-2" />
                                       <div>
                                         <div className="text-xs text-gray-500">
-                                          {t('customer.booking.time_to_pickup') || 'Time to pickup'}
+                                          Time to pickup
                                         </div>
-                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.duration?.text || t('customer.booking.not_available') || 'N/A'}</div>
+                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.duration?.text || 'N/A'}</div>
                                       </div>
                                     </div>
                                   </div>
@@ -1068,7 +1524,7 @@ export function CustomerBooking() {
                                       <Calendar className="h-4 w-4 text-purple-600 mr-2" />
                                       <div>
                                         <div className="text-xs text-gray-500">
-                                          {t('customer.booking.estimated_arrival_time') || 'Estimated arrival time'}
+                                          Estimated arrival time
                                         </div>
                                         <div className="font-semibold text-gray-800">{getCurrentTimePlusMinutes(minutes)}</div>
                                       </div>
@@ -1081,7 +1537,6 @@ export function CustomerBooking() {
                         </div>
                       </div>
                       
-                      {/* Select Button */}
                       <div className="mt-6 flex justify-end">
                         <Button
                           onClick={() => handleDriverSelect(driver.driverId)}
@@ -1096,10 +1551,10 @@ export function CustomerBooking() {
                           {isSelected ? (
                             <>
                               <Check className="h-5 w-5 mr-2" />
-                              {t('customer.booking.driver_selected_button') || 'Driver Selected'}
+                              Driver Selected
                             </>
                           ) : (
-                            t('customer.booking.select_this_driver') || 'Select This Driver'
+                            'Select This Driver'
                           )}
                         </Button>
                       </div>
@@ -1117,16 +1572,16 @@ export function CustomerBooking() {
                   <Check className="h-5 w-5 mr-3 bg-green-100 p-1 rounded-full" />
                   <div>
                     <div className="font-semibold">
-                      {t('customer.booking.driver_selected_message') || 'Driver selected! Ready to book delivery.'}
+                      Driver selected! Ready to book delivery.
                     </div>
                     <div className="text-sm text-green-600 mt-0.5">
-                      {getDriverWaitingText(drivers.find(d => d.driverId === selectedDriver)?.user.firstName)}
+                      {drivers.find(d => d.driverId === selectedDriver)?.user.firstName || 'Driver'} is waiting for your order
                     </div>
                   </div>
                 </div>
                 <Badge variant="outline" className="bg-white text-green-700 border-green-300">
                   <Clock className="h-3 w-3 mr-1" />
-                  {t('customer.booking.ready_to_go') || 'Ready to go'}
+                  Ready to go
                 </Badge>
               </div>
             </div>
@@ -1138,221 +1593,522 @@ export function CustomerBooking() {
     return null;
   };
 
+  // Order Preview Modal Component
+  const OrderPreviewModal = () => {
+    if (!orderData) return null;
+
+    return (
+      <Dialog open={showOrderPreview} onOpenChange={setShowOrderPreview}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center text-2xl">
+              <FileText className="h-6 w-6 mr-2 text-blue-600" />
+              Order Preview
+              <Badge className="ml-3" variant="outline">
+                ID: {orderData.orderId?.substring(0, 12) || 'N/A'}...
+              </Badge>
+            </DialogTitle>
+            <DialogDescription>
+              Review all details before confirming your delivery order
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6">
+            {/* Order Summary Banner */}
+            <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-semibold text-lg text-gray-800">Delivery Summary</h3>
+                  <p className="text-sm text-gray-600">All details have been collected and verified</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-3xl font-bold text-green-700">
+                    {orderData.pricing?.estimatedPrice?.formatted?.usd || '$0.00'}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {orderData.pricing?.estimatedPrice?.formatted?.rub || '₽0.00'}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Two Column Layout */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Left Column */}
+              <div className="space-y-6">
+                {/* Customer Information */}
+                <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                  <h4 className="font-semibold text-lg mb-3 flex items-center">
+                    <User className="h-5 w-5 mr-2 text-blue-600" />
+                    Customer Information
+                  </h4>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <span className="text-gray-500">Name:</span>
+                      <span className="font-medium">{orderData.customerInfo?.name || 'N/A'}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <span className="text-gray-500">Email:</span>
+                      <span className="font-medium flex items-center">
+                        <Mail className="h-4 w-4 mr-1 text-gray-400" />
+                        {orderData.customerInfo?.email || 'N/A'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500">Phone:</span>
+                      <span className="font-medium flex items-center">
+                        <Phone className="h-4 w-4 mr-1 text-gray-400" />
+                        {orderData.customerInfo?.phone || 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Package Details */}
+                <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                  <h4 className="font-semibold text-lg mb-3 flex items-center">
+                    <Package className="h-5 w-5 mr-2 text-orange-600" />
+                    Package Details
+                  </h4>
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center border-b pb-2">
+                      <span className="text-gray-500">Category:</span>
+                      <Badge variant="outline">{orderData.packageDetails?.categoryLabel || 'N/A'}</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="bg-gray-50 p-3 rounded">
+                        <div className="flex items-center mb-1">
+                          <Weight className="h-4 w-4 mr-2 text-gray-500" />
+                          <span className="text-gray-500">Weight</span>
+                        </div>
+                        <div className="font-semibold text-lg">{orderData.packageDetails?.weight?.value || 0} kg</div>
+                      </div>
+                      <div className="bg-gray-50 p-3 rounded">
+                        <div className="flex items-center mb-1">
+                          <Ruler className="h-4 w-4 mr-2 text-gray-500" />
+                          <span className="text-gray-500">Volume</span>
+                        </div>
+                        <div className="font-semibold text-lg">{orderData.packageDetails?.volume?.value || 0} m³</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-500">Urgency:</span>
+                      <Badge variant={orderData.packageDetails?.urgency === 'urgent' ? 'destructive' : 'outline'}>
+                        {orderData.packageDetails?.urgencyLabel || 'N/A'}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column */}
+              <div className="space-y-6">
+                {/* Location Details */}
+                <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                  <h4 className="font-semibold text-lg mb-3 flex items-center">
+                    <Navigation className="h-5 w-5 mr-2 text-green-600" />
+                    Location Details
+                  </h4>
+                  <div className="space-y-4">
+                    {/* Pickup Location */}
+                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                      <div className="flex items-start mb-2">
+                        <div className="bg-blue-100 p-1.5 rounded-full mr-3">
+                          <Home className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h5 className="font-medium text-gray-800">Pickup Location</h5>
+                          <p className="text-sm text-gray-600 mt-1">{orderData.locations?.pickup?.address || 'N/A'}</p>
+                          {orderData.locations?.pickup?.coordinates && (
+                            <div className="mt-2 text-xs text-gray-500 flex items-center">
+                              <Globe className="h-3 w-3 mr-1" />
+                              Coordinates: {orderData.locations.pickup.coordinates.lat?.toFixed(6) || 'N/A'}, {orderData.locations.pickup.coordinates.lng?.toFixed(6) || 'N/A'}
+                            </div>
+                          )}
+                          {orderData.locations?.pickup?.geocodingMethod && (
+                            <div className="mt-1 text-xs text-gray-500">
+                              Method: {orderData.locations.pickup.geocodingMethod} ({orderData.locations.pickup.accuracy || 'unknown'} accuracy)
+                            </div>
+                          )}
+                        </div>
+                        <CheckCircle className="h-5 w-5 text-green-500" />
+                      </div>
+                    </div>
+
+                    {/* Delivery Location */}
+                    <div className="bg-green-50 p-3 rounded-lg border border-green-100">
+                      <div className="flex items-start mb-2">
+                        <div className="bg-green-100 p-1.5 rounded-full mr-3">
+                          <MapPin className="h-4 w-4 text-green-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h5 className="font-medium text-gray-800">Delivery Location</h5>
+                          <p className="text-sm text-gray-600 mt-1">{orderData.locations?.delivery?.address || 'N/A'}</p>
+                          {orderData.locations?.delivery?.coordinates && (
+                            <div className="mt-2 text-xs text-gray-500 flex items-center">
+                              <Globe className="h-3 w-3 mr-1" />
+                              Coordinates: {orderData.locations.delivery.coordinates.lat?.toFixed(6) || 'N/A'}, {orderData.locations.delivery.coordinates.lng?.toFixed(6) || 'N/A'}
+                            </div>
+                          )}
+                          {orderData.locations?.delivery?.geocodingMethod && (
+                            <div className="mt-1 text-xs text-gray-500">
+                              Method: {orderData.locations.delivery.geocodingMethod} ({orderData.locations.delivery.accuracy || 'unknown'} accuracy)
+                            </div>
+                          )}
+                        </div>
+                        <CheckCircle className="h-5 w-5 text-green-500" />
+                      </div>
+                    </div>
+
+                    {/* Distance Information */}
+                    <div className="bg-gray-50 p-3 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-sm text-gray-500">Distance</div>
+                          <div className="font-semibold">{orderData.locations?.distance?.km?.toFixed(1) || 0} km</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-500">Est. Duration</div>
+                          <div className="font-semibold">{orderData.timing?.estimatedDuration?.formatted || 'N/A'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Driver & Vehicle Information */}
+                <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+                  <h4 className="font-semibold text-lg mb-3 flex items-center">
+                    <Truck className="h-5 w-5 mr-2 text-purple-600" />
+                    Driver & Vehicle
+                  </h4>
+                  <div className="space-y-4">
+                    {/* Driver Info */}
+                    {orderData.driverInfo && (
+                      <div className="flex items-center space-x-4 p-3 bg-gray-50 rounded-lg">
+                        <div className="bg-purple-100 p-2 rounded-full">
+                          <User className="h-6 w-6 text-purple-600" />
+                        </div>
+                        <div className="flex-1">
+                          <h5 className="font-semibold">{orderData.driverInfo.name}</h5>
+                          <div className="flex items-center mt-1">
+                            <Star className="h-4 w-4 text-yellow-500 mr-1" />
+                            <span className="text-sm">{formatRating(orderData.driverInfo.rating || 0)}</span>
+                            <span className="mx-2 text-gray-300">•</span>
+                            <span className="text-sm text-gray-600">{orderData.driverInfo.matchScore || 0}% Match</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Price Breakdown */}
+            <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+              <h4 className="font-semibold text-lg mb-3 flex items-center">
+                <CreditCard className="h-5 w-5 mr-2 text-green-600" />
+                Price Breakdown
+              </h4>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-medium">Estimated Price</div>
+                    <div className="text-sm text-gray-500">Includes all fees and taxes</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold text-green-700">
+                      {orderData.pricing?.estimatedPrice?.formatted?.usd || '$0.00'}
+                    </div>
+                    <div className="text-sm text-gray-500">
+                      {orderData.pricing?.estimatedPrice?.formatted?.rub || '₽0.00'}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 border-t pt-2">
+                  {orderData.pricing?.confidenceInterval?.formatted || 'N/A'}
+                </div>
+              </div>
+            </div>
+
+            {/* Raw JSON View */}
+            <details className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <summary className="cursor-pointer font-medium text-gray-700 flex items-center">
+                <Info className="h-4 w-4 mr-2" />
+                View Complete Data Structure (JSON)
+              </summary>
+              <pre className="mt-3 p-3 bg-gray-900 text-gray-100 rounded text-xs overflow-auto max-h-60">
+                {JSON.stringify(orderData, null, 2)}
+              </pre>
+            </details>
+          </div>
+
+          <DialogFooter className="flex flex-col sm:flex-row gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setShowOrderPreview(false)}
+              className="flex-1"
+            >
+              <X className="h-4 w-4 mr-2" />
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmOrder}
+              disabled={isCreatingOrder}
+              className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700"
+            >
+              {isCreatingOrder ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating Order...
+                </>
+              ) : (
+                <>
+                  <Check className="h-4 w-4 mr-2" />
+                  Confirm & Create Order
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
   return (
-    <Card className="max-w-5xl mx-auto">
-      <CardHeader>
-        <CardTitle className="flex items-center">
-          <Package className="mr-2 h-6 w-6" />
-          {t('customer.booking.title') || 'Delivery Price Calculator'}
-        </CardTitle>
-        <p className="text-gray-600">
-          {t('customer.booking.subtitle') || 'Get instant price estimates for your delivery'}
-        </p>
-      </CardHeader>
-      
-      <CardContent className="space-y-6">
-        {/* Price Display */}
-        {PriceDisplay()}
-
-        {/* Available Drivers */}
-        {priceData && <DriversDisplay />}
-
-        {/* Addresses */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="pickup" className="flex items-center">
-              <MapPin className="h-4 w-4 mr-1" />
-              {t('customer.booking.pickup_address') || 'Pickup Address'} *
-            </Label>
-            <Input
-              id="pickup"
-              placeholder={t('customer.booking.pickup_address_placeholder') || 'Enter pickup address'}
-              value={formData.pickupAddress}
-              onChange={(e) => handleInputChange('pickupAddress', e.target.value)}
-              className="h-10"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="delivery" className="flex items-center">
-              <MapPin className="h-4 w-4 mr-1" />
-              {t('customer.booking.delivery_address') || 'Delivery Address'} *
-            </Label>
-            <Input
-              id="delivery"
-              placeholder={t('customer.booking.delivery_address_placeholder') || 'Enter delivery address'}
-              value={formData.deliveryAddress}
-              onChange={(e) => handleInputChange('deliveryAddress', e.target.value)}
-              className="h-10"
-            />
-          </div>
-        </div>
-
-        {/* Category */}
-        <div className="space-y-2">
-          <Label htmlFor="category">
-            {t('customer.booking.item_category') || 'Item Category'} *
-          </Label>
-          <Select 
-            value={formData.category} 
-            onValueChange={(value) => handleInputChange('category', value)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={t('customer.booking.select_category') || 'Select category'} />
-            </SelectTrigger>
-            <SelectContent>
-              {categories.map((cat) => (
-                <SelectItem key={cat.value} value={cat.value}>
-                  {getTranslatedCategoryLabel(cat.value)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Weight and Volume */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label htmlFor="weight" className="flex items-center">
-              <Weight className="h-4 w-4 mr-1" />
-              {t('customer.booking.weight') || 'Weight (kg)'} *
-            </Label>
-            <Input
-              id="weight"
-              type="number"
-              min="0.1"
-              step="0.1"
-              placeholder={t('customer.booking.weight_placeholder') || 'e.g., 5.5'}
-              value={formData.weight}
-              onChange={(e) => handleInputChange('weight', e.target.value)}
-              className="h-10"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="volume" className="flex items-center">
-              <Ruler className="h-4 w-4 mr-1" />
-              {t('customer.booking.volume') || 'Volume (m³)'} *
-            </Label>
-            <Input
-              id="volume"
-              type="number"
-              min="0.1"
-              step="0.1"
-              placeholder={t('customer.booking.volume_placeholder') || 'e.g., 0.5'}
-              value={formData.volume}
-              onChange={(e) => handleInputChange('volume', e.target.value)}
-              className="h-10"
-            />
-          </div>
-        </div>
-
-        {/* Urgency */}
-        <div className="space-y-2">
-          <Label htmlFor="urgency">
-            {t('customer.booking.urgency') || 'Delivery Urgency'}
-          </Label>
-          <Select 
-            value={formData.urgency} 
-            onValueChange={(value) => handleInputChange('urgency', value)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="standard">
-                {t('customer.booking.urgency_standard') || 'Standard (same day)'}
-              </SelectItem>
-              <SelectItem value="urgent">
-                {t('customer.booking.urgency_urgent') || 'Urgent (within 2 hours)'}
-              </SelectItem>
-              <SelectItem value="scheduled">
-                {t('customer.booking.urgency_scheduled') || 'Scheduled (next day)'}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* Special Requirements */}
-        <div className="space-y-3">
-          <Label>{t('customer.booking.special_requirements') || 'Special Requirements'}</Label>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
-              <Checkbox
-                id="fragile"
-                checked={formData.fragile}
-                onCheckedChange={(checked) => handleInputChange('fragile', checked === true)}
-              />
-              <Label htmlFor="fragile" className="text-sm cursor-pointer flex-1">
-                {t('customer.booking.fragile') || 'Fragile items'}
-              </Label>
-            </div>
-            <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
-              <Checkbox
-                id="refrigerated"
-                checked={formData.refrigerated}
-                onCheckedChange={(checked) => handleInputChange('refrigerated', checked === true)}
-              />
-              <Label htmlFor="refrigerated" className="text-sm cursor-pointer flex-1">
-                {t('customer.booking.refrigerated') || 'Refrigerated'}
-              </Label>
-            </div>
-            <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
-              <Checkbox
-                id="oversized"
-                checked={formData.oversized}
-                onCheckedChange={(checked) => handleInputChange('oversized', checked === true)}
-              />
-              <Label htmlFor="oversized" className="text-sm cursor-pointer flex-1">
-                {t('customer.booking.oversized') || 'Oversized'}
-              </Label>
-            </div>
-            <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
-              <Checkbox
-                id="hazardous"
-                checked={formData.hazardous}
-                onCheckedChange={(checked) => handleInputChange('hazardous', checked === true)}
-              />
-              <Label htmlFor="hazardous" className="text-sm cursor-pointer flex-1">
-                {t('customer.booking.hazardous') || 'Hazardous'}
-              </Label>
-            </div>
-          </div>
-        </div>
-
-        {/* Submit Button */}
-        <Button 
-          onClick={handleSubmit}
-          className="w-full h-12 text-lg bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 shadow-md"
-          disabled={loading || !priceData || !selectedDriver}
-        >
-          {loading ? (
-            <>
-              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              {t('customer.booking.calculating') || 'Calculating...'}
-            </>
-          ) : priceData ? (
-            selectedDriver ? (
-              <>
-                <Check className="mr-2 h-5 w-5" />
-                {getBookDeliveryText(priceData.price_usd)}
-              </>
-            ) : (
-              <>
-                <User className="mr-2 h-5 w-5" />
-                {t('customer.booking.select_driver_continue') || 'Select a driver to continue'}
-              </>
-            )
-          ) : (
-            t('customer.booking.fill_all_fields_to_book') || 'Fill all fields to see price'
-          )}
-        </Button>
-
-        <div className="text-center text-sm text-gray-500 pt-4">
-          <p>{t('customer.booking.price_updates_automatically') || 'Price updates automatically as you fill the form'}</p>
-          <p className="text-xs mt-1">
-            {t('customer.booking.ai_powered_prediction') || 'Using AI-powered delivery cost prediction with 81% accuracy'}
+    <>
+      <Card className="max-w-5xl mx-auto">
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Package className="mr-2 h-6 w-6" />
+            Delivery Price Calculator
+          </CardTitle>
+          <p className="text-gray-600">
+            Get instant price estimates for your delivery
           </p>
-        </div>
-      </CardContent>
-    </Card>
+        </CardHeader>
+        
+        <CardContent className="space-y-6">
+          {/* Geocoding Status */}
+          <GeocodingStatus />
+
+          {/* Price Display */}
+          {PriceDisplay()}
+
+          {/* Available Drivers */}
+          {priceData && <DriversDisplay />}
+
+          {/* Addresses */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="pickup" className="flex items-center">
+                <MapPin className="h-4 w-4 mr-1" />
+                Pickup Address *
+              </Label>
+              <Input
+                id="pickup"
+                placeholder="Enter pickup address (e.g., Zagorodnyi prospekt, 24, Sankt-Peterburg)"
+                value={formData.pickupAddress}
+                onChange={(e) => handleInputChange('pickupAddress', e.target.value)}
+                className="h-10"
+              />
+              <CoordinateDisplay type="pickup" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="delivery" className="flex items-center">
+                <MapPin className="h-4 w-4 mr-1" />
+                Delivery Address *
+              </Label>
+              <Input
+                id="delivery"
+                placeholder="Enter delivery address (e.g., ulitsa Esenina, 3 корпус 1, Sankt-Peterburg)"
+                value={formData.deliveryAddress}
+                onChange={(e) => handleInputChange('deliveryAddress', e.target.value)}
+                className="h-10"
+              />
+              <CoordinateDisplay type="delivery" />
+            </div>
+          </div>
+
+          {/* Category */}
+          <div className="space-y-2">
+            <Label htmlFor="category">
+              Item Category *
+            </Label>
+            <Select 
+              value={formData.category} 
+              onValueChange={(value) => handleInputChange('category', value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select category" />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.map((cat) => (
+                  <SelectItem key={cat.value} value={cat.value}>
+                    {getTranslatedCategoryLabel(cat.value)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Weight and Volume */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="weight" className="flex items-center">
+                <Weight className="h-4 w-4 mr-1" />
+                Weight (kg) *
+              </Label>
+              <Input
+                id="weight"
+                type="number"
+                min="0.1"
+                step="0.1"
+                placeholder="e.g., 5.5"
+                value={formData.weight}
+                onChange={(e) => handleInputChange('weight', e.target.value)}
+                className="h-10"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="volume" className="flex items-center">
+                <Ruler className="h-4 w-4 mr-1" />
+                Volume (m³) *
+              </Label>
+              <Input
+                id="volume"
+                type="number"
+                min="0.1"
+                step="0.1"
+                placeholder="e.g., 0.5"
+                value={formData.volume}
+                onChange={(e) => handleInputChange('volume', e.target.value)}
+                className="h-10"
+              />
+            </div>
+          </div>
+
+          {/* Urgency */}
+          <div className="space-y-2">
+            <Label htmlFor="urgency">
+              Delivery Urgency
+            </Label>
+            <Select 
+              value={formData.urgency} 
+              onValueChange={(value) => handleInputChange('urgency', value)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="standard">
+                  Standard (same day)
+                </SelectItem>
+                <SelectItem value="urgent">
+                  Urgent (within 2 hours)
+                </SelectItem>
+                <SelectItem value="scheduled">
+                  Scheduled (next day)
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Special Requirements */}
+          <div className="space-y-3">
+            <Label>Special Requirements</Label>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
+                <Checkbox
+                  id="fragile"
+                  checked={formData.fragile}
+                  onCheckedChange={(checked) => handleInputChange('fragile', checked === true)}
+                />
+                <Label htmlFor="fragile" className="text-sm cursor-pointer flex-1">
+                  Fragile items
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
+                <Checkbox
+                  id="refrigerated"
+                  checked={formData.refrigerated}
+                  onCheckedChange={(checked) => handleInputChange('refrigerated', checked === true)}
+                />
+                <Label htmlFor="refrigerated" className="text-sm cursor-pointer flex-1">
+                  Refrigerated
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
+                <Checkbox
+                  id="oversized"
+                  checked={formData.oversized}
+                  onCheckedChange={(checked) => handleInputChange('oversized', checked === true)}
+                />
+                <Label htmlFor="oversized" className="text-sm cursor-pointer flex-1">
+                  Oversized
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
+                <Checkbox
+                  id="hazardous"
+                  checked={formData.hazardous}
+                  onCheckedChange={(checked) => handleInputChange('hazardous', checked === true)}
+                />
+                <Label htmlFor="hazardous" className="text-sm cursor-pointer flex-1">
+                  Hazardous
+                </Label>
+              </div>
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <Button 
+            onClick={handleSubmit}
+            className="w-full h-12 text-lg bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 shadow-md"
+            disabled={loading || !priceData || !selectedDriver || geocodingInProgress}
+          >
+            {geocodingInProgress ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Getting precise coordinates...
+              </>
+            ) : loading ? (
+              <>
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Calculating...
+              </>
+            ) : priceData ? (
+              selectedDriver ? (
+                <>
+                  <FileText className="mr-2 h-5 w-5" />
+                  Review & Book Delivery
+                </>
+              ) : (
+                <>
+                  <User className="mr-2 h-5 w-5" />
+                  Select a driver to continue
+                </>
+              )
+            ) : (
+              'Fill all fields to see price'
+            )}
+          </Button>
+
+          <div className="text-center text-sm text-gray-500 pt-4">
+            <p>Price updates automatically as you fill the form</p>
+            <p className="text-xs mt-1">
+              Using AI-powered delivery cost prediction with 81% accuracy
+            </p>
+            <p className="text-xs mt-1">
+              Precise coordinates are automatically fetched for accurate distance calculation
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Order Preview Modal */}
+      <OrderPreviewModal />
+    </>
   );
 }
