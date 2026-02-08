@@ -1,0 +1,117 @@
+I want the order-service to be able to receive such order and work with them to:
+
+1. For Customers
+- on ui I want to all orders the customer made see orders with their cost and on opening eac order, i must see the details full procedure of the orders status with a progress bar and button to check the movement of the car on the same opening ui.
+- The order should as well contain the driver details like his profile image, names, rating, car type and a button to open the dialog for communication on the ui. Help me find the most easiest but efficient way for the customer and drivers to communicate via messages
+- The order should as well put out the pickup and delivery Address, showing as well the weight, Volume, Cost and Status
+-The order should show the Timeline : Order Placed -> Driver Assigned ->  Route to Pickup -> In Transit -> Deivered. 
+Since am submitting an order with a driver already, immediately the order is recorded in the order-service, a notification should be sent to the driver and if he accept the order, the order jumps too Driver Assigned and from there the driver should update the status of the order which should be visible to the customer with notifications time stamped. Once the order is delivered,the customer has an option of rating the driver on a principle of getting the current driver rating, add it to the new rating and then divide it by 2
+-For payment, you're not intergrating a Payment API, rather you're creating a simple mechanism that subtract the cost of order from the customer's count and that value to the driver's account.So on UI I will have Available balance,Pending Payment, This week amount spent(customr) and gained(driver), Total Earned. Mind you I added  balance column on the table for customer and driver
+
+2.  For Driver
+- Everything that the customer did just that he is the one who makes the update or the order till it ends
+- Now the customer can accept several orders from different customers or even the same customer
+- since the driver has can have many orders with different addresses, I want you to build a Route Optimization algorithm that delivers all these different orders in a shortest distance and shortest time. That optimization should show on the ui the map the path that the driver will take with labeled order of movement
+
+Basically I want::Database Schema: Updated to match your order structure with support for:
+
+Order progress tracking
+
+Driver route optimization
+
+Balance management
+
+Messaging system
+
+Rating system
+
+Order Service: Completely rewritten to handle:
+
+Your specific order structure
+
+Order progress with 5-step flow
+
+Driver acceptance and status updates
+
+Route optimization for multiple orders
+
+Real-time communication
+
+Balance management (deduct from customer, add to driver)
+
+New Services Added:
+
+RouteOptimizationService: Implements TSP algorithm for optimal route planning
+
+BalanceService: Manages customer/driver balances with pending/completed payments
+
+MessagingService: Simple in-app messaging system
+
+Controller & Routes: Updated with new endpoints for:
+
+Creating orders from your structure
+
+Driver accepting/updating orders
+
+Getting order details with progress
+
+Route optimization
+
+Messaging
+
+Rating drivers
+
+Balance management
+
+Key Features Implemented:
+For Customers:
+See all orders with cost
+
+View order details with progress bar (5 steps)
+
+Track driver location in real-time
+
+See driver details (profile, rating, car)
+
+Communicate with driver via in-app messaging
+
+Rate driver after delivery
+
+View balance (available, pending, weekly spent)
+
+For Drivers:
+Accept orders
+
+Update order status (which updates customer view)
+
+Handle multiple orders simultaneously
+
+Route optimization showing shortest path on map
+
+Communicate with customers
+
+View earnings and balance
+
+Payment System:
+Simple balance-based system (no external payment API)
+
+Customer balance deducted when driver accepts
+
+Driver receives pending balance, released when order delivered
+
+Weekly and total earnings tracking
+
+Route Optimization:
+Traveling Salesman Problem algorithm
+
+Considers pickup before delivery constraint
+
+Calculates optimal sequence for multiple orders
+
+Shows route on map with order sequence
+
+Calculates estimated savings vs non-optimized route
+
+This solution provides a complete order management system tailored to your specific requirements. The system is ready to receive orders in your format and provide all the UI features you requested.
+
+So I want you to enable this in the order-service. 
