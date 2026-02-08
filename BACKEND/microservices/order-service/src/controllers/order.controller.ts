@@ -9,9 +9,9 @@ export class OrderController {
   private orderService: OrderService;
   private logger: Logger;
   
-  constructor() {
+  constructor(orderService: OrderService) {
     this.logger = new Logger('OrderController');
-    this.orderService = new OrderService();
+    this.orderService = orderService;
   }
   
   // New endpoint to receive order from external service
@@ -447,4 +447,3 @@ export class OrderController {
   }
 }
 
-export const orderController = new OrderController();

@@ -16,11 +16,25 @@ export class WebSocketUtil {
 
   constructor(server?: Server) {
     this.logger = new Logger('WebSocketUtil');
-    this.wss = new WebSocketServer({ 
-      server, 
-      path: '/ws',
-      perMessageDeflate: false
-    });
+    
+    // FIXED: Handle both cases - with server or without
+    if (server) {
+      this.wss = new WebSocketServer({ 
+        server, 
+        path: '/ws',
+        perMessageDeflate: false
+      });
+      this.logger.info('WebSocket server initialized with HTTP server');
+    } else {
+      // Create standalone WebSocket server on separate port
+      const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
+      this.wss = new WebSocketServer({ 
+        port: WEBSOCKET_PORT,
+        path: '/ws',
+        perMessageDeflate: false
+      });
+      this.logger.info(`WebSocket server initialized on standalone port ${WEBSOCKET_PORT}`);
+    }
     
     this.setupWebSocketServer();
   }
@@ -55,7 +69,7 @@ export class WebSocketUtil {
       }));
     });
 
-    this.logger.info('WebSocket server initialized');
+    this.logger.info('WebSocket server ready for connections');
   }
 
   private handleMessage(connectionId: string, ws: WebSocket, message: WebSocketMessage): void {
@@ -235,5 +249,6 @@ export class WebSocketUtil {
   }
 }
 
-// Export singleton instance
-export const webSocketUtil = new WebSocketUtil();
+// FIXED: Remove the singleton export or make it conditional
+// Don't automatically create an instance
+// export const webSocketUtil = new WebSocketUtil();

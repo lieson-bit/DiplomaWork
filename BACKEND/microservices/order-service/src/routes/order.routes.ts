@@ -1,6 +1,6 @@
 import express from 'express';
 import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
-import { orderController } from '../controllers/order.controller';
+import { orderController } from '../index';
 
 const router = express.Router();
 

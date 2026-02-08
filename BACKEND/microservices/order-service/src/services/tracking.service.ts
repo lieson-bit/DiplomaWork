@@ -591,9 +591,3 @@ export class TrackingService {
   }
 }
 
-// Export singleton instance
-export const trackingService = new TrackingService(
-  new WebSocketUtil(),
-  new TrackingRepository(),
-  new OrderRepository()
-);

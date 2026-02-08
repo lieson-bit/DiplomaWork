@@ -1,12 +1,12 @@
 import { Logger } from '../utils/logger';
-import { orderRepository, Order, CreateOrderData } from '../repositories/order.repository';
+import { Order, CreateOrderData } from '../repositories/order.repository';
 import { trackingRepository } from '../repositories/tracking.repository';
 import { NotificationService } from './notification.service';
 import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
 import { CapacityOptimizationService } from './capacity-optimization.service';
 import { WebSocketUtil } from '../utils/websocket.util';
-
+import { orderRepository } from '../index';
 export class OrderService {
   private logger: Logger;
   private notificationService: NotificationService;
@@ -15,12 +15,12 @@ export class OrderService {
   private websocketUtil: WebSocketUtil;
   private capacityOptimizationService: CapacityOptimizationService;
   
-  constructor() {
+  constructor(websocketUtil: WebSocketUtil) {
     this.logger = new Logger('OrderService');
-    this.notificationService = new NotificationService();
+    this.websocketUtil = websocketUtil;
+    this.notificationService = new NotificationService(websocketUtil);
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
-    this.websocketUtil = new WebSocketUtil();
     this.capacityOptimizationService = new CapacityOptimizationService();
   }
   
@@ -1736,5 +1736,3 @@ export class OrderService {
   }
 }
 
-// Export singleton instance
-export const orderService = new OrderService();

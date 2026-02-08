@@ -5,8 +5,9 @@ export class NotificationService {
   private logger = new Logger('NotificationService');
   private websocketUtil: WebSocketUtil;
   
-  constructor() {
-    this.websocketUtil = new WebSocketUtil();
+  // FIXED: Accept WebSocketUtil as parameter instead of creating new instance
+  constructor(websocketUtil: WebSocketUtil) {
+    this.websocketUtil = websocketUtil;
   }
   
   // Send order notification
@@ -57,5 +58,5 @@ export class NotificationService {
   }
 }
 
-// Export singleton instance
-export const notificationService = new NotificationService();
+// FIXED: Don't export a singleton instance - it will be created in index.ts
+// export const notificationService = new NotificationService();

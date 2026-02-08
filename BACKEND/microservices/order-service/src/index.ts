@@ -4,7 +4,10 @@ import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import pool from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
-
+import { OrderService } from './services/order.service'; // Import OrderService
+import { TrackingRepository } from './repositories/tracking.repository';
+import { OrderRepository } from './repositories/order.repository';
+import { OrderController } from './controllers/order.controller';
 const logger = new Logger('Server');
 
 const PORT = process.env.PORT || 3004;
@@ -13,8 +16,15 @@ const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
 // Create HTTP server
 const server = createServer(app);
 
-// Initialize WebSocket server
+// Initialize WebSocket server WITH the HTTP server
 const wss = new WebSocketUtil(server);
+const trackingRepository = new TrackingRepository();
+const orderRepository = new OrderRepository();
+
+// FIXED: Create OrderService with the WebSocketUtil instance
+// This ensures all services use the same WebSocketUtil instance
+const orderService = new OrderService(wss);
+const orderController = new OrderController(orderService);
 
 // Test database connection on startup
 async function testDatabaseConnection() {
@@ -52,15 +62,10 @@ function setupGracefulShutdown() {
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}. Starting graceful shutdown...`);
     
-    // Close WebSocket connections (guarded because WebSocketUtil may not expose .close)
-    if (typeof (wss as any)?.close === 'function') {
+    // Close WebSocket connections
+    if (wss && typeof (wss as any).close === 'function') {
       (wss as any).close();
       logger.info('WebSocket server closed');
-    } else if ((wss as any)?.server && typeof (wss as any).server.close === 'function') {
-      (wss as any).server.close();
-      logger.info('Underlying WebSocket server closed');
-    } else {
-      logger.info('No WebSocket server to close');
     }
     
     // Close database connections
@@ -102,7 +107,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
     environment: process.env.NODE_ENV,
-    database: 'connected', // This should be dynamically checked
+    database: 'connected',
+    websocket: 'running'
   });
 });
 
@@ -160,4 +166,4 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-export { server, wss };
+export { server, wss, orderService, trackingRepository, orderRepository, orderController };

@@ -861,7 +861,3 @@ async columnExists(tableName: string, columnName: string): Promise<boolean> {
 }
 
 // Create singleton instance
-export const orderRepository = new OrderRepository();
-
-// Export for direct use
-export default orderRepository;
