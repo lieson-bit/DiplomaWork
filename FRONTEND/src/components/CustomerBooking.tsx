@@ -181,9 +181,9 @@ export function CustomerBooking() {
   useEffect(() => {
     const user = getCurrentUser();
     if (user && user.userType !== 'customer') {
-      toast.error('Only customers can book deliveries');
+      toast.error(t('customer.booking.only_customers'));
     }
-  }, []);
+  }, [t]);
 
   // Load categories on mount
   useEffect(() => {
@@ -195,18 +195,18 @@ export function CustomerBooking() {
         setCategories(data.categories);
       } catch {
         setCategories([
-          { value: 'documents', label: 'Documents & Small Packages' },
-          { value: 'furniture', label: 'Furniture & Appliances' },
-          { value: 'construction', label: 'Construction Materials' },
-          { value: 'food', label: 'Food & Beverages' },
-          { value: 'electronics', label: 'Electronics & Fragile Items' },
-          { value: 'other', label: 'Other' }
+          { value: 'documents', label: t('customer.booking.category_documents') },
+          { value: 'furniture', label: t('customer.booking.category_furniture') },
+          { value: 'construction', label: t('customer.booking.category_construction') },
+          { value: 'food', label: t('customer.booking.category_food') },
+          { value: 'electronics', label: t('customer.booking.category_electronics') },
+          { value: 'other', label: t('customer.booking.category_other') }
         ]);
       }
     };
     
     loadCategories();
-  }, []);
+  }, [t]);
 
   // Robust geocoding function similar to your example
   const geocodeAddress = useCallback(async (address: string, type: 'pickup' | 'delivery'): Promise<Coordinates | null> => {
@@ -551,7 +551,7 @@ export function CustomerBooking() {
     const token = getAuthToken();
     
     if (!token) {
-      toast.error('Please login first to book a delivery');
+      toast.error(t('customer.booking.login_required'));
       return;
     }
 
@@ -589,10 +589,10 @@ export function CustomerBooking() {
       
       if (data.success && data.data && data.data.length > 0) {
         setDrivers(data.data.slice(0, 4));
-        toast.success(`Found ${data.count} available drivers`);
+        toast.success(t('customer.booking.drivers_found', { count: data.count }));
       } else {
         setDrivers([]);
-        toast.info('No drivers available at the moment');
+        toast.info(t('customer.booking.no_drivers_available'));
       }
       
     } catch (error: any) {
@@ -600,16 +600,16 @@ export function CustomerBooking() {
       setDrivers([]);
       
       if (error.message.includes('401')) {
-        toast.error('Session expired. Please login again.');
+        toast.error(t('customer.booking.session_expired'));
       } else if (error.message.includes('Failed to fetch')) {
-        toast.error('Cannot connect to driver service. Please try again later.');
+        toast.error(t('customer.booking.driver_service_error'));
       } else {
-        toast.error('Failed to fetch available drivers. Please try again.');
+        toast.error(t('customer.booking.failed_fetch_drivers'));
       }
     } finally {
       setLoadingDrivers(false);
     }
-  }, [getVehicleType]);
+  }, [getVehicleType, t, drivers.length]);
 
   const formatRating = (rating: number) => {
     if (!rating || rating === 0) return '0.0';
@@ -675,13 +675,13 @@ export function CustomerBooking() {
         if (data.success) {
           setPriceData(data);
           lastFetchedPriceDataRef.current = currentKey;
-          toast.success('Price calculated successfully!');
+          toast.success(t('customer.booking.price_calculated_success'));
           fetchAvailableDrivers(formData, data, true);
         } else {
           setPriceData(null);
           setDrivers([]);
           lastFetchedPriceDataRef.current = '';
-          toast.error(data.error || 'Failed to calculate price');
+          toast.error(data.error || t('customer.booking.price_calculation_failed'));
         }
         
       } catch (error: any) {
@@ -689,12 +689,12 @@ export function CustomerBooking() {
         setPriceData(null);
         setDrivers([]);
         lastFetchedPriceDataRef.current = '';
-        toast.error('Failed to connect to pricing service');
+        toast.error(t('customer.booking.service_connection_failed'));
       } finally {
         setLoading(false);
       }
     }, 1000),
-    [fetchAvailableDrivers]
+    [fetchAvailableDrivers, t]
   );
 
   // Update calculation when form data changes
@@ -712,17 +712,17 @@ export function CustomerBooking() {
 
   const handleDriverSelect = (driverId: string) => {
     setSelectedDriver(driverId);
-    toast.success('Driver selected successfully!');
+    toast.success(t('customer.booking.driver_selected'));
   };
 
   const handleSubmit = async () => {
     if (!priceData) {
-      toast.error('Please fill all required fields');
+      toast.error(t('common.fill_all_fields'));
       return;
     }
     
     if (!selectedDriver) {
-      toast.error('Please select a driver to proceed');
+      toast.error(t('customer.booking.select_driver'));
       return;
     }
 
@@ -765,9 +765,9 @@ export function CustomerBooking() {
     
     const getUrgencyLabel = () => {
       switch(formData.urgency) {
-        case 'standard': return 'Standard (same day)';
-        case 'urgent': return 'Urgent (within 2 hours)';
-        case 'scheduled': return 'Scheduled (next day)';
+        case 'standard': return t('customer.booking.urgency_standard');
+        case 'urgent': return t('customer.booking.urgency_urgent');
+        case 'scheduled': return t('customer.booking.urgency_scheduled');
         default: return formData.urgency;
       }
     };
@@ -782,12 +782,12 @@ export function CustomerBooking() {
       createdAt,
       lastUpdated: createdAt,
 
-      // Customer information
+      // Customer information - FIXED: Use phone from driver data or current user
       customerInfo: {
         id: currentUser?.id || 'guest',
         name: currentUser ? `${currentUser?.firstName || ''} ${currentUser?.lastName || ''}`.trim() || currentUser?.email || 'Guest User' : 'Guest User',
         email: currentUser?.email || 'guest@example.com',
-        phone: currentUser?.phone || 'N/A',
+        phone: currentUser?.phone || selectedDriverData?.user.phone || t('customer.booking.not_available'),
         userType: currentUser?.userType || 'customer'
       },
 
@@ -888,7 +888,7 @@ export function CustomerBooking() {
           high: priceData?.confidence_interval_high || 0,
           formatted: priceData ? 
             `$${(priceData.confidence_interval_low / 90).toFixed(2)} - $${(priceData.confidence_interval_high / 90).toFixed(2)}` :
-            'N/A'
+            t('customer.booking.not_available')
         },
         currency: 'USD',
         baseCurrency: 'RUB'
@@ -899,12 +899,12 @@ export function CustomerBooking() {
         estimatedDuration: {
           minutes: priceData?.duration_minutes || 0,
           text: priceData?.duration_text || '',
-          formatted: priceData?.duration_text || 'N/A'
+          formatted: priceData?.duration_text || t('customer.booking.not_available')
         },
         pickupTime: {
           estimated: new Date().toISOString(),
           driverArrival: selectedDriverData?.estimatedArrival ? 
-            `${selectedDriverData.estimatedArrival} minutes` : 'N/A'
+            `${selectedDriverData.estimatedArrival} ${t('units.minutes')}` : t('customer.booking.not_available')
         },
         deliveryTime: {
           estimated: new Date(Date.now() + (priceData?.duration_minutes || 30) * 60000).toISOString(),
@@ -939,7 +939,7 @@ export function CustomerBooking() {
   const formatDateTime = (dateString: string) => {
     try {
       const date = new Date(dateString);
-      if (isNaN(date.getTime())) return 'Invalid date';
+      if (isNaN(date.getTime())) return t('common.invalid_date');
       return date.toLocaleString('en-US', {
         weekday: 'short',
         month: 'short',
@@ -949,7 +949,7 @@ export function CustomerBooking() {
       });
     } catch (error) {
       console.error('Error formatting date:', dateString, error);
-      return 'Invalid date';
+      return t('common.invalid_date');
     }
   };
 
@@ -976,7 +976,7 @@ export function CustomerBooking() {
       const data = await response.json();
       
       if (data.success) {
-        toast.success('Order created successfully!');
+        toast.success(t('customer.booking.order_created'));
         
         console.log('✅ Order Created Successfully!');
         console.log('📊 Order ID:', orderData.orderId);
@@ -985,12 +985,12 @@ export function CustomerBooking() {
         console.log('💰 Price:', orderData.pricing.estimatedPrice.formatted.usd);
         
       } else {
-        toast.error(data.error || 'Failed to create order');
+        toast.error(data.error || t('customer.booking.order_creation_failed'));
       }
       
     } catch (error: any) {
       console.error('Error creating order:', error);
-      toast.error('Failed to connect to order service');
+      toast.error(t('customer.booking.order_service_error'));
     }
   };
 
@@ -1001,7 +1001,7 @@ export function CustomerBooking() {
   };
 
   const formatVehicleType = (type: string) => {
-    if (!type) return 'N/A';
+    if (!type) return t('customer.booking.not_available');
     return type.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
@@ -1059,7 +1059,7 @@ export function CustomerBooking() {
               className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center"
             >
               <RefreshCw className="h-3 w-3 mr-1" />
-              Retry
+              {t('customer.booking.retry')}
             </button>
           )}
         </div>
@@ -1082,17 +1082,17 @@ export function CustomerBooking() {
   const getTranslatedCategoryLabel = (value: string) => {
     switch(value) {
       case 'documents':
-        return 'Documents & Small Packages';
+        return t('customer.booking.category_documents');
       case 'furniture':
-        return 'Furniture & Appliances';
+        return t('customer.booking.category_furniture');
       case 'construction':
-        return 'Construction Materials';
+        return t('customer.booking.category_construction');
       case 'food':
-        return 'Food & Beverages';
+        return t('customer.booking.category_food');
       case 'electronics':
-        return 'Electronics & Fragile Items';
+        return t('customer.booking.category_electronics');
       case 'other':
-        return 'Other';
+        return t('customer.booking.category_other');
       default:
         return value;
     }
@@ -1112,23 +1112,20 @@ export function CustomerBooking() {
         <div className="flex items-center text-blue-600 bg-blue-50 px-3 py-2 rounded-lg">
           <Loader2 className="h-4 w-4 animate-spin mr-2" />
           <span className="text-sm">
-            Getting precise coordinates...
+            {t('customer.booking.getting_precise_coordinates')}
           </span>
         </div>
       );
     }
 
-
     const anyError = pickupStatus === 'error' || deliveryStatus === 'error';
-
-  
 
     if (anyError) {
       return (
         <div className="flex items-center text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
           <AlertTriangle className="h-4 w-4 mr-2" />
           <span className="text-sm">
-            Using approximate coordinates
+            {t('customer.booking.using_approximate_coordinates')}
           </span>
         </div>
       );
@@ -1164,7 +1161,7 @@ export function CustomerBooking() {
       }
     };
 
-   
+    return null;
   };
 
   // Price display component
@@ -1174,7 +1171,7 @@ export function CustomerBooking() {
         <div className="flex items-center justify-center space-x-2 p-4 bg-blue-50 rounded-lg">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           <span className="text-blue-600">
-            Calculating price...
+            {t('customer.booking.calculating')}
           </span>
         </div>
       );
@@ -1186,7 +1183,7 @@ export function CustomerBooking() {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-gray-600">
-                Estimated Price
+                {t('customer.booking.estimated_price')}
               </div>
               <div className="text-3xl font-bold text-green-700">
                 ${priceData.price_usd.toFixed(2)}
@@ -1197,10 +1194,10 @@ export function CustomerBooking() {
             </div>
             <div className="text-right">
               <div className="text-sm text-gray-600">
-                Delivery distance
+                {t('customer.booking.delivery_distance')}
               </div>
               <div className="text-lg font-semibold text-gray-800">
-                {priceData.distance_km.toFixed(1)} km
+                {priceData.distance_km.toFixed(1)} {t('units.km')}
               </div>
             </div>
           </div>
@@ -1209,9 +1206,9 @@ export function CustomerBooking() {
             <div className="flex items-center space-x-2">
               <MapPin className="h-4 w-4 text-gray-400" />
               <div>
-                <div className="font-medium">{priceData.distance_km.toFixed(1)} km</div>
+                <div className="font-medium">{priceData.distance_km.toFixed(1)} {t('units.km')}</div>
                 <div className="text-gray-500">
-                  Distance
+                  {t('common.distance')}
                 </div>
               </div>
             </div>
@@ -1220,7 +1217,7 @@ export function CustomerBooking() {
               <div>
                 <div className="font-medium">{priceData.duration_text}</div>
                 <div className="text-gray-500">
-                  Est. time
+                  {t('customer.booking.estimated_time')}
                 </div>
               </div>
             </div>
@@ -1228,7 +1225,10 @@ export function CustomerBooking() {
           
           <div className="pt-3 border-t border-gray-200">
             <div className="text-xs text-gray-500">
-              Confidence interval: ${(priceData.confidence_interval_low / 90).toFixed(2)} - ${(priceData.confidence_interval_high / 90).toFixed(2)}
+              {t('customer.booking.confidence_interval', {
+                low: (priceData.confidence_interval_low / 90).toFixed(2),
+                high: (priceData.confidence_interval_high / 90).toFixed(2)
+              })}
             </div>
           </div>
         </div>
@@ -1238,7 +1238,7 @@ export function CustomerBooking() {
     return (
       <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-center">
         <div className="text-gray-500">
-          Fill in all fields to see price estimate
+          {t('customer.booking.fill_all_fields_to_see_price')}
         </div>
       </div>
     );
@@ -1251,7 +1251,7 @@ export function CustomerBooking() {
         <div className="flex items-center justify-center space-x-2 p-4 bg-blue-50 rounded-lg">
           <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
           <span className="text-blue-600">
-            Finding available drivers...
+            {t('customer.booking.finding_drivers')}
           </span>
         </div>
       );
@@ -1261,7 +1261,7 @@ export function CustomerBooking() {
       return (
         <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200 text-center">
           <div className="text-yellow-700">
-            No drivers available at the moment. Please try again later.
+            {t('customer.booking.no_drivers_available')}
           </div>
         </div>
       );
@@ -1273,14 +1273,14 @@ export function CustomerBooking() {
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-semibold text-gray-800">
-                Available Drivers
+                {t('customer.booking.available_drivers')}
               </h3>
               <p className="text-sm text-gray-600">
-                Select a driver for your delivery
+                {t('customer.booking.select_driver_description')}
               </p>
             </div>
             <Badge variant="outline" className="bg-blue-50">
-              {drivers.length} available
+              {drivers.length} {t('customer.booking.drivers_count')}
             </Badge>
           </div>
           
@@ -1337,7 +1337,7 @@ export function CustomerBooking() {
                               driver.suitability === 'excellent' ? 'default' :
                               driver.suitability === 'good' ? 'secondary' : 'outline'
                             } className="text-xs">
-                              {driver.suitability}
+                              {t(`customer.booking.suitability.${driver.suitability}`)}
                             </Badge>
                           </div>
                           
@@ -1349,13 +1349,13 @@ export function CustomerBooking() {
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Clock className="h-3.5 w-3.5 mr-1.5 text-green-500" />
                               <span className="font-medium">
-                                Arrives by {getCurrentTimePlusMinutes(minutes)}
+                                {t('customer.booking.arrives_by_time')} {getCurrentTimePlusMinutes(minutes)}
                               </span>
                             </div>
                             <div className="flex items-center bg-gray-50 px-2 py-1 rounded">
                               <Trophy className="h-3.5 w-3.5 mr-1.5 text-purple-500" />
                               <span className="font-medium">
-                                {driver.matchScore}% Match
+                                {driver.matchScore}{t('customer.booking.match_score')}
                               </span>
                             </div>
                           </div>
@@ -1369,7 +1369,7 @@ export function CustomerBooking() {
                           <ChevronDown className="h-5 w-5 text-gray-400" />
                         )}
                         <div className="text-xs text-gray-500 text-right">
-                          {driver.distanceInfo?.distance?.text || 'N/A'} away
+                          {driver.distanceInfo?.distance?.text || t('customer.booking.not_available')} {t('customer.booking.distance_away')}
                         </div>
                       </div>
                     </div>
@@ -1382,31 +1382,31 @@ export function CustomerBooking() {
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <User className="h-4 w-4 mr-2 text-blue-600" />
-                              Driver Information
+                              {t('customer.booking.driver_information')}
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Name:</span>
+                                <span className="text-gray-500">{t('customer.booking.name')}:</span>
                                 <span className="font-medium text-gray-800">{driver.user.firstName} {driver.user.lastName}</span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Phone:</span>
+                                <span className="text-gray-500">{t('customer.booking.phone')}:</span>
                                 <span className="font-medium text-gray-800">{driver.user.phone}</span>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Rating:</span>
+                                <span className="text-gray-500">{t('customer.booking.rating')}:</span>
                                 <div className="flex items-center">
                                   <Star className="h-3 w-3 fill-current text-yellow-500 mr-1" />
-                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? formatRating(driver.rating) : 'No ratings yet'}</span>
+                                  <span className="font-medium text-gray-800">{driver.rating > 0 ? formatRating(driver.rating) : t('customer.booking.no_ratings')}</span>
                                 </div>
                               </div>
                               <div className="flex justify-between items-center">
-                                <span className="text-gray-500">Suitability:</span>
+                                <span className="text-gray-500">{t('customer.booking.suitability')}:</span>
                                 <Badge variant={
                                   driver.suitability === 'excellent' ? 'default' :
                                   driver.suitability === 'good' ? 'secondary' : 'outline'
                                 } className="font-medium">
-                                  {driver.suitability}
+                                  {t(`customer.booking.suitability.${driver.suitability}`)}
                                 </Badge>
                               </div>
                             </div>
@@ -1417,7 +1417,7 @@ export function CustomerBooking() {
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <Car className="h-4 w-4 mr-2 text-green-600" />
-                              Vehicle Information
+                              {t('customer.booking.vehicle_information')}
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="mb-3">
@@ -1429,21 +1429,21 @@ export function CustomerBooking() {
                               <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">Type:</span>
+                                    <span className="text-gray-500">{t('customer.booking.type')}:</span>
                                     <span className="font-medium text-gray-800 capitalize">{formatVehicleType(vehicle?.type || '')}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">Model:</span>
+                                    <span className="text-gray-500">{t('customer.booking.model')}:</span>
                                     <span className="font-medium text-gray-800">{vehicle?.make || ''} {vehicle?.model || ''}</span>
                                   </div>
                                 </div>
                                 <div className="space-y-2">
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">License:</span>
-                                    <span className="font-medium text-gray-800">{vehicle?.licensePlate || 'N/A'}</span>
+                                    <span className="text-gray-500">{t('customer.booking.license')}:</span>
+                                    <span className="font-medium text-gray-800">{vehicle?.licensePlate || t('customer.booking.not_available')}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span className="text-gray-500">Capacity:</span>
+                                    <span className="text-gray-500">{t('customer.booking.capacity')}:</span>
                                     <span className="font-medium text-gray-800">{vehicle?.maxWeight || 0}kg, {vehicle?.maxVolume || 0}m³</span>
                                   </div>
                                 </div>
@@ -1456,7 +1456,7 @@ export function CustomerBooking() {
                           <div>
                             <h5 className="font-semibold text-gray-700 mb-3 flex items-center">
                               <MapPin className="h-4 w-4 mr-2 text-red-600" />
-                              Distance Information
+                              {t('customer.booking.distance_information')}
                             </h5>
                             <div className="space-y-3 text-sm bg-white p-3 rounded-lg border border-gray-100 shadow-sm">
                               <div className="space-y-3">
@@ -1466,9 +1466,9 @@ export function CustomerBooking() {
                                       <MapPin className="h-4 w-4 text-blue-600 mr-2" />
                                       <div>
                                         <div className="text-xs text-gray-500">
-                                          Distance to pickup
+                                          {t('customer.booking.distance_to_pickup')}
                                         </div>
-                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.distance?.text || 'N/A'}</div>
+                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.distance?.text || t('customer.booking.not_available')}</div>
                                       </div>
                                     </div>
                                   </div>
@@ -1480,9 +1480,9 @@ export function CustomerBooking() {
                                       <Clock className="h-4 w-4 text-green-600 mr-2" />
                                       <div>
                                         <div className="text-xs text-gray-500">
-                                          Time to pickup
+                                          {t('customer.booking.time_to_pickup')}
                                         </div>
-                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.duration?.text || 'N/A'}</div>
+                                        <div className="font-semibold text-gray-800">{driver.distanceInfo?.duration?.text || t('customer.booking.not_available')}</div>
                                       </div>
                                     </div>
                                   </div>
@@ -1494,7 +1494,7 @@ export function CustomerBooking() {
                                       <Calendar className="h-4 w-4 text-purple-600 mr-2" />
                                       <div>
                                         <div className="text-xs text-gray-500">
-                                          Estimated arrival time
+                                          {t('customer.booking.estimated_arrival_time')}
                                         </div>
                                         <div className="font-semibold text-gray-800">{getCurrentTimePlusMinutes(minutes)}</div>
                                       </div>
@@ -1521,10 +1521,10 @@ export function CustomerBooking() {
                           {isSelected ? (
                             <>
                               <Check className="h-5 w-5 mr-2" />
-                              Driver Selected
+                              {t('customer.booking.driver_selected_button')}
                             </>
                           ) : (
-                            'Select This Driver'
+                            t('customer.booking.select_this_driver')
                           )}
                         </Button>
                       </div>
@@ -1542,16 +1542,18 @@ export function CustomerBooking() {
                   <Check className="h-5 w-5 mr-3 bg-green-100 p-1 rounded-full" />
                   <div>
                     <div className="font-semibold">
-                      Driver selected! Ready to book delivery.
+                      {t('customer.booking.driver_selected_message')}
                     </div>
                     <div className="text-sm text-green-600 mt-0.5">
-                      {drivers.find(d => d.driverId === selectedDriver)?.user.firstName || 'Driver'} is waiting for your order
+                      {t('customer.booking.driver_waiting', { 
+                        name: drivers.find(d => d.driverId === selectedDriver)?.user.firstName || t('common.driver') 
+                      })}
                     </div>
                   </div>
                 </div>
                 <Badge variant="outline" className="bg-white text-green-700 border-green-300">
                   <Clock className="h-3 w-3 mr-1" />
-                  Ready to go
+                  {t('customer.booking.ready_to_go')}
                 </Badge>
               </div>
             </div>
@@ -1573,13 +1575,13 @@ export function CustomerBooking() {
           <DialogHeader>
             <DialogTitle className="flex items-center text-2xl">
               <FileText className="h-6 w-6 mr-2 text-blue-600" />
-              Order Preview
+              {t('customer.booking.order_preview')}
               <Badge className="ml-3" variant="outline">
-                ID: {orderData.orderId?.substring(0, 12) || 'N/A'}...
+                {t('customer.booking.order_id')}: {orderData.orderId?.substring(0, 12) || t('customer.booking.not_available')}...
               </Badge>
             </DialogTitle>
             <DialogDescription>
-              Review all details before confirming your delivery order
+              {t('customer.booking.review_order_details')}
             </DialogDescription>
           </DialogHeader>
 
@@ -1588,8 +1590,8 @@ export function CustomerBooking() {
             <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-blue-200">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="font-semibold text-lg text-gray-800">Delivery Summary</h3>
-                  <p className="text-sm text-gray-600">All details have been collected and verified</p>
+                  <h3 className="font-semibold text-lg text-gray-800">{t('customer.booking.delivery_summary')}</h3>
+                  <p className="text-sm text-gray-600">{t('customer.booking.all_details_verified')}</p>
                 </div>
                 <div className="text-right">
                   <div className="text-3xl font-bold text-green-700">
@@ -1610,25 +1612,25 @@ export function CustomerBooking() {
                 <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
                   <h4 className="font-semibold text-lg mb-3 flex items-center">
                     <User className="h-5 w-5 mr-2 text-blue-600" />
-                    Customer Information
+                    {t('customer.booking.customer_information')}
                   </h4>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center border-b pb-2">
-                      <span className="text-gray-500">Name:</span>
-                      <span className="font-medium">{orderData.customerInfo?.name || 'N/A'}</span>
+                      <span className="text-gray-500">{t('common.name')}:</span>
+                      <span className="font-medium">{orderData.customerInfo?.name || t('customer.booking.not_available')}</span>
                     </div>
                     <div className="flex justify-between items-center border-b pb-2">
-                      <span className="text-gray-500">Email:</span>
+                      <span className="text-gray-500">{t('common.email')}:</span>
                       <span className="font-medium flex items-center">
                         <Mail className="h-4 w-4 mr-1 text-gray-400" />
-                        {orderData.customerInfo?.email || 'N/A'}
+                        {orderData.customerInfo?.email || t('customer.booking.not_available')}
                       </span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-500">Phone:</span>
+                      <span className="text-gray-500">{t('common.phone')}:</span>
                       <span className="font-medium flex items-center">
                         <Phone className="h-4 w-4 mr-1 text-gray-400" />
-                        {orderData.customerInfo?.phone || 'N/A'}
+                        {orderData.customerInfo?.phone || t('customer.booking.not_available')}
                       </span>
                     </div>
                   </div>
@@ -1638,33 +1640,33 @@ export function CustomerBooking() {
                 <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
                   <h4 className="font-semibold text-lg mb-3 flex items-center">
                     <Package className="h-5 w-5 mr-2 text-orange-600" />
-                    Package Details
+                    {t('customer.booking.package_details')}
                   </h4>
                   <div className="space-y-3">
                     <div className="flex justify-between items-center border-b pb-2">
-                      <span className="text-gray-500">Category:</span>
-                      <Badge variant="outline">{orderData.packageDetails?.categoryLabel || 'N/A'}</Badge>
+                      <span className="text-gray-500">{t('customer.booking.category')}:</span>
+                      <Badge variant="outline">{orderData.packageDetails?.categoryLabel || t('customer.booking.not_available')}</Badge>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="bg-gray-50 p-3 rounded">
                         <div className="flex items-center mb-1">
                           <Weight className="h-4 w-4 mr-2 text-gray-500" />
-                          <span className="text-gray-500">Weight</span>
+                          <span className="text-gray-500">{t('common.weight')}</span>
                         </div>
-                        <div className="font-semibold text-lg">{orderData.packageDetails?.weight?.value || 0} kg</div>
+                        <div className="font-semibold text-lg">{orderData.packageDetails?.weight?.value || 0} {t('units.kg')}</div>
                       </div>
                       <div className="bg-gray-50 p-3 rounded">
                         <div className="flex items-center mb-1">
                           <Ruler className="h-4 w-4 mr-2 text-gray-500" />
-                          <span className="text-gray-500">Volume</span>
+                          <span className="text-gray-500">{t('common.volume')}</span>
                         </div>
-                        <div className="font-semibold text-lg">{orderData.packageDetails?.volume?.value || 0} m³</div>
+                        <div className="font-semibold text-lg">{orderData.packageDetails?.volume?.value || 0} {t('units.m3')}</div>
                       </div>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-gray-500">Urgency:</span>
+                      <span className="text-gray-500">{t('customer.booking.urgency')}:</span>
                       <Badge variant={orderData.packageDetails?.urgency === 'urgent' ? 'destructive' : 'outline'}>
-                        {orderData.packageDetails?.urgencyLabel || 'N/A'}
+                        {orderData.packageDetails?.urgencyLabel || t('customer.booking.not_available')}
                       </Badge>
                     </div>
                   </div>
@@ -1677,7 +1679,7 @@ export function CustomerBooking() {
                 <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
                   <h4 className="font-semibold text-lg mb-3 flex items-center">
                     <Navigation className="h-5 w-5 mr-2 text-green-600" />
-                    Location Details
+                    {t('customer.booking.location_details')}
                   </h4>
                   <div className="space-y-4">
                     {/* Pickup Location */}
@@ -1687,16 +1689,12 @@ export function CustomerBooking() {
                           <Home className="h-4 w-4 text-blue-600" />
                         </div>
                         <div className="flex-1">
-                          <h5 className="font-medium text-gray-800">Pickup Location</h5>
-                          <p className="text-sm text-gray-600 mt-1">{orderData.locations?.pickup?.address || 'N/A'}</p>
+                          <h5 className="font-medium text-gray-800">{t('customer.booking.pickup_location')}</h5>
+                          <p className="text-sm text-gray-600 mt-1">{orderData.locations?.pickup?.address || t('customer.booking.not_available')}</p>
                           {orderData.locations?.pickup?.coordinates && (
                             <div className="mt-2 text-xs text-gray-500 flex items-center">
                               <Globe className="h-3 w-3 mr-1" />
-                              Coordinates: {orderData.locations.pickup.coordinates.lat?.toFixed(6) || 'N/A'}, {orderData.locations.pickup.coordinates.lng?.toFixed(6) || 'N/A'}
-                            </div>
-                          )}
-                          {orderData.locations?.pickup?.geocodingMethod && (
-                            <div className="mt-1 text-xs text-gray-500">                      
+                              {t('customer.booking.coordinates')}: {orderData.locations.pickup.coordinates.lat?.toFixed(6) || t('customer.booking.not_available')}, {orderData.locations.pickup.coordinates.lng?.toFixed(6) || t('customer.booking.not_available')}
                             </div>
                           )}
                         </div>
@@ -1711,16 +1709,12 @@ export function CustomerBooking() {
                           <MapPin className="h-4 w-4 text-green-600" />
                         </div>
                         <div className="flex-1">
-                          <h5 className="font-medium text-gray-800">Delivery Location</h5>
-                          <p className="text-sm text-gray-600 mt-1">{orderData.locations?.delivery?.address || 'N/A'}</p>
+                          <h5 className="font-medium text-gray-800">{t('customer.booking.delivery_location')}</h5>
+                          <p className="text-sm text-gray-600 mt-1">{orderData.locations?.delivery?.address || t('customer.booking.not_available')}</p>
                           {orderData.locations?.delivery?.coordinates && (
                             <div className="mt-2 text-xs text-gray-500 flex items-center">
                               <Globe className="h-3 w-3 mr-1" />
-                              Coordinates: {orderData.locations.delivery.coordinates.lat?.toFixed(6) || 'N/A'}, {orderData.locations.delivery.coordinates.lng?.toFixed(6) || 'N/A'}
-                            </div>
-                          )}
-                          {orderData.locations?.delivery?.geocodingMethod && (
-                            <div className="mt-1 text-xs text-gray-500">
+                              {t('customer.booking.coordinates')}: {orderData.locations.delivery.coordinates.lat?.toFixed(6) || t('customer.booking.not_available')}, {orderData.locations.delivery.coordinates.lng?.toFixed(6) || t('customer.booking.not_available')}
                             </div>
                           )}
                         </div>
@@ -1732,12 +1726,12 @@ export function CustomerBooking() {
                     <div className="bg-gray-50 p-3 rounded-lg">
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-sm text-gray-500">Distance</div>
-                          <div className="font-semibold">{orderData.locations?.distance?.km?.toFixed(1) || 0} km</div>
+                          <div className="text-sm text-gray-500">{t('common.distance')}</div>
+                          <div className="font-semibold">{orderData.locations?.distance?.km?.toFixed(1) || 0} {t('units.km')}</div>
                         </div>
                         <div>
-                          <div className="text-sm text-gray-500">Est. Duration</div>
-                          <div className="font-semibold">{orderData.timing?.estimatedDuration?.formatted || 'N/A'}</div>
+                          <div className="text-sm text-gray-500">{t('customer.booking.estimated_duration')}</div>
+                          <div className="font-semibold">{orderData.timing?.estimatedDuration?.formatted || t('customer.booking.not_available')}</div>
                         </div>
                       </div>
                     </div>
@@ -1748,7 +1742,7 @@ export function CustomerBooking() {
                 <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
                   <h4 className="font-semibold text-lg mb-3 flex items-center">
                     <Truck className="h-5 w-5 mr-2 text-purple-600" />
-                    Driver & Vehicle
+                    {t('customer.booking.driver_vehicle')}
                   </h4>
                   <div className="space-y-4">
                     {/* Driver Info */}
@@ -1763,7 +1757,7 @@ export function CustomerBooking() {
                             <Star className="h-4 w-4 text-yellow-500 mr-1" />
                             <span className="text-sm">{formatRating(orderData.driverInfo.rating || 0)}</span>
                             <span className="mx-2 text-gray-300">•</span>
-                            <span className="text-sm text-gray-600">{orderData.driverInfo.matchScore || 0}% Match</span>
+                            <span className="text-sm text-gray-600">{orderData.driverInfo.matchScore || 0}% {t('customer.booking.match')}</span>
                           </div>
                         </div>
                       </div>
@@ -1777,13 +1771,13 @@ export function CustomerBooking() {
             <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
               <h4 className="font-semibold text-lg mb-3 flex items-center">
                 <CreditCard className="h-5 w-5 mr-2 text-green-600" />
-                Price Breakdown
+                {t('customer.booking.price_breakdown')}
               </h4>
               <div className="space-y-3">
                 <div className="flex justify-between items-center">
                   <div>
-                    <div className="font-medium">Estimated Price</div>
-                    <div className="text-sm text-gray-500">Includes all fees and taxes</div>
+                    <div className="font-medium">{t('customer.booking.estimated_price')}</div>
+                    <div className="text-sm text-gray-500">{t('customer.booking.includes_fees')}</div>
                   </div>
                   <div className="text-right">
                     <div className="text-2xl font-bold text-green-700">
@@ -1794,9 +1788,7 @@ export function CustomerBooking() {
                     </div>
                   </div>
                 </div>
-                <div className="text-xs text-gray-500 border-t pt-2">
-                  {orderData.pricing?.confidenceInterval?.formatted || 'N/A'}
-                </div>
+                
               </div>
             </div>
 
@@ -1804,7 +1796,7 @@ export function CustomerBooking() {
             <details className="bg-gray-50 p-4 rounded-lg border border-gray-200">
               <summary className="cursor-pointer font-medium text-gray-700 flex items-center">
                 <Info className="h-4 w-4 mr-2" />
-                View Complete Data Structure (JSON)
+                {t('customer.booking.view_json')}
               </summary>
               <pre className="mt-3 p-3 bg-gray-900 text-gray-100 rounded text-xs overflow-auto max-h-60">
                 {JSON.stringify(orderData, null, 2)}
@@ -1819,7 +1811,7 @@ export function CustomerBooking() {
               className="flex-1"
             >
               <X className="h-4 w-4 mr-2" />
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={handleConfirmOrder}
@@ -1829,12 +1821,12 @@ export function CustomerBooking() {
               {isCreatingOrder ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating Order...
+                  {t('customer.booking.creating_order')}
                 </>
               ) : (
                 <>
                   <Check className="h-4 w-4 mr-2" />
-                  Confirm & Create Order
+                  {t('customer.booking.confirm_create_order')}
                 </>
               )}
             </Button>
@@ -1850,10 +1842,10 @@ export function CustomerBooking() {
         <CardHeader>
           <CardTitle className="flex items-center">
             <Package className="mr-2 h-6 w-6" />
-            Delivery Price Calculator
+            {t('customer.booking.title')}
           </CardTitle>
           <p className="text-gray-600">
-            Get instant price estimates for your delivery
+            {t('customer.booking.subtitle')}
           </p>
         </CardHeader>
         
@@ -1872,11 +1864,11 @@ export function CustomerBooking() {
             <div className="space-y-2">
               <Label htmlFor="pickup" className="flex items-center">
                 <MapPin className="h-4 w-4 mr-1" />
-                Pickup Address *
+                {t('customer.booking.pickup_address')} *
               </Label>
               <Input
                 id="pickup"
-                placeholder="Enter pickup address (e.g., Zagorodnyi prospekt, 24, Sankt-Peterburg)"
+                placeholder={t('customer.booking.pickup_address_placeholder')}
                 value={formData.pickupAddress}
                 onChange={(e) => handleInputChange('pickupAddress', e.target.value)}
                 className="h-10"
@@ -1886,11 +1878,11 @@ export function CustomerBooking() {
             <div className="space-y-2">
               <Label htmlFor="delivery" className="flex items-center">
                 <MapPin className="h-4 w-4 mr-1" />
-                Delivery Address *
+                {t('customer.booking.delivery_address')} *
               </Label>
               <Input
                 id="delivery"
-                placeholder="Enter delivery address (e.g., ulitsa Esenina, 3 корпус 1, Sankt-Peterburg)"
+                placeholder={t('customer.booking.delivery_address_placeholder')}
                 value={formData.deliveryAddress}
                 onChange={(e) => handleInputChange('deliveryAddress', e.target.value)}
                 className="h-10"
@@ -1902,14 +1894,14 @@ export function CustomerBooking() {
           {/* Category */}
           <div className="space-y-2">
             <Label htmlFor="category">
-              Item Category *
+              {t('customer.booking.item_category')} *
             </Label>
             <Select 
               value={formData.category} 
               onValueChange={(value) => handleInputChange('category', value)}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Select category" />
+                <SelectValue placeholder={t('customer.booking.select_category')} />
               </SelectTrigger>
               <SelectContent>
                 {categories.map((cat) => (
@@ -1926,14 +1918,14 @@ export function CustomerBooking() {
             <div className="space-y-2">
               <Label htmlFor="weight" className="flex items-center">
                 <Weight className="h-4 w-4 mr-1" />
-                Weight (kg) *
+                {t('customer.booking.weight')} *
               </Label>
               <Input
                 id="weight"
                 type="number"
                 min="0.1"
                 step="0.1"
-                placeholder="e.g., 5.5"
+                placeholder={t('customer.booking.weight_placeholder')}
                 value={formData.weight}
                 onChange={(e) => handleInputChange('weight', e.target.value)}
                 className="h-10"
@@ -1942,14 +1934,14 @@ export function CustomerBooking() {
             <div className="space-y-2">
               <Label htmlFor="volume" className="flex items-center">
                 <Ruler className="h-4 w-4 mr-1" />
-                Volume (m³) *
+                {t('customer.booking.volume')} *
               </Label>
               <Input
                 id="volume"
                 type="number"
                 min="0.1"
                 step="0.1"
-                placeholder="e.g., 0.5"
+                placeholder={t('customer.booking.volume_placeholder')}
                 value={formData.volume}
                 onChange={(e) => handleInputChange('volume', e.target.value)}
                 className="h-10"
@@ -1960,7 +1952,7 @@ export function CustomerBooking() {
           {/* Urgency */}
           <div className="space-y-2">
             <Label htmlFor="urgency">
-              Delivery Urgency
+              {t('customer.booking.urgency')}
             </Label>
             <Select 
               value={formData.urgency} 
@@ -1971,13 +1963,13 @@ export function CustomerBooking() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="standard">
-                  Standard (same day)
+                  {t('customer.booking.urgency_standard')}
                 </SelectItem>
                 <SelectItem value="urgent">
-                  Urgent (within 2 hours)
+                  {t('customer.booking.urgency_urgent')}
                 </SelectItem>
                 <SelectItem value="scheduled">
-                  Scheduled (next day)
+                  {t('customer.booking.urgency_scheduled')}
                 </SelectItem>
               </SelectContent>
             </Select>
@@ -1985,7 +1977,7 @@ export function CustomerBooking() {
 
           {/* Special Requirements */}
           <div className="space-y-3">
-            <Label>Special Requirements</Label>
+            <Label>{t('customer.booking.special_requirements')}</Label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
                 <Checkbox
@@ -1994,7 +1986,7 @@ export function CustomerBooking() {
                   onCheckedChange={(checked) => handleInputChange('fragile', checked === true)}
                 />
                 <Label htmlFor="fragile" className="text-sm cursor-pointer flex-1">
-                  Fragile items
+                  {t('customer.booking.fragile')}
                 </Label>
               </div>
               <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
@@ -2004,7 +1996,7 @@ export function CustomerBooking() {
                   onCheckedChange={(checked) => handleInputChange('refrigerated', checked === true)}
                 />
                 <Label htmlFor="refrigerated" className="text-sm cursor-pointer flex-1">
-                  Refrigerated
+                  {t('customer.booking.refrigerated')}
                 </Label>
               </div>
               <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
@@ -2014,7 +2006,7 @@ export function CustomerBooking() {
                   onCheckedChange={(checked) => handleInputChange('oversized', checked === true)}
                 />
                 <Label htmlFor="oversized" className="text-sm cursor-pointer flex-1">
-                  Oversized
+                  {t('customer.booking.oversized')}
                 </Label>
               </div>
               <div className="flex items-center space-x-2 p-2 border rounded-lg hover:bg-gray-50">
@@ -2024,7 +2016,7 @@ export function CustomerBooking() {
                   onCheckedChange={(checked) => handleInputChange('hazardous', checked === true)}
                 />
                 <Label htmlFor="hazardous" className="text-sm cursor-pointer flex-1">
-                  Hazardous
+                  {t('customer.booking.hazardous')}
                 </Label>
               </div>
             </div>
@@ -2039,37 +2031,37 @@ export function CustomerBooking() {
             {geocodingInProgress ? (
               <>
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Getting precise coordinates...
+                {t('customer.booking.getting_precise_coordinates')}
               </>
             ) : loading ? (
               <>
                 <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                Calculating...
+                {t('customer.booking.calculating')}
               </>
             ) : priceData ? (
               selectedDriver ? (
                 <>
                   <FileText className="mr-2 h-5 w-5" />
-                  Review & Book Delivery
+                  {t('customer.booking.review_book_delivery')}
                 </>
               ) : (
                 <>
                   <User className="mr-2 h-5 w-5" />
-                  Select a driver to continue
+                  {t('customer.booking.select_driver_continue')}
                 </>
               )
             ) : (
-              'Fill all fields to see price'
+              t('customer.booking.fill_all_fields')
             )}
           </Button>
 
           <div className="text-center text-sm text-gray-500 pt-4">
-            <p>Price updates automatically as you fill the form</p>
+            <p>{t('customer.booking.price_updates_automatically')}</p>
             <p className="text-xs mt-1">
-              Using AI-powered delivery cost prediction with 81% accuracy
+              {t('customer.booking.ai_powered_prediction')}
             </p>
             <p className="text-xs mt-1">
-              Precise coordinates are automatically fetched for accurate distance calculation
+              {t('customer.booking.precise_coordinates_automatically')}
             </p>
           </div>
         </CardContent>
