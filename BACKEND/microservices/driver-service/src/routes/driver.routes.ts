@@ -22,7 +22,7 @@ router.get(
 );
 
 // Get vehicle with driver's profile picture - Public access
-router.get('/vehicles/:id/driver-picture', driverController.getVehicleWithDriverPicture);
+router.get('/drivers/:driverId/vehicles-picture', driverController.getDriverVehiclesWithPicture);
 
 
 // Apply authentication to all routes

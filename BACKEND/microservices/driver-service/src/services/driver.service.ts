@@ -575,19 +575,29 @@ export class DriverService {
 }
 
 
-  async getVehicleWithDriverPicture(vehicleId: string): Promise<any> {
+
+ // Add this method to the DriverService class
+  async getDriverVehiclesWithPicture(driverId: string): Promise<any> {
     try {
-      // Get vehicle by ID
-      const vehicle = await this.vehicleRepository.findById(vehicleId);
-      if (!vehicle) {
-        throw new Error('Vehicle not found');
+      // Get all vehicles for the driver
+      const vehicles = await this.vehicleRepository.findByDriverId(driverId);
+      
+      if (vehicles.length === 0) {
+        throw new Error('No vehicles found for this driver');
       }
-
+    
       // Get driver's profile picture
-      const profilePicture = await this.profilePictureRepository.findByDriverId(vehicle.driverId);
-
+      const profilePicture = await this.profilePictureRepository.findByDriverId(driverId);
+    
       return {
-        vehicle: {
+        driverId: driverId,
+        profilePicture: profilePicture ? {
+          originalUrl: profilePicture.originalUrl,
+          thumbnailUrl: profilePicture.thumbnailUrl,
+          smallUrl: profilePicture.smallUrl,
+          mediumUrl: profilePicture.mediumUrl
+        } : null,
+        vehicles: vehicles.map(vehicle => ({
           id: vehicle.id,
           type: vehicle.type,
           make: vehicle.make,
@@ -600,17 +610,10 @@ export class DriverService {
           imageUrl: vehicle.imageUrl,
           currentStatus: vehicle.currentStatus,
           createdAt: vehicle.createdAt
-        },
-        driverId: vehicle.driverId,
-        profilePicture: profilePicture ? {
-          originalUrl: profilePicture.originalUrl,
-          thumbnailUrl: profilePicture.thumbnailUrl,
-          smallUrl: profilePicture.smallUrl,
-          mediumUrl: profilePicture.mediumUrl
-        } : null
+        }))
       };
     } catch (error: any) {
-      logger.error(`Error getting vehicle with driver picture for vehicle ${vehicleId}:`, error);
+      logger.error(`Error getting driver vehicles with picture for driver ${driverId}:`, error);
       throw error;
     }
   }

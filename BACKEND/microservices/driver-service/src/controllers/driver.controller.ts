@@ -121,38 +121,38 @@ export class DriverController {
     }
   }
 
-  async getVehicleWithDriverPicture(req: Request, res: Response, next: NextFunction) {
-    try {
-      const vehicleId = req.params.id;
-
-      if (!vehicleId) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Vehicle ID is required' 
-        });
-      }
-
-      logger.info(`Getting vehicle with driver picture for vehicle ID: ${vehicleId}`);
-
-      const result = await driverService.getVehicleWithDriverPicture(vehicleId);
-
-      res.json({
-        success: true,
-        data: result
+  // Add this method to the DriverController class
+async getDriverVehiclesWithPicture(req: Request, res: Response, next: NextFunction) {
+  try {
+    const driverId = req.params.driverId;
+    
+    if (!driverId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Driver ID is required' 
       });
-    } catch (error: any) {
-      if (error.message === 'Vehicle not found') {
-        return res.status(404).json({
-          success: false,
-          error: error.message
-        });
-      }
-
-      logger.error('Get vehicle with driver picture error:', error);
-      next(error);
     }
-  }
 
+    logger.info(`Getting vehicles with picture for driver ID: ${driverId}`);
+    
+    const result = await driverService.getDriverVehiclesWithPicture(driverId);
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error: any) {
+    if (error.message === 'No vehicles found for this driver') {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+    
+    logger.error('Get driver vehicles with picture error:', error);
+    next(error);
+  }
+}
   async getVehicles(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user?.userId;
