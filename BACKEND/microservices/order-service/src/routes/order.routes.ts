@@ -1,8 +1,17 @@
 import express from 'express';
 import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
-import { orderController } from '../index';
+import { OrderController } from '../controllers/order.controller';
+import { OrderService } from '../services/order.service';
+import { OrderRepository } from '../repositories/order.repository';
+import { TrackingRepository } from '../repositories/tracking.repository';
+import { wss } from '../index'; // Import wss from index
 
 const router = express.Router();
+const orderRepository = new OrderRepository();
+const trackingRepository = new TrackingRepository();
+const orderService = new OrderService(wss);
+const orderController = new OrderController(orderService);
+
 
 /**
  * @swagger

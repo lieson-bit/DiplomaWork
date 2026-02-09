@@ -1,12 +1,12 @@
 import { Logger } from '../utils/logger';
-import { Order, CreateOrderData } from '../repositories/order.repository';
-import { trackingRepository } from '../repositories/tracking.repository';
+import { Order, CreateOrderData, OrderRepository } from '../repositories/order.repository';
+import { TrackingRepository } from '../repositories/tracking.repository';
 import { NotificationService } from './notification.service';
 import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
 import { CapacityOptimizationService } from './capacity-optimization.service';
 import { WebSocketUtil } from '../utils/websocket.util';
-import { orderRepository } from '../index';
+
 export class OrderService {
   private logger: Logger;
   private notificationService: NotificationService;
@@ -14,7 +14,9 @@ export class OrderService {
   private balanceService: BalanceService;
   private websocketUtil: WebSocketUtil;
   private capacityOptimizationService: CapacityOptimizationService;
-  
+  private orderRepository: OrderRepository;
+  private trackingRepository: TrackingRepository; // Added missing dependency
+
   constructor(websocketUtil: WebSocketUtil) {
     this.logger = new Logger('OrderService');
     this.websocketUtil = websocketUtil;
@@ -22,6 +24,8 @@ export class OrderService {
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
     this.capacityOptimizationService = new CapacityOptimizationService();
+    this.orderRepository = new OrderRepository();
+    this.trackingRepository = new TrackingRepository(); // Initialize tracking repository
   }
   
   // Main method to create order from your exact structure
@@ -126,7 +130,7 @@ export class OrderService {
       };
       
       // Get driver's active orders
-      const activeOrders = await orderRepository.findByDriverId(driverId, {
+      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
         status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       });
       
@@ -231,13 +235,13 @@ export class OrderService {
       route_order_index: 0
     };
     
-    return await orderRepository.create(orderPayload);
+    return await this.orderRepository.create(orderPayload);
   }
   
   // Driver accepts the order
   async acceptOrder(orderId: string, driverId: string): Promise<any> {
     try {
-      const order = await orderRepository.findByOrderNumber(orderId);
+      const order = await this.orderRepository.findByOrderNumber(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -247,7 +251,7 @@ export class OrderService {
       }
       
       // Update order status
-      const updatedOrder = await orderRepository.update(order.id, {
+      const updatedOrder = await this.orderRepository.update(order.id, {
         status: 'driver_accepted',
         accepted_at: new Date()
       });
@@ -283,7 +287,7 @@ export class OrderService {
       );
       
       // Start simulation if this is the first order for driver today
-      const driverOrders = await orderRepository.findByDriverId(driverId, {
+      const driverOrders = await this.orderRepository.findByDriverId(driverId, {
         status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       });
       
@@ -311,7 +315,7 @@ export class OrderService {
   // Driver rejects the order
   async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
     try {
-      const order = await orderRepository.findByOrderNumber(orderId);
+      const order = await this.orderRepository.findByOrderNumber(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -321,7 +325,7 @@ export class OrderService {
       }
       
       // Update order status to cancelled
-      const updatedOrder = await orderRepository.update(order.id, {
+      const updatedOrder = await this.orderRepository.update(order.id, {
         status: 'cancelled',
         cancelled_at: new Date(),
         driver_notes: reason || 'Driver rejected the order'
@@ -356,7 +360,7 @@ export class OrderService {
   // Start route simulation for an order
   private async startRouteSimulation(orderId: string, driverId: string): Promise<void> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -371,7 +375,7 @@ export class OrderService {
       );
       
       // Update status to driver_enroute
-      await orderRepository.update(orderId, {
+      await this.orderRepository.update(orderId, {
         status: 'driver_enroute',
         driver_enroute_at: new Date()
       });
@@ -398,7 +402,7 @@ export class OrderService {
         );
         
         // Update status to delivered
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           status: 'delivered',
           delivered_at: new Date(),
           completed_at: new Date()
@@ -457,7 +461,7 @@ export class OrderService {
       const currentLng = startPoint.lng + (endPoint.lng - startPoint.lng) * progress;
       
       // Create tracking point
-      await trackingRepository.create({
+      await this.trackingRepository.create({
         order_id: orderId,
         driver_id: driverId,
         latitude: currentLat,
@@ -468,10 +472,10 @@ export class OrderService {
       });
       
       // Update order with current location
-      await orderRepository.updateOrderDriverLocation(orderId, currentLat, currentLng);
+      await this.orderRepository.updateOrderDriverLocation(orderId, currentLat, currentLng);
       
       // Get order for customer ID
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (order) {
         // Send real-time location update to customer
         await this.websocketUtil.sendToUser(
@@ -489,7 +493,7 @@ export class OrderService {
       
       // Update status based on progress
       if (phase === 'to_pickup' && progress >= 0.5 && i === Math.floor(steps / 2)) {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           status: 'pickup_started',
           pickup_started_at: new Date()
         });
@@ -508,7 +512,7 @@ export class OrderService {
       }
       
       if (phase === 'to_delivery' && progress >= 0.5 && i === Math.floor(steps / 2)) {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           status: 'in_transit',
           in_transit_at: new Date()
         });
@@ -534,7 +538,7 @@ export class OrderService {
   // Optimize and simulate route for multiple orders
   private async optimizeAndSimulateDriverRoute(driverId: string): Promise<void> {
     try {
-      const activeOrders = await orderRepository.findByDriverId(driverId, {
+      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
         status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       });
       
@@ -567,7 +571,7 @@ export class OrderService {
         const order = activeOrders.find(o => o.id === orderId);
         if (order) {
           const sequenceIndex = optimization.optimalSequence.indexOf(orderId);
-          await orderRepository.update(orderId, {
+          await this.orderRepository.update(orderId, {
             route_order_index: sequenceIndex + 1
           });
         }
@@ -643,7 +647,7 @@ export class OrderService {
       startPoint.lng = order.delivery_longitude;
       
       // Mark order as delivered
-      await orderRepository.update(order.id, {
+      await this.orderRepository.update(order.id, {
         status: 'delivered',
         delivered_at: new Date(),
         completed_at: new Date()
@@ -692,9 +696,9 @@ export class OrderService {
   // Get order with full details
   async getOrder(orderId: string, includeOptimization: boolean = false): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
-        const orderByNumber = await orderRepository.findByOrderNumber(orderId);
+        const orderByNumber = await this.orderRepository.findByOrderNumber(orderId);
         if (!orderByNumber) {
           throw new Error('Order not found');
         }
@@ -702,7 +706,7 @@ export class OrderService {
       }
       
       // Get tracking data
-      const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
+      const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 50 });
       
       // Get driver info
       const driverInfo = order.driver_id ? await this.getDriverInfo(order.driver_id) : null;
@@ -719,7 +723,7 @@ export class OrderService {
       // Get optimization if requested and driver has multiple orders
       let optimization = null;
       if (includeOptimization && order.driver_id) {
-        const driverOrders = await orderRepository.findByDriverId(order.driver_id, {
+        const driverOrders = await this.orderRepository.findByDriverId(order.driver_id, {
           status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
         });
         
@@ -821,7 +825,7 @@ export class OrderService {
   // Get customer orders
   async getCustomerOrders(customerId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
     try {
-      const orders = await orderRepository.findByCustomerId(customerId, {
+      const orders = await this.orderRepository.findByCustomerId(customerId, {
         status,
         limit,
         offset: (page - 1) * limit
@@ -869,7 +873,7 @@ export class OrderService {
   // Get driver orders with optimization
   async getDriverOrders(driverId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
     try {
-      const orders = await orderRepository.findByDriverId(driverId, {
+      const orders = await this.orderRepository.findByDriverId(driverId, {
         status: status as any,
         limit,
         offset: (page - 1) * limit
@@ -940,7 +944,7 @@ export class OrderService {
     metadata?: any
   ): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -974,11 +978,11 @@ export class OrderService {
       
       // Update unread count
       if (receiverType === 'customer') {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           unread_customer_messages: ((order as any).unread_customer_messages || 0) + 1
         });
       } else {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           unread_driver_messages: ((order as any).unread_driver_messages || 0) + 1
         });
       }
@@ -1018,7 +1022,7 @@ export class OrderService {
   // Rate driver
   async rateDriver(orderId: string, customerId: string, rating: number, review?: string): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -1080,7 +1084,7 @@ export class OrderService {
       
       let thisWeekTotal = 0;
       if (userType === 'customer') {
-        const thisWeekOrders = await orderRepository.findByCustomerId(userId, {
+        const thisWeekOrders = await this.orderRepository.findByCustomerId(userId, {
           status: 'completed',
           limit: 100
         });
@@ -1089,7 +1093,7 @@ export class OrderService {
           .filter(order => order.completed_at && new Date(order.completed_at) >= startOfWeek)
           .reduce((sum, order) => sum + order.total_price, 0);
       } else {
-        const thisWeekOrders = await orderRepository.findByDriverId(userId, {
+        const thisWeekOrders = await this.orderRepository.findByDriverId(userId, {
           status: 'completed',
           limit: 100
         });
@@ -1301,51 +1305,51 @@ export class OrderService {
   }
 
   async getOrderWithProgress(orderId: string): Promise<{
-  order: any;
-  progress: any;
-  messages: any[];
-  tracking: any[];
-  driverLocation?: any;
-}> {
-  try {
-    const order = await orderRepository.findById(orderId);
-    if (!order) {
-      throw new Error('Order not found');
+    order: any;
+    progress: any;
+    messages: any[];
+    tracking: any[];
+    driverLocation?: any;
+  }> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      // Calculate progress
+      const progress = this.calculateOrderProgress(order);
+      
+      // Get messages
+      const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
+      
+      // Get tracking data
+      const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 50 });
+      
+      // Get current driver location
+      const driverLocation = order.driver_current_lat && order.driver_current_lng ? {
+        latitude: order.driver_current_lat,
+        longitude: order.driver_current_lng,
+        lastUpdated: order.driver_last_updated
+      } : undefined;
+      
+      // Format order response
+      const formattedOrder = this.formatOrderForUI(order, null);
+      
+      return {
+        order: formattedOrder,
+        progress,
+        messages,
+        tracking,
+        driverLocation
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get order with progress:', errorMessage);
+      throw error;
     }
-    
-    // Calculate progress
-    const progress = this.calculateOrderProgress(order);
-    
-    // Get messages
-    const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
-    
-    // Get tracking data
-    const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
-    
-    // Get current driver location
-    const driverLocation = order.driver_current_lat && order.driver_current_lng ? {
-      latitude: order.driver_current_lat,
-      longitude: order.driver_current_lng,
-      lastUpdated: order.driver_last_updated
-    } : undefined;
-    
-    // Format order response
-    const formattedOrder = this.formatOrderForUI(order, null);
-    
-    return {
-      order: formattedOrder,
-      progress,
-      messages,
-      tracking,
-      driverLocation
-    };
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Failed to get order with progress:', errorMessage);
-    throw error;
   }
-}
 
   // Update order status (for driver)
   async updateOrderStatus(
@@ -1355,7 +1359,7 @@ export class OrderService {
     location?: { latitude: number; longitude: number }
   ): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -1403,7 +1407,7 @@ export class OrderService {
         updateData.driver_last_updated = new Date();
       }
 
-      const updatedOrder = await orderRepository.update(orderId, updateData);
+      const updatedOrder = await this.orderRepository.update(orderId, updateData);
 
       // Notify customer about status change
       await this.notifyCustomerStatusChange(order.customer_id, orderId, status, updatedOrder);
@@ -1423,7 +1427,7 @@ export class OrderService {
 
       // If driver has multiple active orders, re-optimize route
       if (status === 'driver_enroute' || status === 'in_transit') {
-        const activeOrders = await orderRepository.findByDriverIdWithStatus(
+        const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
           driverId,
           ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
         );
@@ -1498,7 +1502,7 @@ export class OrderService {
   // Get driver's optimized route
   async getDriverOptimizedRoute(driverId: string): Promise<any> {
     try {
-      const activeOrders = await orderRepository.findByDriverIdWithStatus(
+      const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
         driverId,
         ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       );
@@ -1676,13 +1680,13 @@ export class OrderService {
 
   // Get driver current location
   private async getDriverCurrentLocation(driverId: string): Promise<any> {
-    const latestTracking = await trackingRepository.getDriverLatestLocation(driverId);
+    const latestTracking = await this.trackingRepository.getDriverLatestLocation(driverId);
     if (latestTracking) {
       return { lat: latestTracking.latitude, lng: latestTracking.longitude };
     }
 
     // Fallback to first active order's pickup location
-    const activeOrders = await orderRepository.findByDriverIdWithStatus(
+    const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
       driverId,
       ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
     );
@@ -1735,4 +1739,3 @@ export class OrderService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
-

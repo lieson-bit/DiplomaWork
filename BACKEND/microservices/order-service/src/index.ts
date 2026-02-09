@@ -2,12 +2,9 @@ import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
 import { Logger } from './utils/logger';
-import pool from './config/database';
+import { db } from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
-import { OrderService } from './services/order.service'; // Import OrderService
-import { TrackingRepository } from './repositories/tracking.repository';
-import { OrderRepository } from './repositories/order.repository';
-import { OrderController } from './controllers/order.controller';
+
 const logger = new Logger('Server');
 
 const PORT = process.env.PORT || 3004;
@@ -18,19 +15,12 @@ const server = createServer(app);
 
 // Initialize WebSocket server WITH the HTTP server
 const wss = new WebSocketUtil(server);
-const trackingRepository = new TrackingRepository();
-const orderRepository = new OrderRepository();
-
-// FIXED: Create OrderService with the WebSocketUtil instance
-// This ensures all services use the same WebSocketUtil instance
-const orderService = new OrderService(wss);
-const orderController = new OrderController(orderService);
 
 // Test database connection on startup
 async function testDatabaseConnection() {
   try {
     // Use the Database implementation's testConnection method instead of getConnection
-    await pool.testConnection();
+    await db.testConnection();
     logger.info('✅ Database connection established successfully');
   } catch (error) {
     logger.error('❌ Failed to connect to database:', error);
@@ -69,14 +59,14 @@ function setupGracefulShutdown() {
     }
     
     // Close database connections
-    if (typeof (pool as any)?.end === 'function') {
-      await (pool as any).end();
+    if (typeof (db as any)?.end === 'function') {
+      await (db as any).end();
       logger.info('Database connections closed');
-    } else if (typeof (pool as any)?.close === 'function') {
-      await (pool as any).close();
+    } else if (typeof (db as any)?.close === 'function') {
+      await (db as any).close();
       logger.info('Database connections closed');
-    } else if (typeof (pool as any)?.destroy === 'function') {
-      await (pool as any).destroy();
+    } else if (typeof (db as any)?.destroy === 'function') {
+      await (db as any).destroy();
       logger.info('Database connections destroyed');
     } else {
       logger.info('No database close method found on pool; skipping close');
@@ -166,4 +156,5 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-export { server, wss, orderService, trackingRepository, orderRepository, orderController };
+// Export only what's needed
+export { server, wss };

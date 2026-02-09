@@ -744,9 +744,9 @@ export class OrderController {
   private orderService: OrderService;
   private logger: Logger;
   
-  constructor() {
+  constructor(orderService: OrderService) {
     this.logger = new Logger('OrderController');
-    this.orderService = new OrderService();
+    this.orderService = orderService;
   }
   
   // New endpoint to receive order from external service
@@ -1182,7 +1182,7 @@ export class OrderController {
   }
 }
 
-export const orderController = new OrderController();
+
 ```
 
 `index.ts`:
@@ -1194,7 +1194,10 @@ import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import pool from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
-
+import { OrderService } from './services/order.service'; // Import OrderService
+import { TrackingRepository } from './repositories/tracking.repository';
+import { OrderRepository } from './repositories/order.repository';
+import { OrderController } from './controllers/order.controller';
 const logger = new Logger('Server');
 
 const PORT = process.env.PORT || 3004;
@@ -1203,8 +1206,15 @@ const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
 // Create HTTP server
 const server = createServer(app);
 
-// Initialize WebSocket server
+// Initialize WebSocket server WITH the HTTP server
 const wss = new WebSocketUtil(server);
+const trackingRepository = new TrackingRepository();
+const orderRepository = new OrderRepository();
+
+// FIXED: Create OrderService with the WebSocketUtil instance
+// This ensures all services use the same WebSocketUtil instance
+const orderService = new OrderService(wss);
+const orderController = new OrderController(orderService);
 
 // Test database connection on startup
 async function testDatabaseConnection() {
@@ -1242,15 +1252,10 @@ function setupGracefulShutdown() {
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}. Starting graceful shutdown...`);
     
-    // Close WebSocket connections (guarded because WebSocketUtil may not expose .close)
-    if (typeof (wss as any)?.close === 'function') {
+    // Close WebSocket connections
+    if (wss && typeof (wss as any).close === 'function') {
       (wss as any).close();
       logger.info('WebSocket server closed');
-    } else if ((wss as any)?.server && typeof (wss as any).server.close === 'function') {
-      (wss as any).server.close();
-      logger.info('Underlying WebSocket server closed');
-    } else {
-      logger.info('No WebSocket server to close');
     }
     
     // Close database connections
@@ -1292,7 +1297,8 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: process.env.npm_package_version || '1.0.0',
     environment: process.env.NODE_ENV,
-    database: 'connected', // This should be dynamically checked
+    database: 'connected',
+    websocket: 'running'
   });
 });
 
@@ -1350,7 +1356,7 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-export { server, wss };
+export { server, wss, orderService, trackingRepository, orderRepository, orderController };
 ```
 
 `middleware\auth.middleware.ts`:
@@ -2606,10 +2612,7 @@ async columnExists(tableName: string, columnName: string): Promise<boolean> {
 }
 
 // Create singleton instance
-export const orderRepository = new OrderRepository();
 
-// Export for direct use
-export default orderRepository;
 ```
 
 `repositories\tracking.repository.ts`:
@@ -3037,7 +3040,7 @@ export default trackingRepository;
 ```ts
 import express from 'express';
 import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
-import { orderController } from '../controllers/order.controller';
+import { orderController } from '../index';
 
 const router = express.Router();
 
@@ -5240,8 +5243,9 @@ export class NotificationService {
   private logger = new Logger('NotificationService');
   private websocketUtil: WebSocketUtil;
   
-  constructor() {
-    this.websocketUtil = new WebSocketUtil();
+  // FIXED: Accept WebSocketUtil as parameter instead of creating new instance
+  constructor(websocketUtil: WebSocketUtil) {
+    this.websocketUtil = websocketUtil;
   }
   
   // Send order notification
@@ -5292,22 +5296,22 @@ export class NotificationService {
   }
 }
 
-// Export singleton instance
-export const notificationService = new NotificationService();
+// FIXED: Don't export a singleton instance - it will be created in index.ts
+// export const notificationService = new NotificationService();
 ```
 
 `services\order.service.ts`:
 
 ```ts
 import { Logger } from '../utils/logger';
-import { orderRepository, Order, CreateOrderData } from '../repositories/order.repository';
+import { Order, CreateOrderData } from '../repositories/order.repository';
 import { trackingRepository } from '../repositories/tracking.repository';
 import { NotificationService } from './notification.service';
 import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
 import { CapacityOptimizationService } from './capacity-optimization.service';
 import { WebSocketUtil } from '../utils/websocket.util';
-
+import { orderRepository } from '../index';
 export class OrderService {
   private logger: Logger;
   private notificationService: NotificationService;
@@ -5316,12 +5320,12 @@ export class OrderService {
   private websocketUtil: WebSocketUtil;
   private capacityOptimizationService: CapacityOptimizationService;
   
-  constructor() {
+  constructor(websocketUtil: WebSocketUtil) {
     this.logger = new Logger('OrderService');
-    this.notificationService = new NotificationService();
+    this.websocketUtil = websocketUtil;
+    this.notificationService = new NotificationService(websocketUtil);
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
-    this.websocketUtil = new WebSocketUtil();
     this.capacityOptimizationService = new CapacityOptimizationService();
   }
   
@@ -7037,8 +7041,7 @@ export class OrderService {
   }
 }
 
-// Export singleton instance
-export const orderService = new OrderService();
+
 ```
 
 `services\route-optimization.service.ts`:
@@ -7980,12 +7983,7 @@ export class TrackingService {
   }
 }
 
-// Export singleton instance
-export const trackingService = new TrackingService(
-  new WebSocketUtil(),
-  new TrackingRepository(),
-  new OrderRepository()
-);
+
 ```
 
 `sql\schema.sql`:
@@ -10889,11 +10887,25 @@ export class WebSocketUtil {
 
   constructor(server?: Server) {
     this.logger = new Logger('WebSocketUtil');
-    this.wss = new WebSocketServer({ 
-      server, 
-      path: '/ws',
-      perMessageDeflate: false
-    });
+    
+    // FIXED: Handle both cases - with server or without
+    if (server) {
+      this.wss = new WebSocketServer({ 
+        server, 
+        path: '/ws',
+        perMessageDeflate: false
+      });
+      this.logger.info('WebSocket server initialized with HTTP server');
+    } else {
+      // Create standalone WebSocket server on separate port
+      const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
+      this.wss = new WebSocketServer({ 
+        port: WEBSOCKET_PORT,
+        path: '/ws',
+        perMessageDeflate: false
+      });
+      this.logger.info(`WebSocket server initialized on standalone port ${WEBSOCKET_PORT}`);
+    }
     
     this.setupWebSocketServer();
   }
@@ -10928,7 +10940,7 @@ export class WebSocketUtil {
       }));
     });
 
-    this.logger.info('WebSocket server initialized');
+    this.logger.info('WebSocket server ready for connections');
   }
 
   private handleMessage(connectionId: string, ws: WebSocket, message: WebSocketMessage): void {
@@ -11108,6 +11120,7 @@ export class WebSocketUtil {
   }
 }
 
-// Export singleton instance
-export const webSocketUtil = new WebSocketUtil();
+// FIXED: Remove the singleton export or make it conditional
+// Don't automatically create an instance
+// export const webSocketUtil = new WebSocketUtil();
 ```
