@@ -1,0 +1,5655 @@
+Project Path: src
+
+Source Tree:
+
+```txt
+src
+├── app.ts
+├── config
+│   └── database.ts
+├── controllers
+│   └── driver.controller.ts
+├── index.ts
+├── middleware
+│   ├── auth.middleware.ts
+│   ├── error.middleware.ts
+│   ├── upload.middleware.ts
+│   └── validation.middleware.ts
+├── models
+│   └── index.ts
+├── repositories
+│   ├── document.repository.ts
+│   ├── driver.repository.ts
+│   ├── driverMetrics.repository.ts
+│   ├── index.ts
+│   ├── profilePicture.repository.ts
+│   └── vehicle.repository.ts
+├── routes
+│   └── driver.routes.ts
+├── schema.sql
+├── services
+│   ├── document.service.ts
+│   ├── driver.service.ts
+│   ├── location.service.ts
+│   ├── matching.service.ts
+│   └── upload.service.ts
+├── types
+│   ├── express.d.ts
+│   └── index.ts
+└── utils
+    ├── geocoding.util.ts
+    ├── httpClient.ts
+    ├── imageProcessor.ts
+    ├── logger.ts
+    └── validation.ts
+
+```
+
+`app.ts`:
+
+```ts
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import path from 'path';
+import driverRoutes from './routes/driver.routes';
+import { errorHandler } from './middleware/error.middleware';
+import { logger } from './utils/logger';
+import { upload } from './services/upload.service';
+
+const app = express();
+
+// Middleware
+app.use(helmet({
+  contentSecurityPolicy: false,
+}));
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  credentials: true,
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Morgan logger configuration
+const stream = {
+  write: (message: string) => {
+    logger.http(message.trim());
+  }
+};
+
+app.use(morgan('combined', { stream }));
+
+// Static files for uploads
+// Serve uploads with CORS headers
+// Static files for uploads WITH CORS
+app.use(
+  '/uploads',
+  express.static(path.join(process.cwd(), 'uploads'), {
+    setHeaders: (res, filePath, stat) => {
+      // Only set CORS for image and PDF files
+      if (filePath.endsWith('.jpg') || 
+          filePath.endsWith('.jpeg') || 
+          filePath.endsWith('.png') || 
+          filePath.endsWith('.gif') || 
+          filePath.endsWith('.pdf')) {
+        res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || 'http://localhost:3000');
+        res.setHeader('Access-Control-Allow-Methods', 'GET');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      }
+    }
+  })
+);
+
+// Add this line to serve vehicle images
+//app.use('/uploads/vehicles', express.static(path.join(__dirname, 'uploads', 'vehicles')));
+// Routes
+
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    service: 'driver-service',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
+//app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
+
+app.use('/api', driverRoutes);
+// API Documentation
+app.get('/api/docs', (req, res) => {
+  res.json({
+    message: 'Driver Service API',
+    version: '1.0.0',
+    endpoints: {
+      driver: {
+        profile: {
+          get: 'GET /api/drivers/profile',
+          create: 'POST /api/drivers/profile',
+          update: 'PUT /api/drivers/profile',
+        },
+        vehicles: {
+          create: 'POST /api/drivers/vehicles',
+          list: 'GET /api/drivers/vehicles',
+          update: 'PUT /api/drivers/vehicles/:id',
+          delete: 'DELETE /api/drivers/vehicles/:id',
+        },
+        documents: {
+          upload: 'POST /api/drivers/documents',
+          list: 'GET /api/drivers/documents',
+          updateStatus: 'PATCH /api/drivers/documents/:id/status',
+        },
+        availability: {
+          update: 'PUT /api/drivers/availability',
+          get: 'GET /api/drivers/availability',
+        },
+        status: {
+          update: 'PATCH /api/drivers/status',
+        },
+        profilePicture: {
+          upload: 'POST /api/drivers/profile-picture',
+          get: 'GET /api/drivers/profile-picture',
+          delete: 'DELETE /api/drivers/profile-picture',
+        },
+        stats: {
+          get: 'GET /api/drivers/stats',
+          verification: 'GET /api/drivers/verification-status',
+          recordMetrics: 'POST /api/drivers/metrics',
+        },
+      },
+    },
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: `Cannot ${req.method} ${req.path}`,
+  });
+});
+
+// Error handling middleware
+app.use(errorHandler);
+
+export default app;
+```
+
+`config\database.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { logger } from '../utils/logger';
+
+let pool: mysql.Pool | null = null;
+
+export async function connectDatabase() {
+  try {
+    const databaseUrl = process.env.DATABASE_URL;
+    
+    if (!databaseUrl) {
+      throw new Error('DATABASE_URL environment variable is not set');
+    }
+
+    const url = new URL(databaseUrl);
+    
+    pool = mysql.createPool({
+      host: url.hostname,
+      port: parseInt(url.port) || 3306,
+      user: url.username,
+      password: url.password,
+      database: url.pathname.substring(1),
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0
+    });
+
+    // Test connection
+    const connection = await pool.getConnection();
+    logger.info('Driver database connected successfully');
+    connection.release();
+
+    return pool;
+  } catch (error) {
+    logger.error('Failed to connect to driver database:', error);
+    throw error;
+  }
+}
+
+export function getPool(): mysql.Pool {
+  if (!pool) {
+    throw new Error('Database pool not initialized. Call connectDatabase() first.');
+  }
+  return pool;
+}
+
+export async function ensurePool(): Promise<mysql.Pool> {
+  if (!pool) {
+    return await connectDatabase();
+  }
+  return pool;
+}
+
+// Handle graceful shutdown
+process.on('beforeExit', async () => {
+  if (pool) {
+    await pool.end();
+    logger.info('Database pool closed gracefully');
+  }
+});
+```
+
+`controllers\driver.controller.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import { driverService } from '../services/driver.service';
+import { uploadService } from '../services/upload.service';
+import { logger } from '../utils/logger';
+import { matchingService } from '../services/matching.service';
+
+export class DriverController {
+  async createProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const driver = await driverService.createDriverProfile(userId, req.body);
+      res.status(201).json({
+        success: true,
+        data: driver,
+        message: 'Driver profile created successfully',
+      });
+    } catch (error: any) {
+      logger.error('Create profile error:', error);
+      next(error);
+    }
+  }
+
+  async getProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const profile = await driverService.getDriverProfile(userId);
+      res.json({
+        success: true,
+        data: profile,
+      });
+    } catch (error: any) {
+      logger.error('Get profile error:', error);
+      next(error);
+    }
+  }
+
+  async updateProfile(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const driver = await driverService.updateDriverProfile(userId, req.body);
+      res.json({
+        success: true,
+        data: driver,
+        message: 'Driver profile updated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Update profile error:', error);
+      next(error);
+    }
+  }
+
+  async uploadProfilePicture(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const profilePicture = await driverService.uploadProfilePicture(userId, req.file);
+      res.status(201).json({
+        success: true,
+        data: profilePicture,
+        message: 'Profile picture uploaded successfully',
+      });
+    } catch (error: any) {
+      logger.error('Upload profile picture error:', error);
+      next(error);
+    }
+  }
+
+  async deleteProfilePicture(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      await driverService.deleteProfilePicture(userId);
+      res.json({
+        success: true,
+        message: 'Profile picture deleted successfully',
+      });
+    } catch (error: any) {
+      logger.error('Delete profile picture error:', error);
+      next(error);
+    }
+  }
+
+  async addVehicle(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const vehicle = await driverService.addVehicle(userId, req.body);
+      res.status(201).json({
+        success: true,
+        data: vehicle,
+        message: 'Vehicle added successfully',
+      });
+    } catch (error: any) {
+      logger.error('Add vehicle error:', error);
+      next(error);
+    }
+  }
+
+  async getVehicles(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const vehicles = await driverService.getVehicles(userId);
+      res.json({
+        success: true,
+        data: vehicles,
+      });
+    } catch (error: any) {
+      logger.error('Get vehicles error:', error);
+      next(error);
+    }
+  }
+
+  async updateVehicle(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      const vehicleId = req.params.id;
+
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const vehicle = await driverService.updateVehicle(userId, vehicleId, req.body);
+      res.json({
+        success: true,
+        data: vehicle,
+        message: 'Vehicle updated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Update vehicle error:', error);
+      next(error);
+    }
+  }
+
+  async deleteVehicle(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      const vehicleId = req.params.id;
+
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const success = await driverService.deleteVehicle(userId, vehicleId);
+      res.json({
+        success,
+        message: success ? 'Vehicle deleted successfully' : 'Failed to delete vehicle',
+      });
+    } catch (error: any) {
+      logger.error('Delete vehicle error:', error);
+      next(error);
+    }
+  }
+
+  // In the uploadDocument method, fix the expiryDate handling:
+  async uploadDocument(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+    
+      // FIX: Keep expiryDate as string for the request, conversion to Date happens in service
+      const documentData = {
+        type: req.body.type,
+        name: req.body.name || req.file.originalname,
+        expiryDate: req.body.expiryDate, // Keep as string
+        file: req.file
+      };
+    
+      const document = await driverService.addDocument(userId, documentData);
+      res.status(201).json({
+        success: true,
+        data: document,
+        message: 'Document uploaded successfully',
+      });
+    } catch (error: any) {
+      logger.error('Upload document error:', error);
+      next(error);
+    }
+  }
+
+  async getDocuments(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const documents = await driverService.getDocuments(userId);
+      res.json({
+        success: true,
+        data: documents,
+      });
+    } catch (error: any) {
+      logger.error('Get documents error:', error);
+      next(error);
+    }
+  }
+
+  async updateDocumentStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const documentId = req.params.id;
+      const { status, verifiedBy, rejectionReason } = req.body;
+
+      const document = await driverService.updateDocumentStatus(documentId, status, verifiedBy, rejectionReason);
+      res.json({
+        success: true,
+        data: document,
+        message: 'Document status updated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Update document status error:', error);
+      next(error);
+    }
+  }
+
+  async updateAvailability(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const availabilityData = Array.isArray(req.body) ? req.body : [req.body];
+      const availabilities = await driverService.updateAvailability(userId, availabilityData);
+      res.json({
+        success: true,
+        data: availabilities,
+        message: 'Availability updated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Update availability error:', error);
+      next(error);
+    }
+  }
+
+  async getAvailability(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const availability = await driverService.getAvailability(userId);
+      res.json({
+        success: true,
+        data: availability,
+      });
+    } catch (error: any) {
+      logger.error('Get availability error:', error);
+      next(error);
+    }
+  }
+
+  async updateStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { isOnline, location } = req.body;
+      const driver = await driverService.updateDriverStatus(userId, isOnline, location);
+      res.json({
+        success: true,
+        data: driver,
+        message: 'Status updated successfully',
+      });
+    } catch (error: any) {
+      logger.error('Update status error:', error);
+      next(error);
+    }
+  }
+
+   async discoverDrivers(req: Request, res: Response, next: NextFunction) {
+    try {
+      // Customers can access this, so we don't restrict to driver userType
+      const userType = req.user?.userType;
+      logger.info('🔍 Discover drivers request received', {
+        userType,
+        query: req.query
+      });
+
+      const {
+        estimatedWeight,
+        estimatedVolume,
+        vehicleType,
+        limit = 20,
+        page = 1
+      } = req.query;
+
+      // Validate and cast vehicleType
+      const validVehicleTypes = ['motorbike', 'small_van', 'medium_truck', 'large_truck'];
+      const typedVehicleType = vehicleType && validVehicleTypes.includes(vehicleType as string)
+        ? vehicleType as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck'
+        : undefined;
+
+      logger.info('📊 Parsed discovery parameters:', {
+        estimatedWeight: estimatedWeight ? parseFloat(estimatedWeight as string) : undefined,
+        estimatedVolume: estimatedVolume ? parseFloat(estimatedVolume as string) : undefined,
+        vehicleType: typedVehicleType,
+        limit: parseInt(limit as string),
+        page: parseInt(page as string)
+      });
+
+      const drivers = await driverService.discoverAvailableDrivers({
+        estimatedWeight: estimatedWeight ? parseFloat(estimatedWeight as string) : undefined,
+        estimatedVolume: estimatedVolume ? parseFloat(estimatedVolume as string) : undefined,
+        vehicleType: typedVehicleType,
+        limit: parseInt(limit as string),
+        page: parseInt(page as string)
+      });
+
+      logger.info(`✅ Discover drivers found ${drivers.length} drivers`);
+
+      res.json({
+        success: true,
+        data: drivers,
+        pagination: {
+          page: parseInt(page as string),
+          limit: parseInt(limit as string),
+          total: drivers.length,
+          hasNext: drivers.length === parseInt(limit as string)
+        }
+      });
+    } catch (error: any) {
+      logger.error('❌ Discover drivers error:', {
+        message: error.message,
+        stack: error.stack?.substring(0, 500),
+        query: req.query
+      });
+      next(error);
+    }
+  }
+
+  async findMatchingDrivers(req: Request, res: Response, next: NextFunction) {
+    const requestId = `match_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const startTime = Date.now();
+    
+    try {
+      const userType = req.user?.userType;
+      
+      const {
+        pickupAddress,
+        pickupLat,
+        pickupLng,
+        weight,
+        volume,
+        vehicleType,
+        urgency,
+        maxDistance
+      } = req.body;
+      
+      logger.info(`🚗 [${requestId}] Customer matching request received:`, {
+        userType,
+        pickupAddress: pickupAddress?.substring(0, 100),
+        weight,
+        volume,
+        vehicleType,
+        urgency,
+        maxDistance
+      });
+      
+      // Validate required fields
+      if (!pickupAddress || weight === undefined || volume === undefined) {
+        logger.warn(`❌ [${requestId}] Missing required fields`, {
+          hasPickupAddress: !!pickupAddress,
+          hasWeight: weight !== undefined,
+          hasVolume: volume !== undefined,
+          body: req.body
+        });
+        return res.status(400).json({ 
+          success: false,
+          error: 'Missing required fields: pickupAddress, weight, volume' 
+        });
+      }
+      
+      // Parse numeric values safely
+      const parsedWeight = parseFloat(weight as string);
+      const parsedVolume = parseFloat(volume as string);
+      
+      if (isNaN(parsedWeight) || isNaN(parsedVolume)) {
+        logger.warn(`❌ [${requestId}] Invalid numeric values`, {
+          weightValue: weight,
+          volumeValue: volume,
+          parsedWeight,
+          parsedVolume
+        });
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid numeric values for weight or volume'
+        });
+      }
+      
+      // Build order requirements
+      const orderRequirements = {
+        pickupAddress,
+        pickupCoords: pickupLat && pickupLng ? { 
+          lat: parseFloat(pickupLat as string), 
+          lng: parseFloat(pickupLng as string) 
+        } : undefined,
+        weight: parsedWeight,
+        volume: parsedVolume,
+        vehicleType: vehicleType as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck',
+        urgency: urgency as 'normal' | 'urgent' | 'express',
+        maxDistance: maxDistance ? parseFloat(maxDistance as string) : undefined
+      };
+      
+      logger.info(`📦 [${requestId}] Order requirements:`, orderRequirements);
+      
+      // Call matching service
+      let matchedDrivers;
+      try {
+        logger.info(`🔍 [${requestId}] Calling matching service...`);
+        matchedDrivers = await matchingService.findMatchingDrivers(orderRequirements);
+        logger.info(`✅ [${requestId}] Matching service completed: ${matchedDrivers.length} drivers found`);
+      } catch (matchingError: any) {
+        logger.error(`❌ [${requestId}] Matching service failed:`, {
+          message: matchingError.message,
+          stack: matchingError.stack?.substring(0, 500),
+          errorName: matchingError.name
+        });
+        
+        // Return a more helpful error message
+        let errorMessage = 'Failed to find matching drivers';
+        let statusCode = 500;
+        
+        if (matchingError.message.includes('database') || matchingError.message.includes('query')) {
+          errorMessage = 'Driver database service is temporarily unavailable';
+          statusCode = 503;
+        } else if (matchingError.message.includes('geocoding') || matchingError.message.includes('coordinates')) {
+          errorMessage = 'Location service is temporarily unavailable';
+          statusCode = 503;
+        }
+        
+        return res.status(statusCode).json({
+          success: false,
+          error: {
+            message: errorMessage,
+            details: process.env.NODE_ENV === 'development' ? matchingError.message : undefined
+          },
+          timestamp: new Date().toISOString(),
+          requestId
+        });
+      }
+      
+      // Analyze results
+      const totalDrivers = matchedDrivers.length;
+      const driversWithDistance = matchedDrivers.filter(d => d.distanceInfo).length;
+      const driversWithoutDistance = totalDrivers - driversWithDistance;
+      
+      // Prepare response
+      const response: any = {
+        success: true,
+        data: matchedDrivers,
+        count: totalDrivers,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          requestId,
+          processingTime: Date.now() - startTime,
+          matchingStats: {
+            total: totalDrivers,
+            top4Returned: Math.min(4, totalDrivers),
+            withDistanceInfo: driversWithDistance,
+            withoutDistanceInfo: driversWithoutDistance,
+            vehicleTypesIncluded: 'all'
+          },
+          note: 'Returning top 4 drivers across all vehicle types that can handle your order capacity',
+          filtersApplied: {
+            weight: orderRequirements.weight,
+            volume: orderRequirements.volume,
+            vehicleType: orderRequirements.vehicleType,
+            maxDistance: orderRequirements.maxDistance,
+            urgency: orderRequirements.urgency
+          }
+        }
+      };
+      
+      // Add warnings if needed
+      const warnings = [];
+      
+      if (driversWithoutDistance > 0) {
+        warnings.push(`${driversWithoutDistance} driver(s) have no distance information`);
+      }
+      
+      if (totalDrivers === 0) {
+        warnings.push('No drivers found matching your criteria');
+      }
+      
+      if (warnings.length > 0) {
+        response.warnings = warnings;
+      }
+      
+      // Log successful response
+      logger.info(`🎉 [${requestId}] Matching request completed successfully`, {
+        driversFound: totalDrivers,
+        withDistance: driversWithDistance,
+        warnings: warnings.length,
+        processingTime: Date.now() - startTime
+      });
+      
+      return res.json(response);
+      
+    } catch (error: any) {
+      // Catch any unexpected errors
+      logger.error(`💥 [${requestId}] Unexpected error in findMatchingDrivers:`, {
+        message: error.message,
+        stack: error.stack?.substring(0, 500),
+        body: req.body,
+        user: req.user,
+        processingTime: Date.now() - startTime
+      });
+      
+      return res.status(500).json({
+        success: false,
+        error: {
+          message: 'An unexpected error occurred while processing your request',
+          details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+          requestId
+        },
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  async getStats(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const stats = await driverService.getDriverStats(userId);
+      res.json({
+        success: true,
+        data: stats,
+      });
+    } catch (error: any) {
+      logger.error('Get stats error:', error);
+      next(error);
+    }
+  }
+
+  // Add this method to your DriverController class in driver.controller.ts
+  async uploadVehicleImage(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      const vehicleId = req.params.id;
+      
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+      
+      // Process the vehicle image (you'll need to update driverService for this)
+      const vehicle = await driverService.uploadVehicleImage(userId, vehicleId, req.file);
+      
+      res.json({
+        success: true,
+        data: vehicle,
+        message: 'Vehicle image uploaded successfully'
+      });
+    } catch (error: any) {
+      next(error);
+    }
+  }
+
+  async getVerificationStatus(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const verification = await driverService.checkVerificationStatus(userId);
+      res.json({
+        success: true,
+        data: verification,
+      });
+    } catch (error: any) {
+      logger.error('Get verification status error:', error);
+      next(error);
+    }
+  }
+
+  async recordMetrics(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.userId;
+      if (!userId) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      await driverService.recordMetrics(userId, req.body);
+      res.json({
+        success: true,
+        message: 'Metrics recorded successfully',
+      });
+    } catch (error: any) {
+      logger.error('Record metrics error:', error);
+      next(error);
+    }
+  }
+}
+
+export const driverController = new DriverController();
+```
+
+`index.ts`:
+
+```ts
+import dotenv from 'dotenv';
+dotenv.config(); // Load .env file
+import app from './app';
+import { connectDatabase } from './config/database';
+import { logger } from './utils/logger';
+
+const PORT = process.env.PORT || 3002;
+
+async function startServer() {
+  try {
+    console.log('🚀 Starting Driver Service...');
+    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+    console.log(`🗄️ Database URL: ${process.env.DATABASE_URL?.replace(/:[^:]*@/, ':****@')}`);
+    
+    // Connect to database
+    await connectDatabase();
+    console.log('✅ Database connected successfully');
+
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`🚗 Driver Service running on port ${PORT}`);
+      console.log(`📊 Health check: http://localhost:${PORT}/health`);
+      console.log(`📚 API Docs: http://localhost:${PORT}/api/docs`);
+    });
+  } catch (error: any) {
+    console.error('❌ Failed to start server:', error);
+    console.error('Error stack:', error.stack);
+    process.exit(1);
+  }
+}
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error);
+  console.error('Error stack:', error.stack);
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
+startServer();
+```
+
+`middleware\auth.middleware.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+import { logger } from '../utils/logger';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'd6b1cc1128085078faf5a1f9500ca843f31b7574969a0dfae1aa976d509cea2bdd7e316ae765f8b3cfdb09062b3453e9d0533eeb9c28cecd4817b2ef3228d044';
+
+export interface AuthRequest extends Request {
+  user?: {
+    userId: string;
+    userType: string;
+  };
+}
+
+export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const token = authHeader.split(' ')[1];
+    
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as {
+        userId: string;
+        userType: string;
+        type?: string;
+      };
+
+      // Check if it's an access token
+      if (decoded.type === 'refresh') {
+        return res.status(401).json({ error: 'Invalid token type' });
+      }
+
+      req.user = {
+        userId: decoded.userId,
+        userType: decoded.userType,
+      };
+
+      next();
+    } catch (error: any) {
+      if (error.name === 'TokenExpiredError') {
+        return res.status(401).json({ error: 'Token expired' });
+      }
+      if (error.name === 'JsonWebTokenError') {
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+      throw error;
+    }
+  } catch (error: any) {
+    logger.error('Authentication error:', error);
+    res.status(500).json({ error: 'Authentication failed' });
+  }
+};
+
+export const authorizeDriver = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (req.user.userType !== 'driver') {
+      return res.status(403).json({ error: 'Forbidden: Driver access only' });
+    }
+
+    next();
+  } catch (error: any) {
+    logger.error('Authorization error:', error);
+    res.status(500).json({ error: 'Authorization failed' });
+  }
+};
+
+export default { authenticate, authorizeDriver };
+```
+
+`middleware\error.middleware.ts`:
+
+```ts
+import { Request, Response, NextFunction } from 'express';
+import { logger } from '../utils/logger';
+
+export class AppError extends Error {
+  statusCode: number;
+  isOperational: boolean;
+
+  constructor(message: string, statusCode: number = 500, isOperational: boolean = true) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = isOperational;
+    
+    // Capture stack trace (works in V8 engines)
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
+  }
+}
+
+export const errorHandler = (
+  err: Error | AppError,
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  let statusCode = 500;
+  let message = 'Internal server error';
+  let isOperational = false;
+
+  if (err instanceof AppError) {
+    statusCode = err.statusCode;
+    message = err.message;
+    isOperational = err.isOperational;
+  } else if (err.name === 'ValidationError') {
+    statusCode = 400;
+    message = err.message;
+    isOperational = true;
+  } else if (err.name === 'UnauthorizedError' || err.name === 'JsonWebTokenError') {
+    statusCode = 401;
+    message = 'Invalid or expired token';
+    isOperational = true;
+  } else if (err.name === 'TokenExpiredError') {
+    statusCode = 401;
+    message = 'Token expired';
+    isOperational = true;
+  } else if (err.name === 'PrismaClientKnownRequestError') {
+    statusCode = 400;
+    message = 'Database error';
+    isOperational = true;
+  }
+
+  // Log error
+  if (!isOperational) {
+    logger.error('Non-operational error:', {
+      message: err.message,
+      stack: err.stack,
+      path: req.path,
+      method: req.method,
+      body: req.body,
+      params: req.params,
+      query: req.query,
+    });
+  } else {
+    logger.warn('Operational error:', {
+      message: err.message,
+      path: req.path,
+      method: req.method,
+    });
+  }
+
+  // Send response
+  res.status(statusCode).json({
+    success: false,
+    error: {
+      message,
+      ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    },
+  });
+};
+
+// 404 handler middleware
+export const notFoundHandler = (req: Request, res: Response, next: NextFunction) => {
+  const error = new AppError(`Cannot ${req.method} ${req.path}`, 404);
+  next(error);
+};
+
+// Async error wrapper for controllers
+export const asyncHandler = (fn: Function) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}; 
+```
+
+`middleware\upload.middleware.ts`:
+
+```ts
+import multer from 'multer';
+import path from 'path';
+import { Request } from 'express';
+import { logger } from '../utils/logger';
+
+// Configure storage
+const storage = multer.diskStorage({
+  destination: (
+    req: Request,
+    file: Express.Multer.File,
+    cb: (error: Error | null, destination: string) => void
+  ) => {
+    const uploadPath = path.join(process.cwd(), 'src', 'uploads');
+    cb(null, uploadPath);
+  },
+  filename: (
+    req: Request,
+    file: Express.Multer.File,
+    cb: (error: Error | null, filename: string) => void
+  ) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.originalname);
+    cb(null, file.fieldname + '-' + uniqueSuffix + ext);
+  },
+});
+
+// File filter
+const fileFilter = (
+  req: Request,
+  file: Express.Multer.File,
+  cb: multer.FileFilterCallback
+) => {
+  const allowedMimeTypes = [
+    'image/jpeg',
+    'image/jpg',
+    'image/png',
+    'image/gif',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ];
+
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`Invalid file type. Allowed types: ${allowedMimeTypes.join(', ')}`));
+  }
+};
+
+// Create multer instance
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB limit
+    files: 1, // Max 1 file per upload
+  },
+});
+
+// Error handling middleware for multer
+export const handleMulterError = (
+  err: any,
+  req: Request,
+  res: any,
+  next: any
+) => {
+  if (err instanceof multer.MulterError) {
+    let message = 'File upload error';
+
+    switch (err.code) {
+      case 'LIMIT_FILE_SIZE':
+        message = 'File size is too large. Maximum size is 5MB';
+        break;
+      case 'LIMIT_FILE_COUNT':
+        message = 'Too many files. Maximum 1 file allowed';
+        break;
+      case 'LIMIT_UNEXPECTED_FILE':
+        message = 'Unexpected file field';
+        break;
+      default:
+        message = `File upload error: ${err.message}`;
+    }
+
+    logger.error('Multer error:', err);
+    return res.status(400).json({
+      success: false,
+      error: {
+        message,
+        code: err.code,
+      },
+    });
+  }
+
+  if (err) {
+    logger.error('Upload error:', err);
+    return res.status(400).json({
+      success: false,
+      error: {
+        message: err.message || 'File upload failed',
+      },
+    });
+  }
+
+  next();
+};
+
+// Validate file presence middleware
+export const validateFilePresence = (fieldName: string) => {
+  return (req: Request, res: any, next: any) => {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          message: `No file uploaded. Please provide a ${fieldName}`,
+        },
+      });
+    }
+
+    // Validate file type based on field name
+    if (fieldName === 'profilePicture') {
+      const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+      if (!allowedImageTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            message: 'Invalid image format. Allowed formats: JPEG, JPG, PNG, GIF',
+          },
+        });
+      }
+    } else if (fieldName === 'document') {
+      const allowedDocTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+      ];
+      if (!allowedDocTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            message: 'Invalid document format. Allowed formats: PDF, DOC, DOCX, JPEG, JPG, PNG',
+          },
+        });
+      }
+    }
+
+    next();
+  };
+};
+
+// Middleware to check if user has upload permissions
+export const checkUploadPermission = (req: any, res: any, next: any) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: {
+        message: 'Unauthorized: Authentication required',
+      },
+    });
+  }
+
+  // Check if user is a driver
+  if (req.user.userType !== 'driver') {
+    return res.status(403).json({
+      success: false,
+      error: {
+        message: 'Forbidden: Only drivers can upload files',
+      },
+    });
+  }
+
+  next();
+};
+
+// Middleware to clean up uploaded files on error
+export const cleanupOnError = (req: Request, res: any, next: any) => {
+  const originalSend = res.send;
+
+  res.send = function (data: any) {
+    // If there's an error response and a file was uploaded, delete it
+    if (res.statusCode >= 400 && req.file) {
+      const fs = require('fs');
+      const path = require('path');
+
+      const filePath = path.join(process.cwd(), 'src', 'uploads', req.file.filename);
+      
+      fs.unlink(filePath, (err: any) => {
+        if (err) {
+          logger.error('Failed to cleanup file:', err);
+        } else {
+          logger.info(`Cleaned up file: ${req.file?.filename}`);
+        }
+      });
+    }
+
+    return originalSend.call(this, data);
+  };
+
+  next();
+};
+
+export { upload };
+```
+
+`middleware\validation.middleware.ts`:
+
+```ts
+// src/middleware/validation.middleware.ts
+import { Request, Response, NextFunction } from 'express';
+import Joi from 'joi';
+import { AppError } from './error.middleware';
+import { validationSchemas } from '../utils/validation'; // Import from utils
+
+// Remove the duplicate validationSchemas object and just export the existing one
+export { validationSchemas };
+
+// Keep the validate middleware function
+export const validate = (schema: Joi.ObjectSchema | Joi.ArraySchema) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const { error } = schema.validate(req.body, { abortEarly: false });
+
+    if (error) {
+      const errors = error.details.map((detail) => ({
+        field: detail.path.join('.'),
+        message: detail.message,
+      }));
+
+      return res.status(400).json({
+        success: false,
+        error: {
+          message: 'Validation failed',
+          details: errors,
+        },
+      });
+    }
+
+    next();
+  };
+};
+
+export default { validate, validationSchemas };
+```
+
+`models\index.ts`:
+
+```ts
+// src/models/index.ts
+// Re-export all types from types/index.ts for backward compatibility
+export * from '../types/index';
+```
+
+`repositories\document.repository.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { ensurePool } from '../config/database';
+import { v4 as uuidv4 } from 'uuid';
+import { Document } from '../types';
+
+export interface DocumentRecord {
+  id: string;
+  driver_id: string;
+  type: 'license' | 'insurance' | 'registration' | 'inspection' | 'background_check';
+  name: string;
+  file_name: string;
+  file_url: string;
+  file_size: number;
+  mime_type: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  upload_date: Date;
+  expiry_date?: Date;
+  rejection_reason?: string;
+  verified_by?: string;
+  verified_at?: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export class DocumentRepository {
+  private pool: mysql.Pool | null = null;
+
+  private async getPool(): Promise<mysql.Pool> {
+    if (!this.pool) {
+      this.pool = await ensurePool();
+    }
+    return this.pool;
+  }
+
+  private toDocument(record: DocumentRecord): Document {
+    return {
+      id: record.id,
+      driverId: record.driver_id,
+      type: record.type,
+      name: record.name,
+      fileName: record.file_name,
+      fileUrl: record.file_url,
+      fileSize: record.file_size,
+      mimeType: record.mime_type,
+      status: record.status,
+      uploadDate: record.upload_date,
+      expiryDate: record.expiry_date,
+      rejectionReason: record.rejection_reason,
+      verifiedBy: record.verified_by,
+      verifiedAt: record.verified_at,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at
+    };
+  }
+
+  async create(data: Omit<Document, 'id' | 'createdAt' | 'updatedAt'>): Promise<Document> {
+    const pool = await this.getPool();
+    const id = uuidv4();
+    const query = `
+      INSERT INTO documents (
+        id, driver_id, type, name, file_name, file_url, file_size,
+        mime_type, status, upload_date, expiry_date, rejection_reason,
+        verified_by, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      id,
+      data.driverId,
+      data.type,
+      data.name,
+      data.fileName,
+      data.fileUrl,
+      data.fileSize,
+      data.mimeType,
+      data.status || 'pending',
+      data.uploadDate || new Date(),
+      data.expiryDate || null,
+      data.rejectionReason || null,
+      data.verifiedBy || null,
+      data.verifiedAt || null
+    ];
+
+    await pool.execute(query, values);
+    return this.findById(id) as Promise<Document>;
+  }
+
+  async findById(id: string): Promise<Document | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM documents WHERE id = ? LIMIT 1';
+    const [rows] = await pool.execute(query, [id]);
+    const documents = rows as DocumentRecord[];
+
+    return documents.length > 0 ? this.toDocument(documents[0]) : null;
+  }
+
+  async findByDriverId(driverId: string): Promise<Document[]> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM documents WHERE driver_id = ? ORDER BY upload_date DESC';
+    const [rows] = await pool.execute(query, [driverId]);
+    const documents = rows as DocumentRecord[];
+
+    return documents.map(d => this.toDocument(d));
+  }
+
+  async updateStatus(id: string, status: string, verifiedBy?: string, rejectionReason?: string): Promise<Document | null> {
+    const pool = await this.getPool();
+    const updates: string[] = ['status = ?'];
+    const values: any[] = [status];
+
+    if (status === 'approved') {
+      updates.push('verified_by = ?', 'verified_at = NOW()');
+      values.push(verifiedBy);
+    } else if (status === 'rejected') {
+      updates.push('rejection_reason = ?');
+      values.push(rejectionReason);
+    }
+
+    updates.push('updated_at = NOW()');
+    values.push(id);
+
+    const query = `UPDATE documents SET ${updates.join(', ')} WHERE id = ?`;
+    await pool.execute(query, values);
+    
+    return this.findById(id);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const pool = await this.getPool();
+    const query = 'DELETE FROM documents WHERE id = ?';
+    const [result] = await pool.execute(query, [id]);
+    return (result as any).affectedRows > 0;
+  }
+
+  async getExpiringDocuments(daysBefore: number = 30): Promise<Document[]> {
+    const pool = await this.getPool();
+    const query = `
+      SELECT * FROM documents 
+      WHERE expiry_date <= DATE_ADD(NOW(), INTERVAL ? DAY) 
+        AND expiry_date > NOW() 
+        AND status = 'approved'
+    `;
+    const [rows] = await pool.execute(query, [daysBefore]);
+    const documents = rows as DocumentRecord[];
+
+    return documents.map(d => this.toDocument(d));
+  }
+
+  async getDocumentsByStatus(status: string): Promise<Document[]> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM documents WHERE status = ? ORDER BY upload_date DESC';
+    const [rows] = await pool.execute(query, [status]);
+    const documents = rows as DocumentRecord[];
+
+    return documents.map(d => this.toDocument(d));
+  }
+}
+
+let documentRepositoryInstance: DocumentRepository | null = null;
+
+export function getDocumentRepository(): DocumentRepository {
+  if (!documentRepositoryInstance) {
+    documentRepositoryInstance = new DocumentRepository();
+  }
+  return documentRepositoryInstance;
+}
+
+export const documentRepository = getDocumentRepository();
+```
+
+`repositories\driver.repository.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { ensurePool } from '../config/database';
+import { v4 as uuidv4 } from 'uuid';
+import { Driver, DriverAvailability } from '../types';
+
+export interface DriverRecord {
+  id: string;
+  user_id: string;
+  license_number?: string;
+  license_expiry?: Date;
+  insurance_number?: string;
+  insurance_expiry?: Date;
+  rating: number;
+  total_deliveries: number;
+  total_earnings: number;
+  completion_rate: number;
+  status: 'pending' | 'active' | 'suspended' | 'inactive';
+  verification_level: 'none' | 'basic' | 'verified' | 'premium';
+  onboarded_at?: Date;
+  is_online: boolean;
+  current_location?: string;
+  profile_completed: boolean;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export class DriverRepository {
+  private pool: mysql.Pool | null = null;
+
+  private async getPool(): Promise<mysql.Pool> {
+    if (!this.pool) {
+      this.pool = await ensurePool();
+    }
+    return this.pool;
+  }
+
+  private toDriver(record: DriverRecord): Driver {
+    return {
+      id: record.id,
+      userId: record.user_id,
+      licenseNumber: record.license_number,
+      licenseExpiry: record.license_expiry,
+      insuranceNumber: record.insurance_number,
+      insuranceExpiry: record.insurance_expiry,
+      rating: record.rating,
+      totalDeliveries: record.total_deliveries,
+      totalEarnings: parseFloat(record.total_earnings.toString()),
+      completionRate: record.completion_rate,
+      status: record.status,
+      verificationLevel: record.verification_level,
+      onboardedAt: record.onboarded_at,
+      isOnline: Boolean(record.is_online),
+      currentLocation: record.current_location,
+      profileCompleted: Boolean(record.profile_completed),
+      createdAt: record.created_at,
+      updatedAt: record.updated_at
+    };
+  }
+
+  async create(userId: string, data?: Partial<Driver>): Promise<Driver> {
+    const pool = await this.getPool();
+    const id = uuidv4();
+    const query = `
+      INSERT INTO drivers (
+        id, user_id, license_number, license_expiry, insurance_number, insurance_expiry,
+        rating, total_deliveries, total_earnings, completion_rate, status, verification_level,
+        onboarded_at, is_online, current_location, profile_completed
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      id,
+      userId,
+      data?.licenseNumber || null,
+      data?.licenseExpiry || null,
+      data?.insuranceNumber || null,
+      data?.insuranceExpiry || null,
+      data?.rating || 0.0,
+      data?.totalDeliveries || 0,
+      data?.totalEarnings || 0,
+      data?.completionRate || 0.0,
+      data?.status || 'pending',
+      data?.verificationLevel || 'none',
+      data?.onboardedAt || new Date(),
+      data?.isOnline || false,
+      data?.currentLocation || null,
+      data?.profileCompleted || false
+    ];
+
+    await pool.execute(query, values);
+    return this.findByUserId(userId) as Promise<Driver>;
+  }
+
+  async findByUserId(userId: string): Promise<Driver | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM drivers WHERE user_id = ? LIMIT 1';
+    const [rows] = await pool.execute(query, [userId]);
+    const drivers = rows as DriverRecord[];
+
+    return drivers.length > 0 ? this.toDriver(drivers[0]) : null;
+  }
+
+  async findById(id: string): Promise<Driver | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM drivers WHERE id = ? LIMIT 1';
+    const [rows] = await pool.execute(query, [id]);
+    const drivers = rows as DriverRecord[];
+
+    return drivers.length > 0 ? this.toDriver(drivers[0]) : null;
+  }
+
+  async update(userId: string, data: Partial<Omit<Driver, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>): Promise<Driver | null> {
+    const pool = await this.getPool();
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    const fieldMap: Record<string, string> = {
+      licenseNumber: 'license_number',
+      licenseExpiry: 'license_expiry',
+      insuranceNumber: 'insurance_number',
+      insuranceExpiry: 'insurance_expiry',
+      rating: 'rating',
+      totalDeliveries: 'total_deliveries',
+      totalEarnings: 'total_earnings',
+      completionRate: 'completion_rate',
+      status: 'status',
+      verificationLevel: 'verification_level',
+      onboardedAt: 'onboarded_at',
+      isOnline: 'is_online',
+      currentLocation: 'current_location',
+      profileCompleted: 'profile_completed'
+    };
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined) {
+        const dbKey = fieldMap[key] || key;
+        updates.push(`${dbKey} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (updates.length === 0) {
+      return this.findByUserId(userId);
+    }
+
+    updates.push('updated_at = NOW()');
+    values.push(userId);
+    
+    const query = `UPDATE drivers SET ${updates.join(', ')} WHERE user_id = ?`;
+    await pool.execute(query, values);
+    
+    return this.findByUserId(userId);
+  }
+
+  async updateStatus(userId: string, isOnline: boolean, location?: string): Promise<Driver | null> {
+    const pool = await this.getPool();
+    const query = `
+      UPDATE drivers 
+      SET is_online = ?, current_location = ?, updated_at = NOW() 
+      WHERE user_id = ?
+    `;
+    
+    await pool.execute(query, [isOnline, location, userId]);
+    return this.findByUserId(userId);
+  }
+
+  async deleteByUserId(userId: string): Promise<boolean> {
+    const pool = await this.getPool();
+    const query = 'DELETE FROM drivers WHERE user_id = ?';
+    const [result] = await pool.execute(query, [userId]);
+    return (result as any).affectedRows > 0;
+  }
+
+  async getAvailability(driverId: string): Promise<DriverAvailability[]> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM driver_availabilities WHERE driver_id = ? AND is_active = TRUE ORDER BY day_of_week ASC';
+    const [rows] = await pool.execute(query, [driverId]);
+    const availabilities = rows as any[];
+
+    return availabilities.map(row => ({
+      id: row.id,
+      driverId: row.driver_id,
+      dayOfWeek: row.day_of_week,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      isActive: Boolean(row.is_active),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+  }
+
+  async updateAvailability(driverId: string, availabilities: any[]): Promise<void> {
+    const pool = await this.getPool();
+    
+    // Delete existing availabilities
+    await pool.execute('DELETE FROM driver_availabilities WHERE driver_id = ?', [driverId]);
+
+    // Create new availabilities
+    for (const avail of availabilities) {
+      const query = `
+        INSERT INTO driver_availabilities (
+          id, driver_id, day_of_week, start_time, end_time, is_active
+        ) VALUES (UUID(), ?, ?, ?, ?, ?)
+      `;
+      
+      await pool.execute(query, [
+        driverId,
+        avail.dayOfWeek,
+        avail.startTime,
+        avail.endTime,
+        avail.isActive !== undefined ? avail.isActive : true
+      ]);
+    }
+  }
+}
+
+let driverRepositoryInstance: DriverRepository | null = null;
+
+export function getDriverRepository(): DriverRepository {
+  if (!driverRepositoryInstance) {
+    driverRepositoryInstance = new DriverRepository();
+  }
+  return driverRepositoryInstance;
+}
+
+export const driverRepository = getDriverRepository();
+```
+
+`repositories\driverMetrics.repository.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { ensurePool } from '../config/database';
+import { v4 as uuidv4 } from 'uuid';
+import { DriverMetrics } from '../types';
+
+export interface DriverMetricsRecord {
+  id: string;
+  driver_id: string;
+  date: Date;
+  deliveries_count: number;
+  successful_deliveries: number;
+  failed_deliveries: number;
+  total_earnings: number;
+  average_rating: number;
+  online_hours: number;
+  distance_traveled: number;
+  created_at: Date;
+}
+
+export class DriverMetricsRepository {
+  private pool: mysql.Pool | null = null;
+
+  private async getPool(): Promise<mysql.Pool> {
+    if (!this.pool) {
+      this.pool = await ensurePool();
+    }
+    return this.pool;
+  }
+
+  private toDriverMetrics(record: DriverMetricsRecord): DriverMetrics {
+    return {
+      id: record.id,
+      driverId: record.driver_id,
+      date: record.date,
+      deliveriesCount: record.deliveries_count,
+      successfulDeliveries: record.successful_deliveries,
+      failedDeliveries: record.failed_deliveries,
+      totalEarnings: parseFloat(record.total_earnings.toString()),
+      averageRating: record.average_rating,
+      onlineHours: record.online_hours,
+      distanceTraveled: record.distance_traveled,
+      createdAt: record.created_at
+    };
+  }
+
+  async create(data: Omit<DriverMetrics, 'id' | 'createdAt'>): Promise<DriverMetrics> {
+    const pool = await this.getPool();
+    const id = uuidv4();
+    const query = `
+      INSERT INTO driver_metrics (
+        id, driver_id, date, deliveries_count, successful_deliveries, 
+        failed_deliveries, total_earnings, average_rating, online_hours, distance_traveled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      id,
+      data.driverId,
+      data.date,
+      data.deliveriesCount || 0,
+      data.successfulDeliveries || 0,
+      data.failedDeliveries || 0,
+      data.totalEarnings || 0,
+      data.averageRating || 0.0,
+      data.onlineHours || 0.0,
+      data.distanceTraveled || 0.0
+    ];
+
+    await pool.execute(query, values);
+    return this.findById(id) as Promise<DriverMetrics>;
+  }
+
+  async findById(id: string): Promise<DriverMetrics | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM driver_metrics WHERE id = ? LIMIT 1';
+    const [rows] = await pool.execute(query, [id]);
+    const metrics = rows as DriverMetricsRecord[];
+
+    return metrics.length > 0 ? this.toDriverMetrics(metrics[0]) : null;
+  }
+
+  async findByDriverId(driverId: string, limit: number = 30): Promise<DriverMetrics[]> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM driver_metrics WHERE driver_id = ? ORDER BY date DESC LIMIT ?';
+    const [rows] = await pool.execute(query, [driverId, limit]);
+    const metrics = rows as DriverMetricsRecord[];
+
+    return metrics.map(m => this.toDriverMetrics(m));
+  }
+
+  async getDailyMetrics(driverId: string, date: Date): Promise<DriverMetrics | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM driver_metrics WHERE driver_id = ? AND DATE(date) = DATE(?) LIMIT 1';
+    const [rows] = await pool.execute(query, [driverId, date]);
+    const metrics = rows as DriverMetricsRecord[];
+
+    return metrics.length > 0 ? this.toDriverMetrics(metrics[0]) : null;
+  }
+
+  async updateMetrics(id: string, data: Partial<Omit<DriverMetrics, 'id' | 'driverId' | 'date' | 'createdAt'>>): Promise<DriverMetrics | null> {
+    const pool = await this.getPool();
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    const fieldMap: Record<string, string> = {
+      deliveriesCount: 'deliveries_count',
+      successfulDeliveries: 'successful_deliveries',
+      failedDeliveries: 'failed_deliveries',
+      totalEarnings: 'total_earnings',
+      averageRating: 'average_rating',
+      onlineHours: 'online_hours',
+      distanceTraveled: 'distance_traveled'
+    };
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined) {
+        const dbKey = fieldMap[key] || key;
+        updates.push(`${dbKey} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (updates.length === 0) {
+      return this.findById(id);
+    }
+
+    values.push(id);
+    const query = `UPDATE driver_metrics SET ${updates.join(', ')} WHERE id = ?`;
+    await pool.execute(query, values);
+    
+    return this.findById(id);
+  }
+
+  async getStats(driverId: string): Promise<{
+    totalDeliveries: number;
+    successfulDeliveries: number;
+    totalEarnings: number;
+    averageRating: number;
+    totalOnlineHours: number;
+    totalDistance: number;
+  }> {
+    const pool = await this.getPool();
+    const query = `
+      SELECT 
+        SUM(deliveries_count) as total_deliveries,
+        SUM(successful_deliveries) as successful_deliveries,
+        SUM(total_earnings) as total_earnings,
+        AVG(average_rating) as average_rating,
+        SUM(online_hours) as total_online_hours,
+        SUM(distance_traveled) as total_distance
+      FROM driver_metrics 
+      WHERE driver_id = ?
+    `;
+    
+    const [rows] = await pool.execute(query, [driverId]);
+    const stats = rows as any[];
+    
+    return {
+      totalDeliveries: stats[0]?.total_deliveries || 0,
+      successfulDeliveries: stats[0]?.successful_deliveries || 0,
+      totalEarnings: parseFloat(stats[0]?.total_earnings?.toString() || '0'),
+      averageRating: parseFloat(stats[0]?.average_rating?.toString() || '0'),
+      totalOnlineHours: parseFloat(stats[0]?.total_online_hours?.toString() || '0'),
+      totalDistance: parseFloat(stats[0]?.total_distance?.toString() || '0')
+    };
+  }
+}
+
+let driverMetricsRepositoryInstance: DriverMetricsRepository | null = null;
+
+export function getDriverMetricsRepository(): DriverMetricsRepository {
+  if (!driverMetricsRepositoryInstance) {
+    driverMetricsRepositoryInstance = new DriverMetricsRepository();
+  }
+  return driverMetricsRepositoryInstance;
+}
+
+export const driverMetricsRepository = getDriverMetricsRepository();
+```
+
+`repositories\index.ts`:
+
+```ts
+export { getDriverRepository, driverRepository, DriverRepository } from './driver.repository';
+export { getVehicleRepository, vehicleRepository, VehicleRepository } from './vehicle.repository';
+export { getDocumentRepository, documentRepository, DocumentRepository } from './document.repository';
+export { getProfilePictureRepository, profilePictureRepository, ProfilePictureRepository } from './profilePicture.repository';
+export { getDriverMetricsRepository, driverMetricsRepository, DriverMetricsRepository } from './driverMetrics.repository';
+```
+
+`repositories\profilePicture.repository.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { ensurePool } from '../config/database';
+import { v4 as uuidv4 } from 'uuid';
+import { ProfilePicture } from '../types';
+
+export interface ProfilePictureRecord {
+  id: string;
+  driver_id: string;
+  original_url: string;
+  thumbnail_url?: string;
+  small_url?: string;
+  medium_url?: string;
+  mime_type: string;
+  size: number;
+  width?: number;
+  height?: number;
+  is_active: boolean;
+  uploaded_at: Date;
+  updated_at: Date;
+}
+
+export class ProfilePictureRepository {
+  private pool: mysql.Pool | null = null;
+
+  private async getPool(): Promise<mysql.Pool> {
+    if (!this.pool) {
+      this.pool = await ensurePool();
+    }
+    return this.pool;
+  }
+
+  private toProfilePicture(record: ProfilePictureRecord): ProfilePicture {
+    return {
+      id: record.id,
+      driverId: record.driver_id,
+      originalUrl: record.original_url,
+      thumbnailUrl: record.thumbnail_url,
+      smallUrl: record.small_url,
+      mediumUrl: record.medium_url,
+      mimeType: record.mime_type,
+      size: record.size,
+      width: record.width,
+      height: record.height,
+      isActive: Boolean(record.is_active),
+      uploadedAt: record.uploaded_at,
+      updatedAt: record.updated_at
+    };
+  }
+
+  async create(data: Omit<ProfilePicture, 'id' | 'uploadedAt' | 'updatedAt'>): Promise<ProfilePicture> {
+    const pool = await this.getPool();
+    const id = uuidv4();
+    const query = `
+      INSERT INTO profile_pictures (
+        id, driver_id, original_url, thumbnail_url, small_url, medium_url,
+        mime_type, size, width, height, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      id,
+      data.driverId,
+      data.originalUrl,
+      data.thumbnailUrl || null,
+      data.smallUrl || null,
+      data.mediumUrl || null,
+      data.mimeType,
+      data.size,
+      data.width || null,
+      data.height || null,
+      data.isActive !== undefined ? data.isActive : true
+    ];
+
+    await pool.execute(query, values);
+    return this.findByDriverId(data.driverId) as Promise<ProfilePicture>;
+  }
+
+  async findByDriverId(driverId: string): Promise<ProfilePicture | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM profile_pictures WHERE driver_id = ? AND is_active = TRUE LIMIT 1';
+    const [rows] = await pool.execute(query, [driverId]);
+    const pictures = rows as ProfilePictureRecord[];
+
+    return pictures.length > 0 ? this.toProfilePicture(pictures[0]) : null;
+  }
+
+  async findById(id: string): Promise<ProfilePicture | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM profile_pictures WHERE id = ? LIMIT 1';
+    const [rows] = await pool.execute(query, [id]);
+    const pictures = rows as ProfilePictureRecord[];
+
+    return pictures.length > 0 ? this.toProfilePicture(pictures[0]) : null;
+  }
+
+  async update(driverId: string, data: Partial<Omit<ProfilePicture, 'id' | 'driverId' | 'uploadedAt' | 'updatedAt'>>): Promise<ProfilePicture | null> {
+    const pool = await this.getPool();
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    const fieldMap: Record<string, string> = {
+      originalUrl: 'original_url',
+      thumbnailUrl: 'thumbnail_url',
+      smallUrl: 'small_url',
+      mediumUrl: 'medium_url',
+      mimeType: 'mime_type',
+      size: 'size',
+      width: 'width',
+      height: 'height',
+      isActive: 'is_active'
+    };
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined) {
+        const dbKey = fieldMap[key] || key;
+        updates.push(`${dbKey} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (updates.length === 0) {
+      return this.findByDriverId(driverId);
+    }
+
+    updates.push('updated_at = NOW()');
+    values.push(driverId);
+    
+    const query = `UPDATE profile_pictures SET ${updates.join(', ')} WHERE driver_id = ?`;
+    await pool.execute(query, values);
+    
+    return this.findByDriverId(driverId);
+  }
+
+  async deleteByDriverId(driverId: string): Promise<boolean> {
+    const pool = await this.getPool();
+    const query = 'DELETE FROM profile_pictures WHERE driver_id = ?';
+    const [result] = await pool.execute(query, [driverId]);
+    return (result as any).affectedRows > 0;
+  }
+
+  async deactivateByDriverId(driverId: string): Promise<boolean> {
+    const pool = await this.getPool();
+    const query = 'UPDATE profile_pictures SET is_active = FALSE WHERE driver_id = ?';
+    const [result] = await pool.execute(query, [driverId]);
+    return (result as any).affectedRows > 0;
+  }
+}
+
+let profilePictureRepositoryInstance: ProfilePictureRepository | null = null;
+
+export function getProfilePictureRepository(): ProfilePictureRepository {
+  if (!profilePictureRepositoryInstance) {
+    profilePictureRepositoryInstance = new ProfilePictureRepository();
+  }
+  return profilePictureRepositoryInstance;
+}
+
+export const profilePictureRepository = getProfilePictureRepository();
+```
+
+`repositories\vehicle.repository.ts`:
+
+```ts
+import mysql from 'mysql2/promise';
+import { ensurePool } from '../config/database';
+import { v4 as uuidv4 } from 'uuid';
+import { Vehicle } from '../types';
+
+export interface VehicleRecord {
+  id: string;
+  driver_id: string;
+  type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  license_plate: string;
+  max_weight: number;
+  max_volume: number;
+  image_url?: string;
+  is_active: boolean;
+  current_status: 'available' | 'in_use' | 'maintenance';
+  insurance_info?: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export class VehicleRepository {
+  private pool: mysql.Pool | null = null;
+
+  private async getPool(): Promise<mysql.Pool> {
+    if (!this.pool) {
+      this.pool = await ensurePool();
+    }
+    return this.pool;
+  }
+
+  private toVehicle(record: VehicleRecord): Vehicle {
+    return {
+      id: record.id,
+      driverId: record.driver_id,
+      type: record.type,
+      make: record.make,
+      model: record.model,
+      year: record.year,
+      color: record.color,
+      licensePlate: record.license_plate,
+      maxWeight: parseFloat(record.max_weight.toString()),
+      maxVolume: parseFloat(record.max_volume.toString()),
+      imageUrl: record.image_url,
+      isActive: Boolean(record.is_active),
+      currentStatus: record.current_status,
+      insuranceInfo: record.insurance_info,
+      createdAt: record.created_at,
+      updatedAt: record.updated_at
+    };
+  }
+
+  async create(data: Omit<Vehicle, 'id' | 'createdAt' | 'updatedAt'>): Promise<Vehicle> {
+    const pool = await this.getPool();
+    const id = uuidv4();
+    const query = `
+      INSERT INTO vehicles (
+        id, driver_id, type, make, model, year, color, license_plate,
+        max_weight, max_volume, image_url, is_active, current_status, insurance_info
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const values = [
+      id,
+      data.driverId,
+      data.type,
+      data.make,
+      data.model,
+      data.year,
+      data.color,
+      data.licensePlate,
+      data.maxWeight,
+      data.maxVolume,
+      data.imageUrl || null,
+      data.isActive !== undefined ? data.isActive : true,
+      data.currentStatus || 'available',
+      data.insuranceInfo || null
+    ];
+
+    await pool.execute(query, values);
+    return this.findById(id) as Promise<Vehicle>;
+  }
+
+  async findById(id: string): Promise<Vehicle | null> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM vehicles WHERE id = ? LIMIT 1';
+    const [rows] = await pool.execute(query, [id]);
+    const vehicles = rows as VehicleRecord[];
+
+    return vehicles.length > 0 ? this.toVehicle(vehicles[0]) : null;
+  }
+
+  async findByDriverId(driverId: string): Promise<Vehicle[]> {
+    const pool = await this.getPool();
+    const query = 'SELECT * FROM vehicles WHERE driver_id = ? AND is_active = true ORDER BY created_at DESC';
+    const [rows] = await pool.execute(query, [driverId]);
+    const vehicles = rows as VehicleRecord[];
+
+    return vehicles.map(v => this.toVehicle(v));
+  }
+
+  async update(id: string, data: Partial<Omit<Vehicle, 'id' | 'driverId' | 'createdAt' | 'updatedAt'>>): Promise<Vehicle | null> {
+    const pool = await this.getPool();
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    const fieldMap: Record<string, string> = {
+      type: 'type',
+      make: 'make',
+      model: 'model',
+      year: 'year',
+      color: 'color',
+      licensePlate: 'license_plate',
+      maxWeight: 'max_weight',
+      maxVolume: 'max_volume',
+      imageUrl: 'image_url', 
+      isActive: 'is_active',
+      currentStatus: 'current_status',
+      insuranceInfo: 'insurance_info'
+    };
+
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined) {
+        const dbKey = fieldMap[key] || key;
+        updates.push(`${dbKey} = ?`);
+        values.push(value);
+      }
+    });
+
+    if (updates.length === 0) {
+      return this.findById(id);
+    }
+
+    updates.push('updated_at = NOW()');
+    values.push(id);
+    
+    const query = `UPDATE vehicles SET ${updates.join(', ')} WHERE id = ?`;
+    await pool.execute(query, values);
+    
+    return this.findById(id);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const pool = await this.getPool();
+    const query = 'DELETE FROM vehicles WHERE id = ?';
+    const [result] = await pool.execute(query, [id]);
+    return (result as any).affectedRows > 0;
+  }
+}
+
+let vehicleRepositoryInstance: VehicleRepository | null = null;
+
+export function getVehicleRepository(): VehicleRepository {
+  if (!vehicleRepositoryInstance) {
+    vehicleRepositoryInstance = new VehicleRepository();
+  }
+  return vehicleRepositoryInstance;
+}
+
+export const vehicleRepository = getVehicleRepository();
+```
+
+`routes\driver.routes.ts`:
+
+```ts
+import express from 'express';
+import { driverController } from '../controllers/driver.controller';
+import { authenticate, authorizeDriver } from '../middleware/auth.middleware';
+import { validate, validationSchemas } from '../middleware/validation.middleware';
+import { upload } from '../services/upload.service';
+
+const router = express.Router();
+
+router.post(
+  '/drivers/match',
+  authenticate,
+  validate(validationSchemas.matchDrivers),
+  driverController.findMatchingDrivers
+);
+
+// Route for simple discovery (without distance calculations)
+router.get(
+  '/drivers/available',
+  authenticate,
+  validate(validationSchemas.discoverDrivers),
+  driverController.discoverDrivers
+);
+
+// Apply authentication to all routes
+router.use(authenticate);
+router.use(authorizeDriver);
+
+// Profile routes
+router.post(
+  '/drivers/profile',
+  validate(validationSchemas.driver.create),
+  driverController.createProfile
+);
+router.get('/drivers/profile', driverController.getProfile);
+router.put(
+  '/drivers/profile',
+  validate(validationSchemas.driver.update),
+  driverController.updateProfile
+);
+
+// Profile picture routes
+router.post(
+  '/drivers/profile-picture',
+  upload.single('profilePicture'),
+  driverController.uploadProfilePicture
+);
+router.get('/drivers/profile-picture', driverController.getProfile);
+router.delete('/drivers/profile-picture', driverController.deleteProfilePicture);
+
+// Vehicle routes
+router.post(
+  '/drivers/vehicles',
+  validate(validationSchemas.vehicle.create),
+  driverController.addVehicle
+);
+router.get('/drivers/vehicles', driverController.getVehicles);
+router.put(
+  '/drivers/vehicles/:id',
+  validate(validationSchemas.vehicle.update),
+  driverController.updateVehicle
+);
+router.delete('/drivers/vehicles/:id', driverController.deleteVehicle);
+
+router.post(
+  '/drivers/vehicles/:id/image',
+  upload.single('image'),
+  driverController.uploadVehicleImage
+);
+
+// Document routes
+router.post(
+  '/drivers/documents',
+  upload.single('document'),
+  validate(validationSchemas.document.create),
+  driverController.uploadDocument
+);
+router.get('/drivers/documents', driverController.getDocuments);
+router.patch(
+  '/drivers/documents/:id/status',
+  validate(validationSchemas.document.update),
+  driverController.updateDocumentStatus
+);
+
+// Availability routes
+router.put(
+  '/drivers/availability',
+  validate(validationSchemas.availability),
+  driverController.updateAvailability
+);
+router.get('/drivers/availability', driverController.getAvailability);
+
+// Status routes
+router.patch(
+  '/drivers/status',
+  validate(validationSchemas.status),
+  driverController.updateStatus
+);
+
+router.get(
+  '/drivers/discover',
+  authenticate, // Still need authentication
+  validate(validationSchemas.discoverDrivers),
+  driverController.discoverDrivers
+);
+
+// Stats and verification routes
+router.get('/drivers/stats', driverController.getStats);
+router.get('/drivers/verification-status', driverController.getVerificationStatus);
+router.post('/drivers/metrics', driverController.recordMetrics);
+
+export default router;
+```
+
+`schema.sql`:
+
+```sql
+-- sql/schema.sql
+-- This only creates the driver-specific tables
+-- Users are managed by user-service
+
+-- Make sure we use the same database as user-service
+-- Or create a separate driver database if preferred
+
+-- Option 1: Use same database as user-service (shared)
+-- USE your_user_service_database_name;
+
+-- Option 2: Create separate database for drivers
+CREATE DATABASE IF NOT EXISTS driver_service;
+USE driver_service;
+
+-- Drivers table - References user_id from user-service
+CREATE TABLE IF NOT EXISTS drivers (
+  id VARCHAR(255) PRIMARY KEY DEFAULT (UUID()),
+  user_id VARCHAR(255) NOT NULL COMMENT 'References users.id from user-service',
+  license_number VARCHAR(50),
+  license_expiry DATETIME,
+  insurance_number VARCHAR(50),
+  insurance_expiry DATETIME,
+  rating FLOAT DEFAULT 0.0,
+  total_deliveries INT DEFAULT 0,
+  total_earnings DECIMAL(10, 2) DEFAULT 0,
+  completion_rate FLOAT DEFAULT 0.0,
+  status ENUM('pending', 'active', 'suspended', 'inactive') DEFAULT 'pending',
+  verification_level ENUM('none', 'basic', 'verified', 'premium') DEFAULT 'none',
+  onboarded_at DATETIME,
+  is_online BOOLEAN DEFAULT FALSE,
+  current_location VARCHAR(255),
+  profile_completed BOOLEAN DEFAULT FALSE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  INDEX idx_user_id (user_id),
+  INDEX idx_status (status),
+  INDEX idx_verification_level (verification_level),
+  INDEX idx_is_online (is_online),
+  UNIQUE KEY unique_user_id (user_id) -- One driver profile per user
+);
+
+-- Profile pictures table
+CREATE TABLE IF NOT EXISTS profile_pictures (
+  id VARCHAR(255) PRIMARY KEY DEFAULT (UUID()),
+  driver_id VARCHAR(255) NOT NULL,
+  original_url VARCHAR(500) NOT NULL,
+  thumbnail_url VARCHAR(500),
+  small_url VARCHAR(500),
+  medium_url VARCHAR(500),
+  mime_type VARCHAR(50) NOT NULL,
+  size INT NOT NULL,
+  width INT,
+  height INT,
+  is_active BOOLEAN DEFAULT TRUE,
+  uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE CASCADE,
+  INDEX idx_driver_id (driver_id),
+  UNIQUE KEY unique_driver_id (driver_id) -- One profile picture per driver
+);
+
+-- Vehicles table
+CREATE TABLE IF NOT EXISTS vehicles (
+  id VARCHAR(255) PRIMARY KEY DEFAULT (UUID()),
+  driver_id VARCHAR(255) NOT NULL,
+  type ENUM('motorbike', 'small_van', 'medium_truck', 'large_truck') NOT NULL,
+  make VARCHAR(50) NOT NULL,
+  model VARCHAR(50) NOT NULL,
+  year INT NOT NULL,
+  color VARCHAR(30) NOT NULL,
+  license_plate VARCHAR(20) UNIQUE NOT NULL,
+  max_weight DECIMAL(10, 2) NOT NULL,
+  max_volume DECIMAL(10, 2) NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  current_status ENUM('available', 'in_use', 'maintenance') DEFAULT 'available',
+  insurance_info TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE CASCADE,
+  INDEX idx_driver_id (driver_id),
+  INDEX idx_license_plate (license_plate),
+  INDEX idx_type (type),
+  INDEX idx_current_status (current_status)
+);
+
+-- Documents table
+CREATE TABLE IF NOT EXISTS documents (
+  id VARCHAR(255) PRIMARY KEY DEFAULT (UUID()),
+  driver_id VARCHAR(255) NOT NULL,
+  type ENUM('license', 'insurance', 'registration', 'inspection', 'background_check') NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_url VARCHAR(500) NOT NULL,
+  file_size INT NOT NULL,
+  mime_type VARCHAR(50) NOT NULL,
+  status ENUM('pending', 'approved', 'rejected', 'expired') DEFAULT 'pending',
+  upload_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+  expiry_date DATETIME,
+  rejection_reason TEXT,
+  verified_by VARCHAR(255),
+  verified_at DATETIME,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE CASCADE,
+  INDEX idx_driver_id (driver_id),
+  INDEX idx_type (type),
+  INDEX idx_status (status),
+  INDEX idx_expiry_date (expiry_date)
+);
+
+-- Driver availability table
+CREATE TABLE IF NOT EXISTS driver_availabilities (
+  id VARCHAR(255) PRIMARY KEY DEFAULT (UUID()),
+  driver_id VARCHAR(255) NOT NULL,
+  day_of_week INT NOT NULL COMMENT '0=Sunday, 1=Monday, ..., 6=Saturday',
+  start_time VARCHAR(5) NOT NULL COMMENT 'HH:MM format',
+  end_time VARCHAR(5) NOT NULL COMMENT 'HH:MM format',
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  UNIQUE KEY unique_driver_day (driver_id, day_of_week),
+  FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE CASCADE,
+  INDEX idx_driver_id (driver_id),
+  INDEX idx_day_of_week (day_of_week)
+);
+
+-- Driver metrics table
+CREATE TABLE IF NOT EXISTS driver_metrics (
+  id VARCHAR(255) PRIMARY KEY DEFAULT (UUID()),
+  driver_id VARCHAR(255) NOT NULL,
+  date DATE NOT NULL,
+  deliveries_count INT DEFAULT 0,
+  successful_deliveries INT DEFAULT 0,
+  failed_deliveries INT DEFAULT 0,
+  total_earnings DECIMAL(10, 2) DEFAULT 0,
+  average_rating FLOAT DEFAULT 0.0,
+  online_hours FLOAT DEFAULT 0.0,
+  distance_traveled FLOAT DEFAULT 0.0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE CASCADE,
+  INDEX idx_driver_date (driver_id, date),
+  UNIQUE KEY unique_driver_date (driver_id, date) -- One record per driver per day
+);
+```
+
+`services\document.service.ts`:
+
+```ts
+import { logger } from '../utils/logger';
+import { uploadService } from './upload.service';
+import { getDocumentRepository } from '../repositories';
+
+export class DocumentService {
+  private documentRepository = getDocumentRepository();
+
+  async getExpiringDocuments(daysBefore: number = 30): Promise<any[]> {
+    return await this.documentRepository.getExpiringDocuments(daysBefore);
+  }
+
+  async bulkUpdateDocumentStatus(
+    documentIds: string[],
+    status: string,
+    verifiedBy?: string,
+    rejectionReason?: string
+  ): Promise<{ count: number }> {
+    let updatedCount = 0;
+    for (const docId of documentIds) {
+      try {
+        await this.documentRepository.updateStatus(docId, status, verifiedBy, rejectionReason);
+        updatedCount++;
+      } catch (error) {
+        logger.error(`Failed to update document ${docId}:`, error);
+      }
+    }
+    
+    logger.info(`Bulk updated ${updatedCount} documents to status: ${status}`);
+    return { count: updatedCount };
+  }
+
+  async deleteDocument(documentId: string): Promise<boolean> {
+    try {
+      const document = await this.documentRepository.findById(documentId);
+      if (!document) {
+        throw new Error('Document not found');
+      }
+
+      const filePath = document.fileUrl.replace(`${process.env.APP_URL}/uploads/`, '');
+      await uploadService.deleteFile(filePath);
+
+      const result = await this.documentRepository.delete(documentId);
+      logger.info(`Deleted document: ${documentId}`);
+      return result;
+    } catch (error: any) {
+      logger.error(`Failed to delete document ${documentId}:`, error);
+      return false;
+    }
+  }
+
+  async getDocumentStatistics(): Promise<any> {
+    const [pending, approved, rejected, expired] = await Promise.all([
+      this.documentRepository.getDocumentsByStatus('pending'),
+      this.documentRepository.getDocumentsByStatus('approved'),
+      this.documentRepository.getDocumentsByStatus('rejected'),
+      this.documentRepository.getDocumentsByStatus('expired')
+    ]);
+
+    const total = pending.length + approved.length + rejected.length + expired.length;
+    const expiring = await this.getExpiringDocuments(30);
+
+    return {
+      total,
+      byStatus: {
+        pending: pending.length,
+        approved: approved.length,
+        rejected: rejected.length,
+        expired: expired.length
+      },
+      expiringCount: expiring.length
+    };
+  }
+}
+
+export const documentService = new DocumentService();
+```
+
+`services\driver.service.ts`:
+
+```ts
+import axios from 'axios';
+import { httpClient } from '../utils/httpClient';
+import { uploadService } from './upload.service';
+import { logger } from '../utils/logger';
+import { getDriverRepository } from '../repositories/driver.repository';
+import { getVehicleRepository } from '../repositories/vehicle.repository';
+import { getDocumentRepository } from '../repositories/document.repository';
+import { getProfilePictureRepository } from '../repositories/profilePicture.repository';
+import { getDriverMetricsRepository } from '../repositories/driverMetrics.repository';
+import path from 'path';
+import fs from 'fs';
+import sharp from 'sharp';
+
+const UPLOAD_PATH = process.env.UPLOAD_PATH || path.join(process.cwd(), 'src', 'uploads');
+
+class UserServiceClient {
+  private baseUrl: string;
+
+  constructor() {
+    this.baseUrl = process.env.USER_SERVICE_URL || 'http://user-service:3001';
+  }
+
+  async getUserById(userId: string) {
+    const requestId = `user_fetch_${Date.now()}`;
+    
+    try {
+      logger.info(`🔍 [${requestId}] Fetching user ${userId} from ${this.baseUrl}/api/users/${userId}`);
+      
+      const response = await axios.get(`${this.baseUrl}/api/users/${userId}`, {
+        timeout: 5000
+      });
+      
+      // CRITICAL FIX: Your user service returns data directly, not wrapped in { data: ... }
+      if (!response.data) {
+        logger.warn(`⚠️ [${requestId}] User service returned empty response for ${userId}`);
+        return null;
+      }
+      
+      // Use response.data directly since that's what your user service returns
+      const userData = response.data;
+      
+      logger.info(`✅ [${requestId}] User ${userId} fetched successfully:`, {
+        firstName: userData.firstName,
+        lastName: userData.lastName,
+        phone: userData.phone,
+        email: userData.email,
+        fullResponse: userData  // Log full response for debugging
+      });
+      
+      return userData;
+      
+    } catch (error: any) {
+      logger.error(`❌ [${requestId}] FAILED to fetch user ${userId}:`, {
+        message: error.message,
+        status: error.response?.status,
+        responseData: error.response?.data,
+        url: `${this.baseUrl}/api/users/${userId}`
+      });
+      
+      return null;
+    }
+  }
+}
+
+const userServiceClient = new UserServiceClient();
+
+import {
+  Driver,
+  Vehicle,
+  Document,
+  ProfilePicture,
+  VehicleRequest,
+  DocumentRequest,
+  AvailabilityRequest,
+  CreateDriverRequest,
+  UpdateDriverRequest,
+  StatusRequest,
+   DriverMetrics
+} from '../types';
+import { ensurePool } from '../config/database';
+
+export interface CreateDriverProfileInput {
+  licenseNumber?: string;
+  licenseExpiry?: Date;
+  insuranceNumber?: string;
+  insuranceExpiry?: Date;
+}
+
+export interface DiscoverDriversParams {
+  pickupLocation?: string;
+  pickupLat?: number;
+  pickupLng?: number;
+  estimatedWeight?: number;
+  estimatedVolume?: number;
+  vehicleType?: string;
+  radius?: number;
+  limit?: number;
+  page?: number;
+}
+
+export interface DriverInfo {
+  driverId: string;
+  userId: string;
+  rating: number;
+  totalDeliveries: number;
+  completionRate: number;
+  verificationLevel: string;
+  isOnline: boolean;
+  currentLocation: string;
+  profileCompleted: boolean;
+  user?: { 
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string;
+    profileImageUrl?: string;
+  };
+  vehicles: Array<{
+    id: string;
+    type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    licensePlate: string;
+    maxWeight: number;
+    maxVolume: number;
+    imageUrl?: string;
+    status: string;
+  }>;
+}
+
+export class DriverService {
+  private driverRepository = getDriverRepository();
+  private vehicleRepository = getVehicleRepository();
+  private documentRepository = getDocumentRepository();
+  private profilePictureRepository = getProfilePictureRepository();
+  private driverMetricsRepository = getDriverMetricsRepository();
+
+  async validateAndGetUser(userId: string): Promise<any> {
+    try {
+      const isValid = await httpClient.validateUser(userId);
+      if (!isValid) {
+        throw new Error('User not found or inactive');
+      }
+
+      // If validation passes, assume user is OK
+      return { id: userId, userType: 'driver' };
+
+    } catch (error: any) {
+      logger.error('User validation failed:', error.message);
+      throw new Error('User not found or inactive');
+    }
+  }
+
+  async createDriverProfile(userId: string, data: CreateDriverRequest): Promise<Driver> {
+    await this.validateAndGetUser(userId);
+
+    const existingDriver = await this.driverRepository.findByUserId(userId);
+    if (existingDriver) {
+      throw new Error('Driver profile already exists');
+    }
+
+    const driver = await this.driverRepository.create(userId, {
+      licenseNumber: data.licenseNumber,
+      licenseExpiry: data.licenseExpiry ? new Date(data.licenseExpiry) : undefined,
+      insuranceNumber: data.insuranceNumber,
+      insuranceExpiry: data.insuranceExpiry ? new Date(data.insuranceExpiry) : undefined,
+      status: 'pending',
+      verificationLevel: 'none',
+      onboardedAt: new Date(),
+    });
+
+    logger.info(`Created driver profile for user: ${userId}`);
+    return driver;
+  }
+
+  async getDriverProfile(userId: string): Promise<any> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const userInfo = await httpClient.getUser(userId);
+    const [vehicles, documents, profilePicture, availability] = await Promise.all([
+      this.vehicleRepository.findByDriverId(driver.id),
+      this.documentRepository.findByDriverId(driver.id),
+      this.profilePictureRepository.findByDriverId(driver.id),
+      this.driverRepository.getAvailability(driver.id)
+    ]);
+
+    return {
+      ...driver,
+      user: {
+        id: userInfo.id,
+        email: userInfo.email,
+        firstName: userInfo.firstName,
+        lastName: userInfo.lastName,
+        phone: userInfo.phone,
+      },
+      vehicles,
+      documents,
+      profilePicture,
+      availability
+    };
+  }
+
+  // In your discoverAvailableDrivers method, update it to include user information:
+  async discoverAvailableDrivers(params: {
+  estimatedWeight?: number;
+  estimatedVolume?: number;
+  vehicleType?: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  limit?: number;
+  page?: number;
+}): Promise<DriverInfo[]> {
+  const requestId = `discover_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  const startTime = Date.now();
+
+  try {
+    logger.info(`🔍 [${requestId}] Starting REAL driver discovery with params:`, params);
+
+    const pool = await ensurePool();
+
+    const baseQuery = `
+      SELECT 
+        d.id as driver_id,
+        d.user_id,
+        d.rating,
+        d.total_deliveries,
+        d.completion_rate,
+        d.verification_level,
+        d.is_online,
+        d.current_location,
+        d.profile_completed,
+        
+        v.id as vehicle_id,
+        v.type as vehicle_type,
+        v.make,
+        v.model,
+        v.year,
+        v.color,
+        v.license_plate,
+        v.max_weight,
+        v.max_volume,
+        v.image_url,
+        v.current_status
+      FROM drivers d
+      LEFT JOIN vehicles v ON d.id = v.driver_id 
+      WHERE d.status = 'active' 
+        AND d.is_online = 1 
+        AND d.verification_level IN ('verified', 'premium') 
+        AND v.current_status = 'available'
+    `;
+
+    try {
+      logger.info(`💾 [${requestId}] Executing database query...`);
+      const [allRows] = await pool.execute(baseQuery);
+      const allDrivers = allRows as any[];
+
+      logger.info(`✅ [${requestId}] Database query found ${allDrivers.length} total drivers`);
+
+      if (allDrivers.length === 0) {
+        logger.warn(`⚠️ [${requestId}] No drivers found in database`);
+        return [];
+      }
+
+      // Log the raw database data
+      logger.debug(`📊 [${requestId}] Raw database data sample:`, allDrivers.slice(0, 2).map(row => ({
+        driver_id: row.driver_id,
+        user_id: row.user_id,
+        vehicle_type: row.vehicle_type,
+        current_location: row.current_location
+      })));
+
+      // Apply filters
+      let filteredDrivers = allDrivers;
+
+      if (params.vehicleType) {
+        logger.info(`ℹ️ [${requestId}] Vehicle type filter requested: ${params.vehicleType}, but will include all vehicle types that meet capacity`);
+        // Don't filter by vehicle type - just log it
+      }
+
+      if (params.estimatedWeight !== undefined) {
+        filteredDrivers = filteredDrivers.filter(driver => {
+          const maxWeight = parseFloat(driver.max_weight || 0);
+          return maxWeight >= params.estimatedWeight!;
+        });
+        logger.info(`⚖️ [${requestId}] After weight filter: ${filteredDrivers.length} drivers`);
+      }
+
+      if (params.estimatedVolume !== undefined) {
+        filteredDrivers = filteredDrivers.filter(driver => {
+          const maxVolume = parseFloat(driver.max_volume || 0);
+          return maxVolume >= params.estimatedVolume!;
+        });
+        logger.info(`📦 [${requestId}] After volume filter: ${filteredDrivers.length} drivers`);
+      }
+
+      // Apply pagination
+      const limit = params.limit || 20;
+      const page = params.page || 1;
+      const offset = (page - 1) * limit;
+      const paginatedDrivers = filteredDrivers.slice(offset, offset + limit);
+
+      logger.info(`📄 [${requestId}] After pagination: ${paginatedDrivers.length} drivers (limit: ${limit}, page: ${page})`);
+
+      if (paginatedDrivers.length === 0) {
+        logger.warn(`⚠️ [${requestId}] No drivers match all filters`);
+        return [];
+      }
+
+      // Process drivers with user data fetching
+      logger.info(`👥 [${requestId}] Fetching user data for ${paginatedDrivers.length} drivers...`);
+      
+      const driverInfos: DriverInfo[] = [];
+      
+      // Process each driver row
+      for (const row of paginatedDrivers) {
+        try {
+          // DECLARE userData at the top so we can use it later
+          let userData: any = null;
+          let userFetchError: string | null = null;
+          
+          // Fetch user data for this driver
+          if (row.user_id) {
+            try {
+              logger.debug(`📞 [${requestId}] Fetching user data for userId: ${row.user_id}`);
+              
+              // TRY TO FETCH FROM USER SERVICE
+              userData = await userServiceClient.getUserById(row.user_id);
+              
+              if (userData) {
+                logger.info(`✅ [${requestId}] SUCCESS: User data fetched for ${row.user_id}`, {
+                  firstName: userData.firstName,
+                  lastName: userData.lastName,
+                  phone: userData.phone,
+                  email: userData.email
+                });
+              } else {
+                logger.warn(`⚠️ [${requestId}] User service returned null for userId: ${row.user_id}`);
+                userFetchError = 'User service returned null';
+              }
+            } catch (userError: any) {
+              logger.error(`❌ [${requestId}] FAILED to fetch user ${row.user_id}:`, {
+                message: userError.message,
+                stack: userError.stack?.substring(0, 200),
+                url: `http://user-service:3001/api/users/${row.user_id}`
+              });
+              userFetchError = userError.message;
+            }
+          } else {
+            logger.warn(`⚠️ [${requestId}] Driver ${row.driver_id} has no user_id`);
+          }
+          
+          // Create user info object - USE REAL DATA IF AVAILABLE
+          const userInfo = userData ? {
+            id: row.user_id,
+            firstName: userData.firstName || 'Unknown',
+            lastName: userData.lastName || 'User',
+            email: userData.email || '',
+            phone: userData.phone || '',
+            profileImageUrl: userData.profileImage || userData.profileImageUrl || undefined
+          } : {
+            id: row.user_id || '',
+            firstName: 'Driver',
+            lastName: row.user_id ? `#${row.user_id.substring(0, 4)}` : 'Unknown',
+            email: '',
+            phone: '',
+            profileImageUrl: undefined
+          };
+          
+          // Get vehicle type
+          const vehicleType = row.vehicle_type as 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck' || 'motorbike';
+          
+          // Create vehicle object with real data
+          const vehicle = {
+            id: row.vehicle_id || '',
+            type: vehicleType,
+            make: row.make || 'Unknown',
+            model: row.model || 'Unknown',
+            year: parseInt(row.year) || new Date().getFullYear(),
+            color: row.color || 'Unknown',
+            licensePlate: row.license_plate || 'UNKNOWN',
+            maxWeight: parseFloat(row.max_weight) || 0,
+            maxVolume: parseFloat(row.max_volume) || 0,
+            imageUrl: row.image_url || undefined,
+            status: row.current_status || 'available'
+          };
+          
+          // Parse numeric values safely
+          const rating = parseFloat(row.rating);
+          const totalDeliveries = parseInt(row.total_deliveries);
+          const completionRate = parseFloat(row.completion_rate);
+          
+          // Create driver info with REAL data
+          const driverInfo: DriverInfo = {
+            driverId: row.driver_id,
+            userId: row.user_id || '',
+            rating: isNaN(rating) ? 0 : rating,
+            totalDeliveries: isNaN(totalDeliveries) ? 0 : totalDeliveries,
+            completionRate: isNaN(completionRate) ? 0 : completionRate,
+            verificationLevel: row.verification_level || 'verified',
+            isOnline: Boolean(row.is_online),
+            currentLocation: row.current_location || 'Location not specified',
+            profileCompleted: Boolean(row.profile_completed),
+            user: userInfo,  // This should have real data if userData was fetched
+            vehicles: [vehicle]
+          };
+          
+          driverInfos.push(driverInfo);
+          
+          // Log driver processing status
+          if (userData) {
+            logger.debug(`✅ [${requestId}] Driver ${row.driver_id} processed WITH real user data:`, {
+              name: `${userData.firstName} ${userData.lastName}`,
+              phone: userData.phone,
+              email: userData.email
+            });
+          } else {
+            logger.debug(`⚠️ [${requestId}] Driver ${row.driver_id} processed WITHOUT real user data (using fallback)`, {
+              fallbackName: `${userInfo.firstName} ${userInfo.lastName}`,
+              userFetchError
+            });
+          }
+          
+        } catch (driverError: any) {
+          logger.error(`❌ [${requestId}] Error processing driver row ${row.driver_id}:`, {
+            message: driverError.message,
+            errorName: driverError.name
+          });
+          continue;
+        }
+      }
+      
+      if (driverInfos.length === 0) {
+        logger.warn(`⚠️ [${requestId}] No drivers could be processed after user data fetching`);
+        return [];
+      }
+      
+      // Log summary
+      const driversWithRealUserData = driverInfos.filter(d => d.user && d.user.firstName !== 'Driver' && d.user.lastName !== `#${d.userId.substring(0, 4)}`);
+      
+      logger.info(`✅ [${requestId}] Processed ${driverInfos.length} drivers`, {
+        withRealUserData: driversWithRealUserData.length,
+        withFallbackUserData: driverInfos.length - driversWithRealUserData.length,
+        sampleDrivers: driverInfos.slice(0, 2).map(d => ({
+          driverId: d.driverId,
+          userId: d.userId,
+          name: `${d.user?.firstName} ${d.user?.lastName}`,
+          phone: d.user?.phone,
+          email: d.user?.email,
+          hasRealData: d.user?.firstName !== 'Driver'
+        }))
+      });
+      
+      return driverInfos;
+      
+    } catch (queryError: any) {
+      logger.error(`❌ [${requestId}] Database query failed:`, {
+        message: queryError.message,
+        errorCode: queryError.code,
+        sqlMessage: queryError.sqlMessage
+      });
+      
+      // Minimal fallback
+      const fallbackDriver: DriverInfo = {
+        driverId: 'fallback_driver',
+        userId: 'fallback_user',
+        rating: 0,
+        totalDeliveries: 0,
+        completionRate: 0,
+        verificationLevel: 'verified',
+        isOnline: true,
+        currentLocation: 'Service unavailable',
+        profileCompleted: false,
+        user: {
+          id: 'fallback_user',
+          firstName: 'Fallback',
+          lastName: 'Driver',
+          email: '',
+          phone: '',
+          profileImageUrl: undefined
+        },
+        vehicles: [{
+          id: 'fallback_vehicle',
+          type: 'motorbike' as const,
+          make: 'Unknown',
+          model: 'Unknown',
+          year: new Date().getFullYear(),
+          color: 'Black',
+          licensePlate: 'UNKNOWN',
+          maxWeight: 25,
+          maxVolume: 1,
+          imageUrl: undefined,
+          status: 'available'
+        }]
+      };
+      
+      return [fallbackDriver];
+    }
+    
+  } catch (error: any) {
+    logger.error(`💥 [${requestId}] Error in discoverAvailableDrivers:`, {
+      message: error.message,
+      stack: error.stack?.substring(0, 300),
+      processingTime: Date.now() - startTime
+    });
+    
+    return [];
+  }
+}
+
+  async updateDriverProfile(userId: string, data: UpdateDriverRequest): Promise<Driver | null> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const updateData: any = {};
+    if (data.licenseNumber !== undefined) updateData.licenseNumber = data.licenseNumber;
+    if (data.licenseExpiry !== undefined) updateData.licenseExpiry = new Date(data.licenseExpiry);
+    if (data.insuranceNumber !== undefined) updateData.insuranceNumber = data.insuranceNumber;
+    if (data.insuranceExpiry !== undefined) updateData.insuranceExpiry = new Date(data.insuranceExpiry);
+    if (data.currentLocation !== undefined) updateData.currentLocation = data.currentLocation;
+    updateData.profileCompleted = true;
+
+    const updatedDriver = await this.driverRepository.update(userId, updateData);
+    logger.info(`Updated driver profile for user: ${userId}`);
+    return updatedDriver;
+  }
+
+  async uploadProfilePicture(userId: string, file: Express.Multer.File): Promise<ProfilePicture> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+  // 🔥 CRITICAL FIX: Delete existing profile picture FIRST
+  const existingPicture = await this.profilePictureRepository.findByDriverId(driver.id);
+  if (existingPicture) {
+    // Delete physical files
+    const filesToDelete = [
+      existingPicture.originalUrl.replace(`${process.env.APP_URL}/uploads/`, ''),
+      existingPicture.thumbnailUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+      existingPicture.smallUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+      existingPicture.mediumUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+    ].filter(Boolean) as string[];
+
+    for (const filePath of filesToDelete) {
+      await uploadService.deleteFile(filePath);
+    }
+
+    // Delete from DB
+    await this.profilePictureRepository.deleteByDriverId(driver.id);
+  }
+
+  // Now process and save new picture
+  const processed = await uploadService.processProfilePicture(file.path, userId);
+  const profilePicture = await this.profilePictureRepository.create({
+    driverId: driver.id,
+    originalUrl: uploadService.getFileUrl(processed.processedFiles.original),
+    thumbnailUrl: processed.processedFiles.thumbnail ? uploadService.getFileUrl(processed.processedFiles.thumbnail) : undefined,
+    smallUrl: processed.processedFiles.small ? uploadService.getFileUrl(processed.processedFiles.small) : undefined,
+    mediumUrl: processed.processedFiles.medium ? uploadService.getFileUrl(processed.processedFiles.medium) : undefined,
+    mimeType: file.mimetype,
+    size: processed.metadata.size,
+    width: processed.metadata.width,
+    height: processed.metadata.height,
+    isActive: true
+  });
+
+  logger.info(`Uploaded profile picture for driver: ${userId}`);
+  return profilePicture;
+}
+
+  async deleteProfilePicture(userId: string): Promise<void> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const picture = await this.profilePictureRepository.findByDriverId(driver.id);
+    if (!picture) {
+      throw new Error('Profile picture not found');
+    }
+
+    const filesToDelete = [
+      picture.originalUrl.replace(`${process.env.APP_URL}/uploads/`, ''),
+      picture.thumbnailUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+      picture.smallUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+      picture.mediumUrl?.replace(`${process.env.APP_URL}/uploads/`, ''),
+    ].filter(Boolean) as string[];
+
+    for (const filePath of filesToDelete) {
+      await uploadService.deleteFile(filePath);
+    }
+
+    await this.profilePictureRepository.deleteByDriverId(driver.id);
+    logger.info(`Deleted profile picture for driver: ${userId}`);
+  }
+
+  async addVehicle(userId: string, data: VehicleRequest): Promise<Vehicle> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const vehicle = await this.vehicleRepository.create({
+      driverId: driver.id,
+      type: data.type,
+      make: data.make,
+      model: data.model,
+      year: data.year,
+      color: data.color,
+      licensePlate: data.licensePlate,
+      maxWeight: data.maxWeight,
+      maxVolume: data.maxVolume,
+      imageUrl: data.imageUrl,
+      insuranceInfo: data.insuranceInfo,
+      isActive: true,
+      currentStatus: 'available'
+    });
+
+    logger.info(`Added vehicle for driver: ${userId}`);
+    return vehicle;
+  }
+
+  async getVehicles(userId: string): Promise<Vehicle[]> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    return await this.vehicleRepository.findByDriverId(driver.id);
+  }
+
+  // Add this method to your DriverService class
+  async uploadVehicleImage(userId: string, vehicleId: string, file: Express.Multer.File): Promise<Vehicle> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const vehicle = await this.vehicleRepository.findById(vehicleId);
+    if (!vehicle || vehicle.driverId !== driver.id) {
+      throw new Error('Vehicle not found or unauthorized');
+    }
+
+    // Process the vehicle image
+    const imageUrl = await this.processVehicleImage(file, userId, vehicleId);
+
+    // Update vehicle with image URL
+    const updatedVehicle = await this.vehicleRepository.update(vehicleId, { 
+      imageUrl: imageUrl 
+    });
+
+    if (!updatedVehicle) {
+      throw new Error('Failed to update vehicle image');
+    }
+
+    logger.info(`Uploaded image for vehicle ${vehicleId} for driver: ${userId}`);
+    return updatedVehicle;
+  }
+
+  private async processVehicleImage(file: Express.Multer.File, userId: string, vehicleId: string): Promise<string> {
+    // Create vehicle-specific upload directory
+    const uploadDir = path.join(UPLOAD_PATH, 'vehicles', userId);
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Generate unique filename
+    const uniqueName = `${vehicleId}_${Date.now()}${path.extname(file.originalname)}`;
+    const filePath = path.join(uploadDir, uniqueName);
+
+    // Move the uploaded file
+    await fs.promises.copyFile(file.path, filePath);
+
+    // Optional: Process image (resize, optimize, etc.)
+    if (file.mimetype.startsWith('image/')) {
+      try {
+        await sharp(filePath)
+          .resize(800, 600, { fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toFile(filePath);
+      } catch (error) {
+        // Type the error properly
+        if (error instanceof Error) {
+          logger.warn(`Could not process vehicle image: ${error.message}`);
+        } else {
+          logger.warn(`Could not process vehicle image: ${String(error)}`);
+        }
+      }
+    }
+
+    // Return the URL
+    return `${process.env.APP_URL || 'http://localhost:3002'}/uploads/vehicles/${userId}/${uniqueName}`;
+  }
+
+  async updateVehicle(userId: string, vehicleId: string, data: Partial<VehicleRequest>): Promise<Vehicle> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const vehicle = await this.vehicleRepository.findById(vehicleId);
+    if (!vehicle || vehicle.driverId !== driver.id) {
+      throw new Error('Vehicle not found');
+    }
+
+    const updatedVehicle = await this.vehicleRepository.update(vehicleId, data);
+    if (!updatedVehicle) {
+      throw new Error('Failed to update vehicle');
+    }
+
+    logger.info(`Updated vehicle ${vehicleId} for driver: ${userId}`);
+    return updatedVehicle;
+  }
+
+  async deleteVehicle(userId: string, vehicleId: string): Promise<boolean> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const vehicle = await this.vehicleRepository.findById(vehicleId);
+    if (!vehicle || vehicle.driverId !== driver.id) {
+      throw new Error('Vehicle not found');
+    }
+
+    const result = await this.vehicleRepository.delete(vehicleId);
+    logger.info(`Deleted vehicle ${vehicleId} for driver: ${userId}`);
+    return result;
+  }
+
+  // In the addDocument method, add uploadDate:
+  async addDocument(userId: string, data: DocumentRequest & { file: Express.Multer.File }): Promise<Document> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+  
+    // Fix: Convert string expiryDate back to Date and add uploadDate
+    const expiryDate = data.expiryDate ? new Date(data.expiryDate) : undefined;
+  
+    const documentData = {
+      driverId: driver.id,
+      type: data.type,
+      name: data.name || data.file.originalname,
+      fileName: data.file.filename,
+      fileUrl: uploadService.getFileUrl(`${userId}/${data.file.filename}`),
+      fileSize: data.file.size,
+      mimeType: data.file.mimetype,
+      expiryDate: expiryDate,
+      uploadDate: new Date(), // Add this
+      status: 'pending' as const
+    };
+  
+    const document = await this.documentRepository.create(documentData);
+    logger.info(`Added document for driver: ${userId}`);
+    return document;
+  }
+
+  async getDocuments(userId: string): Promise<Document[]> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    return await this.documentRepository.findByDriverId(driver.id);
+  }
+
+  async updateDocumentStatus(
+    documentId: string,
+    status: string,
+    verifiedBy?: string,
+    rejectionReason?: string
+  ): Promise<Document> {
+    const updatedDocument = await this.documentRepository.updateStatus(documentId, status, verifiedBy, rejectionReason);
+    if (!updatedDocument) {
+      throw new Error('Document not found');
+    }
+
+    logger.info(`Updated document ${documentId} status to: ${status}`);
+    return updatedDocument;
+  }
+
+  async updateAvailability(userId: string, availabilityData: AvailabilityRequest[]): Promise<any[]> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    await this.driverRepository.updateAvailability(driver.id, availabilityData);
+
+    const availabilities = availabilityData.map(avail => ({
+      driverId: driver.id,
+      dayOfWeek: avail.dayOfWeek,
+      startTime: avail.startTime,
+      endTime: avail.endTime,
+      isActive: avail.isActive !== undefined ? avail.isActive : true
+    }));
+
+    logger.info(`Updated availability for driver: ${userId}`);
+    return availabilities;
+  }
+
+  async getAvailability(userId: string): Promise<any[]> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    return await this.driverRepository.getAvailability(driver.id);
+  }
+
+  async updateDriverStatus(userId: string, isOnline: boolean, location?: string): Promise<Driver | null> {
+    const updatedDriver = await this.driverRepository.updateStatus(userId, isOnline, location);
+    if (!updatedDriver) {
+      throw new Error('Driver profile not found');
+    }
+
+    logger.info(`Updated driver status for ${userId}: online=${isOnline}`);
+    return updatedDriver;
+  }
+
+  async getDriverStats(userId: string): Promise<any> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const metrics = await this.driverMetricsRepository.findByDriverId(driver.id, 30);
+    const totalMetrics = metrics.reduce(
+      (acc, metric) => ({
+        deliveriesCount: acc.deliveriesCount + metric.deliveriesCount,
+        successfulDeliveries: acc.successfulDeliveries + metric.successfulDeliveries,
+        totalEarnings: acc.totalEarnings + metric.totalEarnings,
+        onlineHours: acc.onlineHours + metric.onlineHours,
+        distanceTraveled: acc.distanceTraveled + metric.distanceTraveled,
+      }),
+      {
+        deliveriesCount: 0,
+        successfulDeliveries: 0,
+        totalEarnings: 0,
+        onlineHours: 0,
+        distanceTraveled: 0,
+      }
+    );
+
+    const completionRate = totalMetrics.deliveriesCount > 0
+      ? (totalMetrics.successfulDeliveries / totalMetrics.deliveriesCount) * 100
+      : 0;
+
+    return {
+      driverId: driver.id,
+      userId: driver.userId,
+      rating: driver.rating,
+      totalDeliveries: totalMetrics.deliveriesCount,
+      successfulDeliveries: totalMetrics.successfulDeliveries,
+      completionRate: parseFloat(completionRate.toFixed(2)),
+      totalEarnings: totalMetrics.totalEarnings,
+      onlineHours: parseFloat(totalMetrics.onlineHours.toFixed(2)),
+      distanceTraveled: parseFloat(totalMetrics.distanceTraveled.toFixed(2)),
+      isOnline: driver.isOnline,
+      status: driver.status,
+      verificationLevel: driver.verificationLevel,
+    };
+  }
+
+  async checkVerificationStatus(userId: string): Promise<any> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const documents = await this.documentRepository.findByDriverId(driver.id);
+    const requiredDocuments = ['license', 'insurance', 'registration'];
+    const approvedDocs = documents.filter((doc: Document) => doc.status === 'approved');
+    const expiredDocs = documents.filter((doc: Document) => doc.status === 'expired');
+
+    const hasAllRequired = requiredDocuments.every((type) => 
+      approvedDocs.some((doc: Document) => doc.type === type)
+    );
+
+    const canDrive = hasAllRequired && expiredDocs.length === 0 && driver.status === 'active';
+
+    let verificationLevel = 'none';
+    if (hasAllRequired) {
+      verificationLevel = 'verified';
+      if (approvedDocs.length > requiredDocuments.length) {
+        verificationLevel = 'premium';
+      }
+    } else if (approvedDocs.length > 0) {
+      verificationLevel = 'basic';
+    }
+
+    return {
+      canDrive,
+      verificationLevel,
+      status: driver.status,
+      approvedDocuments: approvedDocs.length,
+      expiredDocuments: expiredDocs.length,
+      missingDocuments: requiredDocuments.filter((type) => 
+        !approvedDocs.some((doc: Document) => doc.type === type)
+      ),
+      details: {
+        approved: approvedDocs.map((doc: Document) => ({ 
+          type: doc.type, 
+          name: doc.name, 
+          expiryDate: doc.expiryDate 
+        })),
+        expired: expiredDocs.map((doc: Document) => ({ 
+          type: doc.type, 
+          name: doc.name, 
+          expiryDate: doc.expiryDate 
+        })),
+      },
+    };
+  }
+
+  async recordMetrics(userId: string, metrics: Partial<Omit<DriverMetrics, 'id' | 'driverId' | 'date' | 'createdAt'>>): Promise<void> {
+    const driver = await this.driverRepository.findByUserId(userId);
+    if (!driver) {
+      throw new Error('Driver profile not found');
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const existingMetrics = await this.driverMetricsRepository.getDailyMetrics(driver.id, today);
+    
+    if (existingMetrics) {
+      await this.driverMetricsRepository.updateMetrics(existingMetrics.id, metrics);
+    } else {
+      await this.driverMetricsRepository.create({
+        driverId: driver.id,
+        date: today,
+        deliveriesCount: metrics.deliveriesCount || 0,
+        successfulDeliveries: metrics.successfulDeliveries || 0,
+        failedDeliveries: metrics.failedDeliveries || 0,
+        totalEarnings: metrics.totalEarnings || 0,
+        averageRating: metrics.averageRating || 0.0,
+        onlineHours: metrics.onlineHours || 0.0,
+        distanceTraveled: metrics.distanceTraveled || 0.0
+      });
+    }
+  }
+}
+
+export const driverService = new DriverService();
+```
+
+`services\location.service.ts`:
+
+```ts
+import axios from 'axios';
+import { logger } from '../utils/logger';
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+export interface DistanceMatrixResponse {
+  distance: {
+    text: string;  // e.g., "1.2 km"
+    value: number; // in meters
+  };
+  duration: {
+    text: string;  // e.g., "15 mins"
+    value: number; // in seconds
+  };
+  status: string;
+}
+
+export class LocationService {
+  private distanceMatrixApiKey: string;
+
+  constructor() {
+    this.distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
+      "NFLqNsgalupmIuzDS6zKuprvodMgjdaGAxBtGYNpOT9TUwnCnC4Z9Do6T2drMT4Y";
+  }
+
+  /**
+   * Get distance and duration between two addresses using DistanceMatrix.ai
+   */
+  async getDistanceAndTime(
+    origin: string, 
+    destination: string,
+    mode: string = 'driving'
+  ): Promise<DistanceMatrixResponse | null> {
+    try {
+      logger.info(`📍 Getting distance from "${origin}" to "${destination}"`);
+      
+      const response = await axios.get('https://api.distancematrix.ai/maps/api/distancematrix/json', {
+        params: {
+          origins: origin,
+          destinations: destination,
+          mode: mode,
+          key: this.distanceMatrixApiKey
+        },
+        timeout: 10000
+      });
+
+      logger.info(`DistanceMatrix.ai response status: ${response.data.status}`);
+      
+      if (response.data.status === 'OK' && 
+          response.data.rows && 
+          response.data.rows[0] && 
+          response.data.rows[0].elements && 
+          response.data.rows[0].elements[0] &&
+          response.data.rows[0].elements[0].status === 'OK') {
+        
+        const element = response.data.rows[0].elements[0];
+        logger.info(`✅ Distance: ${element.distance.text}, Duration: ${element.duration.text}`);
+        
+        return {
+          distance: element.distance,
+          duration: element.duration,
+          status: 'OK'
+        };
+      } else {
+        const errorStatus = response.data.rows?.[0]?.elements?.[0]?.status || response.data.status;
+        logger.warn(`❌ Distance matrix failed: ${errorStatus}`);
+        return null;
+      }
+    } catch (error: any) {
+      logger.error('❌ Distance matrix error:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Calculate distance between coordinates using haversine formula
+   */
+  async calculateDistanceBetweenCoordinates(
+    originCoords: Coordinates,
+    destinationCoords: Coordinates
+  ): Promise<number> {
+    const R = 6371; // Earth's radius in kilometers
+    const lat1 = originCoords.lat * Math.PI / 180;
+    const lat2 = destinationCoords.lat * Math.PI / 180;
+    const deltaLat = (destinationCoords.lat - originCoords.lat) * Math.PI / 180;
+    const deltaLon = (destinationCoords.lng - originCoords.lng) * Math.PI / 180;
+
+    const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+              Math.cos(lat1) * Math.cos(lat2) *
+              Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+    
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distanceKm = R * c;
+
+    logger.info(`📍 Coordinate distance: ${distanceKm.toFixed(2)} km`);
+    
+    return distanceKm;
+  }
+
+  /**
+   * Estimate travel time based on distance and mode
+   */
+  estimateTravelTime(distanceKm: number, mode: string = 'driving'): number {
+    let averageSpeedKmph = 30; // Default for driving in city
+    
+    switch (mode) {
+      case 'walking':
+        averageSpeedKmph = 5;
+        break;
+      case 'bicycling':
+        averageSpeedKmph = 15;
+        break;
+      case 'transit':
+        averageSpeedKmph = 20;
+        break;
+      case 'driving':
+      default:
+        averageSpeedKmph = 30;
+    }
+
+    const timeHours = distanceKm / averageSpeedKmph;
+    const timeMinutes = timeHours * 60;
+    
+    logger.info(`⏱️ Estimated travel time: ${Math.ceil(timeMinutes)} minutes (${mode} at ${averageSpeedKmph} km/h)`);
+    
+    return timeMinutes;
+  }
+
+  /**
+   * Format distance for display
+   */
+  formatDistance(distanceMeters: number): string {
+    if (distanceMeters < 1000) {
+      return `${Math.round(distanceMeters)} m`;
+    } else {
+      return `${(distanceMeters / 1000).toFixed(1)} km`;
+    }
+  }
+
+  /**
+   * Format duration for display
+   */
+  formatDuration(seconds: number): string {
+    const minutes = Math.ceil(seconds / 60);
+    if (minutes < 60) {
+      return `${minutes} mins`;
+    } else {
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      if (remainingMinutes === 0) {
+        return `${hours} hour${hours > 1 ? 's' : ''}`;
+      } else {
+        return `${hours}h ${remainingMinutes}m`;
+      }
+    }
+  }
+}
+
+export const locationService = new LocationService();
+```
+
+`services\matching.service.ts`:
+
+```ts
+import { logger } from '../utils/logger';
+import { driverService } from './driver.service';
+import { locationService } from './location.service';
+import { geocodeAddress, isValidCoordinates } from '../utils/geocoding.util';
+
+export interface OrderRequirements {
+  pickupAddress: string;
+  pickupCoords?: { lat: number; lng: number };
+  weight: number;
+  volume: number;
+  vehicleType?: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  urgency?: 'normal' | 'urgent' | 'express';
+  maxDistance?: number; // in km
+}
+
+export interface MatchedDriver {
+  driverId: string;
+  userId: string;
+  rating: number;
+  totalDeliveries: number;
+  completionRate: number;
+  verificationLevel: string;
+  isOnline: boolean;
+  currentLocation: string;
+  profileCompleted: boolean;
+  user: {
+    firstName: string;
+    lastName: string;
+    phone: string;
+  };
+  vehicles: Array<{
+    id: string;
+    type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+    make: string;
+    model: string;
+    year: number;
+    color: string;
+    licensePlate: string;
+    maxWeight: number;
+    maxVolume: number;
+    imageUrl?: string;
+    status: string;
+  }>;
+  distanceInfo?: {
+    distance: { text: string; value: number }; // meters
+    duration: { text: string; value: number }; // seconds
+  };
+  matchScore: number;
+  suitability: 'excellent' | 'good' | 'fair' | 'poor';
+  estimatedArrival: string;
+  geocodingStatus: 'success' | 'fallback' | 'failed';
+}
+
+export class MatchingService {
+  
+  async findMatchingDrivers(order: OrderRequirements): Promise<MatchedDriver[]> {
+    const requestStartTime = Date.now();
+    const matchingId = `match_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    
+    try {
+      logger.info(`🚗 [${matchingId}] ===== STARTING MATCHING PROCESS =====`);
+      logger.info(`📦 [${matchingId}] Order requirements:`, {
+        weight: order.weight,
+        volume: order.volume,
+        vehicleType: order.vehicleType,
+        urgency: order.urgency,
+        maxDistance: order.maxDistance,
+        pickupAddress: order.pickupAddress.substring(0, 100) + '...'
+      });
+      
+      // STEP 1: Get available drivers
+      logger.info(`🔍 [${matchingId}] Step 1: Finding drivers with suitable capacity...`);
+      
+      let drivers: any[] = [];
+      try {
+        drivers = await driverService.discoverAvailableDrivers({
+          estimatedWeight: order.weight,
+          estimatedVolume: order.volume,
+          limit: 50
+        });
+        
+        logger.info(`✅ [${matchingId}] Driver service returned ${drivers.length} drivers`);
+        
+        if (drivers.length === 0) {
+          logger.warn(`❌ [${matchingId}] No drivers found matching capacity requirements`);
+          return [];
+        }
+        
+        // Log driver details
+        drivers.forEach((driver, index) => {
+          logger.debug(`👤 [${matchingId}] Driver ${index + 1}: ${driver.user?.firstName} ${driver.user?.lastName}`, {
+            driverId: driver.driverId,
+            userId: driver.userId,
+            vehicles: driver.vehicles?.length || 0,
+            location: driver.currentLocation || 'No location'
+          });
+        });
+        
+      } catch (dbError: any) {
+        logger.error(`❌ [${matchingId}] Driver service failed:`, {
+          message: dbError.message,
+          stack: dbError.stack?.substring(0, 500),
+          errorName: dbError.name
+        });
+        throw new Error(`Failed to get available drivers: ${dbError.message}`);
+      }
+      
+      // STEP 2: Get pickup coordinates
+      logger.info(`📍 [${matchingId}] Step 2: Getting pickup coordinates for: "${order.pickupAddress}"`);
+      
+      let pickupCoords: { lat: number; lng: number };
+      
+      // Check if coordinates were provided and are valid
+      if (order.pickupCoords && 
+          order.pickupCoords.lat !== undefined && 
+          order.pickupCoords.lng !== undefined &&
+          !isNaN(order.pickupCoords.lat) && 
+          !isNaN(order.pickupCoords.lng)) {
+        
+        pickupCoords = order.pickupCoords;
+        logger.info(`📍 [${matchingId}] Using provided coordinates: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+        
+      } else {
+        // No valid coordinates provided, try to geocode
+        try {
+          logger.info(`🗺️ [${matchingId}] Geocoding address...`);
+          const geocoded = await geocodeAddress(order.pickupAddress);
+          
+          if (geocoded && isValidCoordinates(geocoded)) {
+            pickupCoords = geocoded;
+            logger.info(`📍 [${matchingId}] Successfully geocoded to: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+          } else {
+            logger.warn(`⚠️ [${matchingId}] Geocoding returned invalid coordinates:`, geocoded);
+            pickupCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
+            logger.info(`📍 [${matchingId}] Using fallback coordinates: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+          }
+        } catch (geocodingError: any) {
+          logger.warn(`⚠️ [${matchingId}] Geocoding error: ${geocodingError.message}`);
+          pickupCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
+          logger.info(`📍 [${matchingId}] Using fallback coordinates after error: ${pickupCoords.lat}, ${pickupCoords.lng}`);
+        }
+      }
+      
+      // STEP 3: Process each driver
+      logger.info(`🎯 [${matchingId}] Step 3: Processing ${drivers.length} drivers...`);
+      
+      const matchedDrivers: MatchedDriver[] = [];
+      let processedCount = 0;
+      let skippedCount = 0;
+      let distanceCalcSuccess = 0;
+      let distanceCalcFailed = 0;
+      
+      for (const driver of drivers) {
+        processedCount++;
+        
+        try {
+          logger.debug(`👤 [${matchingId}] Processing driver ${processedCount}/${drivers.length}: ${driver.user?.firstName} ${driver.user?.lastName}`);
+          
+          let distanceInfo = null;
+          let driverGeocodingStatus: 'success' | 'fallback' | 'failed' = 'success';
+          let shouldSkipDriver = false;
+          
+          // Try to calculate distance if driver has location
+          if (driver.currentLocation && driver.currentLocation.trim()) {
+            try {
+              logger.debug(`📍 [${matchingId}] Geocoding driver location: "${driver.currentLocation.substring(0, 50)}..."`);
+              
+              const driverCoords = await geocodeAddress(driver.currentLocation);
+              
+              if (driverCoords && isValidCoordinates(driverCoords)) {
+                // Check if these are fallback coordinates
+                const isFallbackCoords = 
+                  Math.abs(driverCoords.lat - 59.9343) < 0.01 && 
+                  Math.abs(driverCoords.lng - 30.3351) < 0.01;
+                
+                if (isFallbackCoords) {
+                  driverGeocodingStatus = 'fallback';
+                  logger.debug(`📍 [${matchingId}] Driver coordinates are fallback/default`);
+                }
+                
+                // Calculate distance using haversine formula
+                const distanceKm = this.haversineDistance(
+                  pickupCoords.lat,
+                  pickupCoords.lng,
+                  driverCoords.lat,
+                  driverCoords.lng
+                );
+                
+                logger.debug(`📏 [${matchingId}] Distance calculated: ${distanceKm.toFixed(2)} km`);
+                
+                // Apply maxDistance filter if specified
+                if (order.maxDistance && distanceKm > order.maxDistance) {
+                  logger.debug(`📍 [${matchingId}] Skipping driver: ${distanceKm.toFixed(1)}km > ${order.maxDistance}km max`);
+                  shouldSkipDriver = true;
+                  skippedCount++;
+                } else {
+                  // Create distance info
+                  const distanceMeters = distanceKm * 1000;
+                  // Estimate duration based on distance and traffic
+                  const baseDurationSeconds = (distanceKm / 30) * 3600; // 30 km/h average
+                  const urgencyMultiplier = order.urgency === 'express' ? 0.8 : order.urgency === 'urgent' ? 0.9 : 1;
+                  const durationSeconds = baseDurationSeconds * urgencyMultiplier;
+                  
+                  distanceInfo = {
+                    distance: {
+                      text: `${distanceKm.toFixed(1)} km`,
+                      value: Math.round(distanceMeters)
+                    },
+                    duration: {
+                      text: `${Math.ceil(durationSeconds / 60)} mins`,
+                      value: Math.round(durationSeconds)
+                    }
+                  };
+                  
+                  distanceCalcSuccess++;
+                  logger.debug(`✅ [${matchingId}] Distance info created: ${distanceInfo.distance.text} in ${distanceInfo.duration.text}`);
+                }
+              } else {
+                logger.warn(`⚠️ [${matchingId}] Could not geocode driver location`);
+                driverGeocodingStatus = 'failed';
+                distanceCalcFailed++;
+              }
+            } catch (distanceError: any) {
+              logger.warn(`⚠️ [${matchingId}] Distance calculation failed:`, {
+                message: distanceError.message,
+                driverId: driver.driverId
+              });
+              driverGeocodingStatus = 'failed';
+              distanceCalcFailed++;
+            }
+          } else {
+            logger.info(`ℹ️ [${matchingId}] Driver has no location data`);
+            driverGeocodingStatus = 'failed';
+            distanceCalcFailed++;
+          }
+          
+          // Skip driver if beyond max distance
+          if (shouldSkipDriver) {
+            continue;
+          }
+          
+          // Calculate scores
+          const baseScore = this.calculateBaseScore(driver);
+          logger.debug(`📊 [${matchingId}] Base score: ${baseScore.toFixed(1)}`);
+          
+          let finalScore = baseScore;
+          
+          // Adjust score based on distance (if available)
+          if (distanceInfo) {
+            const distanceKm = distanceInfo.distance.value / 1000;
+            const distanceScore = Math.max(0, 100 - (distanceKm * 2)); // Closer is better
+            finalScore = (baseScore * 0.5) + (distanceScore * 0.5);
+            logger.debug(`📊 [${matchingId}] Distance score: ${distanceScore.toFixed(1)}, Combined: ${finalScore.toFixed(1)}`);
+          }
+          
+          // Adjust for vehicle suitability
+          const primaryVehicle = driver.vehicles && driver.vehicles[0];
+          if (primaryVehicle) {
+            const vehicleScore = this.calculateVehicleSuitability(primaryVehicle, order);
+            finalScore = (finalScore * 0.7) + (vehicleScore * 0.3);
+            logger.debug(`🚗 [${matchingId}] Vehicle score: ${vehicleScore.toFixed(1)}, Final: ${finalScore.toFixed(1)}`);
+          }
+          
+          // Adjust for urgency
+          if (order.urgency === 'express') {
+            // For express orders, prioritize drivers who are closer
+            if (distanceInfo) {
+              const distanceKm = distanceInfo.distance.value / 1000;
+              const distanceScore = Math.max(0, 100 - (distanceKm * 3)); // More weight for distance
+              finalScore = (baseScore * 0.3) + (distanceScore * 0.7);
+              logger.debug(`⚡ [${matchingId}] Express order adjustment, final: ${finalScore.toFixed(1)}`);
+            }
+          }
+          
+          // Ensure score is valid
+          finalScore = Math.max(0, Math.min(100, Math.round(finalScore)));
+          
+          // Create matched driver object
+          const matchedDriver = this.createMatchedDriver(
+            driver,
+            distanceInfo,
+            order,
+            finalScore,
+            driverGeocodingStatus
+          );
+          
+          matchedDrivers.push(matchedDriver);
+          
+          logger.debug(`✅ [${matchingId}] Driver ${driver.driverId} added: Score ${finalScore} (${matchedDriver.suitability})`);
+          
+        } catch (driverError: any) {
+          logger.warn(`⚠️ [${matchingId}] Error processing driver ${driver.driverId}:`, {
+            message: driverError.message,
+            errorName: driverError.name
+          });
+          skippedCount++;
+          continue; // Skip this driver and continue with others
+        }
+      }
+      
+      // STEP 4: Sort and return results
+      logger.info(`📊 [${matchingId}] Step 4: Sorting ${matchedDrivers.length} matched drivers...`);
+      
+      // Sort by match score (highest first)
+      const sortedDrivers = matchedDrivers.sort((a, b) => b.matchScore - a.matchScore);
+      
+      const processingTime = Date.now() - requestStartTime;
+      const topDrivers = sortedDrivers.slice(0, 4);
+      
+      logger.info(`🎉 [${matchingId}] ===== MATCHING PROCESS COMPLETE =====`, {
+        stats: {
+          totalDriversProcessed: processedCount,
+          successfullyMatched: matchedDrivers.length,
+          top4Returned: topDrivers.length,
+          skipped: skippedCount,
+          distanceCalculations: {
+            success: distanceCalcSuccess,
+            failed: distanceCalcFailed
+          }
+        },
+        results: {
+          topScore: sortedDrivers[0]?.matchScore || 0,
+          vehicleTypes: topDrivers.map(d => d.vehicles[0]?.type),
+          suitabilityBreakdown: {
+            excellent: sortedDrivers.filter(d => d.suitability === 'excellent').length,
+            good: sortedDrivers.filter(d => d.suitability === 'good').length,
+            fair: sortedDrivers.filter(d => d.suitability === 'fair').length,
+            poor: sortedDrivers.filter(d => d.suitability === 'poor').length
+          }
+        },
+        processingTime
+      });
+      
+      // Log top 4 drivers for debugging
+    logger.info(`🏆 [${matchingId}] Top 4 drivers (vehicle types in brackets):`);
+    topDrivers.forEach((driver, index) => {
+      const distanceText = driver.distanceInfo 
+        ? `${driver.distanceInfo.distance.text} (${driver.distanceInfo.duration.text})`
+        : 'no distance';
+      const vehicleType = driver.vehicles[0]?.type || 'unknown';
+      logger.info(`  ${index + 1}. ${driver.user.firstName} ${driver.user.lastName} - Score: ${driver.matchScore} - ${distanceText} [${vehicleType}]`);
+    });
+    
+    return topDrivers;
+      
+    } catch (error: any) {
+      const processingTime = Date.now() - requestStartTime;
+      logger.error(`💥 [${matchingId}] Matching service critical error after ${processingTime}ms:`, {
+        message: error.message,
+        stack: error.stack?.substring(0, 500),
+        errorName: error.name
+      });
+      throw new Error(`Matching service failed: ${error.message}`);
+    }
+  }
+
+  private createMatchedDriver(
+    driver: any,
+    distanceInfo: { distance: { text: string; value: number }; duration: { text: string; value: number } } | null,
+    order: OrderRequirements,
+    matchScore: number = 0,
+    geocodingStatus: 'success' | 'fallback' | 'failed' = 'success'
+  ): MatchedDriver {
+    // Ensure user info exists
+    const userInfo = driver.user || {
+      firstName: 'Driver',
+      lastName: `#${driver.driverId.substring(0, 8)}`,
+      phone: 'Contact via app'
+    };
+
+    // Calculate arrival estimate
+    let estimatedArrival = 'N/A';
+    if (distanceInfo) {
+      const minutes = Math.ceil(distanceInfo.duration.value / 60);
+      estimatedArrival = `${minutes} mins`;
+    } else if (geocodingStatus === 'failed') {
+      estimatedArrival = 'Location data unavailable';
+    } else {
+      estimatedArrival = 'Calculating...';
+    }
+
+    return {
+      driverId: driver.driverId,
+      userId: driver.userId,
+      rating: driver.rating || 0,
+      totalDeliveries: driver.totalDeliveries || 0,
+      completionRate: driver.completionRate || 0,
+      verificationLevel: driver.verificationLevel || 'none',
+      isOnline: driver.isOnline || false,
+      currentLocation: driver.currentLocation || 'Location not set',
+      profileCompleted: driver.profileCompleted || false,
+      user: userInfo,
+      vehicles: driver.vehicles || [],
+      distanceInfo: distanceInfo || undefined,
+      matchScore: matchScore,
+      suitability: this.getSuitabilityLevel(matchScore),
+      estimatedArrival: estimatedArrival,
+      geocodingStatus: geocodingStatus
+    };
+  }
+
+  private calculateBaseScore(driver: any): number {
+    let score = 0;
+
+    // Rating score (0-5 rating becomes 0-100 points)
+    const ratingScore = (driver.rating || 0) * 20;
+    score += ratingScore * 0.3; // 30% weight
+
+    // Completion rate score
+    const completionScore = (driver.completionRate || 0) * 100;
+    score += completionScore * 0.25; // 25% weight
+
+    // Experience score (more deliveries is better, but with diminishing returns)
+    const experienceDeliveries = driver.totalDeliveries || 0;
+    let experienceScore = 0;
+    if (experienceDeliveries > 0) {
+      experienceScore = Math.min(100, Math.log10(experienceDeliveries + 1) * 40);
+    }
+    score += experienceScore * 0.2; // 20% weight
+
+    
+    // Or alternatively, with type safety:
+    const verificationBonus = (() => {
+      const level = driver.verificationLevel as 'none' | 'basic' | 'verified' | 'premium' | string;
+      switch (level) {
+        case 'none': return 0;
+        case 'basic': return 10;
+        case 'verified': return 25;
+        case 'premium': return 50;
+        default: return 0;
+      }
+    })();
+
+    score += verificationBonus * 0.15;// 15% weight
+
+    // Online status bonus
+    const onlineBonus = driver.isOnline ? 10 : 0;
+    score += onlineBonus * 0.1; // 10% weight
+
+    return Math.min(100, score);
+  }
+
+  private calculateVehicleSuitability(
+      vehicle: any,
+      order: OrderRequirements
+    ): number {
+      if (!vehicle) return 0;
+    
+      let score = 100;
+
+      // Check weight capacity - CRITICAL: must be able to carry the weight
+      const weightUtilization = order.weight / vehicle.maxWeight;
+      if (weightUtilization > 1) {
+        return 0; // Cannot carry the weight
+      }
+
+      // Check volume capacity - CRITICAL: must be able to fit the volume
+      const volumeUtilization = order.volume / vehicle.maxVolume;
+      if (volumeUtilization > 1) {
+        return 0; // Cannot fit the volume
+      }
+
+      // Adjust score based on capacity utilization (lower utilization is better)
+      const capacityScore = 100 - ((weightUtilization + volumeUtilization) * 25);
+      score = Math.min(100, capacityScore);
+
+      // REMOVE OR REDUCE vehicle type penalty
+      // Instead of penalizing different types, we can give bonuses for optimal types
+      const typeBonuses: Record<string, number> = {
+        'motorbike': order.weight < 20 && order.volume < 0.5 ? 20 : 0,  // Bonus for small packages
+        'small_van': order.weight < 200 && order.volume < 5 ? 15 : 0,   // Bonus for medium packages
+        'medium_truck': order.weight < 1000 && order.volume < 15 ? 10 : 0, // Bonus for large packages
+        'large_truck': order.weight >= 1000 ? 5 : 0  // Bonus for very large packages
+      };
+
+      const typeBonus = typeBonuses[vehicle.type] || 0;
+      score = Math.min(100, score + typeBonus);
+
+      return Math.min(100, score);
+    }
+  private getSuitabilityLevel(score: number): 'excellent' | 'good' | 'fair' | 'poor' {
+    if (score >= 85) return 'excellent';
+    if (score >= 70) return 'good';
+    if (score >= 50) return 'fair';
+    return 'poor';
+  }
+
+  private haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371; // Earth radius in km
+    const dLat = this.toRad(lat2 - lat1);
+    const dLon = this.toRad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  private toRad(degrees: number): number {
+    return degrees * (Math.PI / 180);
+  }
+}
+
+export const matchingService = new MatchingService();
+```
+
+`services\upload.service.ts`:
+
+```ts
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import sharp from 'sharp';
+import { v4 as uuidv4 } from 'uuid';
+import { logger } from '../utils/logger';
+
+const UPLOAD_PATH = process.env.UPLOAD_PATH || path.join(process.cwd(), 'uploads');
+//const UPLOAD_PATH = process.env.UPLOAD_PATH || path.join(process.cwd(), 'src', 'uploads');
+const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE || '5242880');
+const ALLOWED_FILE_TYPES = (process.env.ALLOWED_FILE_TYPES || 'image/jpeg,image/png,image/jpg,application/pdf').split(',');
+
+// Create uploads directory if it doesn't exist
+if (!fs.existsSync(UPLOAD_PATH)) {
+  fs.mkdirSync(UPLOAD_PATH, { recursive: true });
+}
+
+// Storage configuration
+const storage = multer.diskStorage({
+  destination: (req: any, file, cb) => {
+    const userId = req.user?.userId || 'temp';
+    const userUploadPath = path.join(UPLOAD_PATH, userId);
+    
+    if (!fs.existsSync(userUploadPath)) {
+      fs.mkdirSync(userUploadPath, { recursive: true });
+    }
+    cb(null, userUploadPath);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  },
+});
+
+// File filter
+const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  if (ALLOWED_FILE_TYPES.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error(`Invalid file type. Allowed types: ${ALLOWED_FILE_TYPES.join(', ')}`));
+  }
+};
+
+export const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: MAX_FILE_SIZE,
+  },
+});
+
+export class UploadService {
+  async processProfilePicture(filePath: string, userId: string) {
+    const uploadDir = path.join(UPLOAD_PATH, userId);
+    const fileName = path.basename(filePath);
+    const fileBaseName = path.basename(fileName, path.extname(fileName));
+    const extension = path.extname(fileName);
+
+    // Create resized versions
+    const sizes = [
+      { name: 'thumbnail', width: 100, height: 100 },
+      { name: 'small', width: 300, height: 300 },
+      { name: 'medium', width: 600, height: 600 },
+    ];
+
+    const processedFiles: Record<string, string> = {
+      original: `${userId}/${fileName}`,
+    };
+
+    for (const size of sizes) {
+      const outputPath = path.join(uploadDir, `${fileBaseName}_${size.name}${extension}`);
+      
+      await sharp(filePath)
+        .resize(size.width, size.height, {
+          fit: 'cover',
+          position: 'center',
+        })
+        .toFile(outputPath);
+
+      processedFiles[size.name] = `${userId}/${path.basename(outputPath)}`;
+    }
+
+    // Get image metadata
+    const metadata = await sharp(filePath).metadata();
+
+    return {
+      processedFiles,
+      metadata: {
+        width: metadata.width,
+        height: metadata.height,
+        format: metadata.format,
+        size: fs.statSync(filePath).size,
+      },
+    };
+  }
+
+  async deleteFile(filePath: string): Promise<boolean> {
+    try {
+      const fullPath = path.join(UPLOAD_PATH, filePath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+        logger.info(`Deleted file: ${filePath}`);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      logger.error(`Failed to delete file ${filePath}:`, error);
+      return false;
+    }
+  }
+
+  async deleteUserFiles(userId: string): Promise<boolean> {
+    try {
+      const userDir = path.join(UPLOAD_PATH, userId);
+      if (fs.existsSync(userDir)) {
+        fs.rmSync(userDir, { recursive: true, force: true });
+        logger.info(`Deleted all files for user: ${userId}`);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      logger.error(`Failed to delete files for user ${userId}:`, error);
+      return false;
+    }
+  }
+
+  getFileUrl(filePath: string): string {
+    const baseUrl = process.env.APP_URL || 'http://localhost:3002';
+    return `${baseUrl}/uploads/${filePath}`;
+  }
+
+  async validateFileSize(filePath: string, maxSize: number): Promise<boolean> {
+    const stats = fs.statSync(filePath);
+    return stats.size <= maxSize;
+  }
+
+  async getFileInfo(filePath: string) {
+    const fullPath = path.join(UPLOAD_PATH, filePath);
+    const stats = fs.statSync(fullPath);
+    
+    return {
+      path: filePath,
+      size: stats.size,
+      createdAt: stats.birthtime,
+      modifiedAt: stats.mtime,
+      isDirectory: stats.isDirectory(),
+    };
+  }
+}
+
+export const uploadService = new UploadService();
+```
+
+`types\express.d.ts`:
+
+```ts
+// src/types/express.d.ts
+import { JwtPayload } from './index';
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        userId: string;
+        userType: string;
+      };
+    }
+  }
+}
+
+// This export is needed for TypeScript to treat this as a module
+export {};
+```
+
+`types\index.ts`:
+
+```ts
+export interface File {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  destination: string;
+  filename: string;
+  path: string;
+  buffer?: Buffer;
+}
+
+// User types
+export interface User {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone?: string;
+  userType: 'driver' | 'customer';
+  emailVerified: boolean;
+  phoneVerified: boolean;
+  isActive: boolean;
+  profileCompleted: boolean;
+  lastLogin?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Driver types
+export interface Driver {
+  id: string;
+  userId: string;
+  licenseNumber?: string;
+  licenseExpiry?: Date;
+  insuranceNumber?: string;
+  insuranceExpiry?: Date;
+  rating: number;
+  totalDeliveries: number;
+  totalEarnings: number;
+  completionRate: number;
+  status: 'pending' | 'active' | 'suspended' | 'inactive';
+  verificationLevel: 'none' | 'basic' | 'verified' | 'premium';
+  onboardedAt?: Date;
+  isOnline: boolean;
+  currentLocation?: string;
+  profileCompleted: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ProfilePicture {
+  id: string;
+  driverId: string;
+  originalUrl: string;
+  thumbnailUrl?: string;
+  smallUrl?: string;
+  mediumUrl?: string;
+  mimeType: string;
+  size: number;
+  width?: number;
+  height?: number;
+  isActive: boolean;
+  uploadedAt: Date;
+  updatedAt: Date;
+}
+
+export interface Vehicle {
+  id: string;
+  driverId: string;
+  type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+  maxWeight: number;
+  maxVolume: number;
+  imageUrl?: string;
+  isActive: boolean;
+  currentStatus: 'available' | 'in_use' | 'maintenance';
+  insuranceInfo?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Document {
+  id: string;
+  driverId: string;
+  type: 'license' | 'insurance' | 'registration' | 'inspection' | 'background_check';
+  name: string;
+  fileName: string;
+  fileUrl: string;
+  fileSize: number;
+  mimeType: string;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  uploadDate: Date;
+  expiryDate?: Date;
+  rejectionReason?: string;
+  verifiedBy?: string;
+  verifiedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface DriverAvailability {
+  id: string;
+  driverId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface DriverMetrics {
+  id: string;
+  driverId: string;
+  date: Date;
+  deliveriesCount: number;
+  successfulDeliveries: number;
+  failedDeliveries: number;
+  totalEarnings: number;
+  averageRating: number;
+  onlineHours: number;
+  distanceTraveled: number;
+  createdAt: Date;
+}
+
+// API Response types
+export interface ApiResponse<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+  error?: {
+    message: string;
+    details?: any[];
+    stack?: string;
+  };
+}
+
+export interface PaginatedResponse<T> extends ApiResponse<T[]> {
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+}
+
+// Request types
+export interface CreateDriverRequest {
+  licenseNumber?: string;
+  licenseExpiry?: string;
+  insuranceNumber?: string;
+  insuranceExpiry?: string;
+}
+
+export interface UpdateDriverRequest {
+  licenseNumber?: string;
+  licenseExpiry?: string;
+  insuranceNumber?: string;
+  insuranceExpiry?: string;
+  currentLocation?: string;
+}
+
+export interface VehicleRequest {
+  type: 'motorbike' | 'small_van' | 'medium_truck' | 'large_truck';
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+  maxWeight: number;
+  maxVolume: number;
+  imageUrl?: string; 
+  insuranceInfo?: string;
+}
+
+export interface DocumentRequest {
+  type: 'license' | 'insurance' | 'registration' | 'inspection' | 'background_check';
+  name: string;
+  expiryDate?: string;
+}
+
+export interface AvailabilityRequest {
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isActive?: boolean;
+}
+
+export interface StatusRequest {
+  isOnline: boolean;
+  location?: string;
+}
+
+// Auth types
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export interface JwtPayload {
+  userId: string;
+  userType: string;
+  type?: 'access' | 'refresh';
+  iat?: number;
+  exp?: number;
+}
+
+// Express Request extension
+declare global {
+  namespace Express {
+    interface Request {
+      user?: {
+        userId: string;
+        userType: string;
+      };
+    }
+  }
+}
+```
+
+`utils\geocoding.util.ts`:
+
+```ts
+import axios from 'axios';
+import { logger } from './logger';
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Convert address string to coordinates with multiple fallback options
+ */
+export async function geocodeAddress(address: string): Promise<Coordinates | null> {
+  const requestId = `geocode_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  const startTime = Date.now();
+  
+  try {
+    logger.info(`🌍 [${requestId}] Geocoding address: "${address.substring(0, 50)}${address.length > 50 ? '...' : ''}"`);
+    
+    if (!address || address.trim().length === 0) {
+      logger.warn(`⚠️ [${requestId}] Empty address provided`);
+      return getFallbackCoordinates('empty');
+    }
+    
+    // Clean the address
+    const cleanAddress = address.trim();
+    
+    // ============================================
+    // OPTION 1: DistanceMatrix.ai Geocoding (Primary)
+    // ============================================
+    try {
+      logger.info(`📍 [${requestId}] Trying DistanceMatrix.ai geocoding...`);
+      const distanceMatrixApiKey = process.env.DISTANCE_MATRIX_API_KEY || 
+        'NFLqNsgalupmIuzDS6zKuprvodMgjdaGAxBtGYNpOT9TUwnCnC4Z9Do6T2drMT4Y';
+      
+      const response = await axios.get('https://api.distancematrix.ai/maps/api/geocode/json', {
+        params: {
+          address: cleanAddress,
+          key: distanceMatrixApiKey,
+          language: 'en'
+        },
+        headers: {
+          'User-Agent': 'DeliveryMatch/1.0 (lieson.work@gmail.com)'
+        },
+        timeout: 8000
+      });
+
+      logger.debug(`📍 [${requestId}] DistanceMatrix.ai response status: ${response.data.status}`);
+      
+      // Check for "OK" status AND "results" array
+      if (response.data.status === 'OK' && Array.isArray(response.data.result)) {
+        const results = response.data.result;
+        if (results.length > 0) {
+          const location = results[0];
+          const coords = {
+            lat: location.geometry?.location?.lat,
+            lng: location.geometry?.location?.lng
+          };
+          
+          // Validate coordinates
+          if (coords.lat && coords.lng && !isNaN(coords.lat) && !isNaN(coords.lng)) {
+            const finalCoords = {
+              lat: parseFloat(coords.lat),
+              lng: parseFloat(coords.lng)
+            };
+            
+            logger.info(`✅ [${requestId}] Successfully geocoded via DistanceMatrix.ai: ${finalCoords.lat},${finalCoords.lng}`);
+            logger.info(`📍 [${requestId}] Location: ${location.formatted_address?.substring(0, 100) || 'Address found'}`);
+            logger.info(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+            
+            return finalCoords;
+          } else {
+            logger.warn(`⚠️ [${requestId}] Invalid coordinates in DistanceMatrix.ai response:`, coords);
+          }
+        } else {
+          logger.warn(`⚠️ [${requestId}] DistanceMatrix.ai returned empty results array`);
+        }
+      } else {
+        logger.warn(`⚠️ [${requestId}] DistanceMatrix.ai geocoding failed with status: ${response.data.status}`);
+      }
+    } catch (dmError: any) {
+      logger.warn(`⚠️ [${requestId}] DistanceMatrix.ai geocoding error:`, {
+        message: dmError.message,
+        code: dmError.code,
+        responseStatus: dmError.response?.status
+      });
+    }
+
+    // ============================================
+    // OPTION 2: OpenStreetMap Nominatim (Fallback 1)
+    // ============================================
+    try {
+      logger.info(`📍 [${requestId}] Trying OpenStreetMap Nominatim as fallback...`);
+      
+      // Special handling for Russian addresses
+      let searchAddress = cleanAddress;
+      if (cleanAddress.toLowerCase().includes('sankt-peterburg') || 
+          cleanAddress.toLowerCase().includes('st. petersburg') ||
+          cleanAddress.toLowerCase().includes('питер')) {
+        searchAddress = 'Saint Petersburg, Russia';
+      }
+      
+      const response = await axios.get('https://nominatim.openstreetmap.org/search', {
+        params: {
+          q: searchAddress,
+          format: 'json',
+          limit: 1,
+          'accept-language': 'en'
+        },
+        headers: {
+          'User-Agent': 'DeliveryMatch/1.0 (lieson.work@gmail.com)'
+        },
+        timeout: 5000
+      });
+
+      const results = response.data;
+      if (Array.isArray(results) && results.length > 0) {
+        const lat = parseFloat(results[0].lat);
+        const lng = parseFloat(results[0].lon);
+        
+        if (!isNaN(lat) && !isNaN(lng)) {
+          const coords = { lat, lng };
+          
+          logger.info(`✅ [${requestId}] Successfully geocoded via Nominatim: ${coords.lat},${coords.lng}`);
+          logger.info(`📍 [${requestId}] Location: ${results[0].display_name?.substring(0, 100) || 'Address found'}`);
+          logger.info(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+          
+          return coords;
+        } else {
+          logger.warn(`⚠️ [${requestId}] Invalid coordinates from Nominatim: lat=${results[0].lat}, lon=${results[0].lon}`);
+        }
+      } else {
+        logger.warn(`⚠️ [${requestId}] Nominatim returned no results`);
+      }
+    } catch (nominatimError: any) {
+      logger.warn(`⚠️ [${requestId}] Nominatim geocoding error:`, {
+        message: nominatimError.message,
+        status: nominatimError.response?.status
+      });
+    }
+
+    // ============================================
+    // OPTION 3: Address parsing for known locations (Fallback 2)
+    // ============================================
+    logger.info(`📍 [${requestId}] Trying address parsing for known locations...`);
+    
+    // Check for specific addresses in the input
+    const knownLocations: Array<{keywords: string[], coords: Coordinates}> = [
+      {
+        keywords: ['khersonskiy', 'khersonskiy proyezd', 'варшавская', 'warsaw'],
+        coords: { lat: 59.8500, lng: 30.3167 } // Warsaw street area in St. Petersburg
+      },
+      {
+        keywords: ['sankt-peterburg', 'st. petersburg', 'saint petersburg', 'питер', 'spb'],
+        coords: { lat: 59.9343, lng: 30.3351 } // St. Petersburg center
+      },
+      {
+        keywords: ['москва', 'moscow', 'msk'],
+        coords: { lat: 55.7558, lng: 37.6173 } // Moscow
+      },
+      {
+        keywords: ['казань', 'kazan'],
+        coords: { lat: 55.7961, lng: 49.1064 } // Kazan
+      }
+    ];
+    
+    const addressLower = cleanAddress.toLowerCase();
+    
+    for (const location of knownLocations) {
+      for (const keyword of location.keywords) {
+        if (addressLower.includes(keyword.toLowerCase())) {
+          logger.info(`📍 [${requestId}] Found keyword "${keyword}" in address, using coordinates: ${location.coords.lat},${location.coords.lng}`);
+          logger.info(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+          return location.coords;
+        }
+      }
+    }
+
+    // ============================================
+    // OPTION 4: Extract street numbers and use district centers (Fallback 3)
+    // ============================================
+    logger.info(`📍 [${requestId}] Trying street number extraction...`);
+    
+    // Try to extract street number for better precision
+    const streetNumberMatch = cleanAddress.match(/\b(\d+[A-Za-z]?)\b/);
+    if (streetNumberMatch) {
+      const streetNumber = streetNumberMatch[1];
+      logger.info(`📍 [${requestId}] Found street number: ${streetNumber}`);
+      
+      // Check if it's in St. Petersburg
+      if (addressLower.includes('sankt') || addressLower.includes('peterburg') || addressLower.includes('питер')) {
+        // Use a coordinate based on street number (simplified logic)
+        // For real implementation, you'd have a database of street coordinates
+        const baseLat = 59.9343;
+        const baseLng = 30.3351;
+        
+        // Add small variations based on street number
+        const streetNum = parseInt(streetNumber) || 1;
+        const variation = (streetNum % 100) / 10000; // Small variation
+        
+        const coords = {
+          lat: baseLat + variation,
+          lng: baseLng - variation
+        };
+        
+        logger.info(`📍 [${requestId}] Using street-number adjusted coordinates: ${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`);
+        logger.info(`⏱️ [${requestId}] Geocoding time: ${Date.now() - startTime}ms`);
+        
+        return coords;
+      }
+    }
+
+    // ============================================
+    // OPTION 5: Ultimate fallback - Default coordinates
+    // ============================================
+    logger.warn(`⚠️ [${requestId}] All geocoding attempts failed for address`);
+    logger.warn(`⚠️ [${requestId}] Address was: "${cleanAddress.substring(0, 100)}${cleanAddress.length > 100 ? '...' : ''}"`);
+    
+    return getFallbackCoordinates('all_failed');
+    
+  } catch (error: any) {
+    logger.error(`💥 [${requestId}] Critical geocoding error:`, {
+      message: error.message,
+      stack: error.stack?.substring(0, 500),
+      address: address.substring(0, 100)
+    });
+    
+    return getFallbackCoordinates('error');
+  }
+}
+
+/**
+ * Helper function to get fallback coordinates with logging
+ */
+function getFallbackCoordinates(reason: string): Coordinates {
+  const defaultCoords = { lat: 59.9343, lng: 30.3351 }; // St. Petersburg center
+  
+  logger.info(`📍 Using fallback coordinates (reason: ${reason}): ${defaultCoords.lat},${defaultCoords.lng}`);
+  logger.info(`📍 These coordinates represent: Saint Petersburg city center, Russia`);
+  
+  return defaultCoords;
+}
+
+/**
+ * Helper function to check if coordinates are valid
+ */
+export function isValidCoordinates(coords: Coordinates | null): boolean {
+  if (!coords) return false;
+  if (typeof coords.lat !== 'number' || typeof coords.lng !== 'number') return false;
+  if (coords.lat < -90 || coords.lat > 90) return false;
+  if (coords.lng < -180 || coords.lng > 180) return false;
+  if (isNaN(coords.lat) || isNaN(coords.lng)) return false;
+  return true;
+}
+
+/**
+ * Format coordinates as a string for logging/debugging
+ */
+export function formatCoordinates(coords: Coordinates | null): string {
+  if (!coords || !isValidCoordinates(coords)) return 'null';
+  return `${coords.lat.toFixed(6)},${coords.lng.toFixed(6)}`;
+}
+```
+
+`utils\httpClient.ts`:
+
+```ts
+import axios, { AxiosInstance, AxiosError } from 'axios';
+import { logger } from './logger';
+
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
+const SERVICE_SECRET = process.env.SERVICE_SECRET || 'shared_service_secret_key';
+
+export interface UserValidationResponse {
+  valid: boolean;
+  user?: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+    userType: string;
+  };
+}
+
+export class HttpClient {
+  private client: AxiosInstance;
+
+  constructor() {
+    this.client = axios.create({
+      baseURL: USER_SERVICE_URL,
+      timeout: 10000,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-service-secret': SERVICE_SECRET,
+      },
+    });
+
+    // Request interceptor
+    this.client.interceptors.request.use(
+      (config) => {
+        logger.debug(`Making request to: ${config.baseURL}${config.url}`);
+        return config;
+      },
+      (error) => {
+        logger.error('Request error:', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Response interceptor
+    this.client.interceptors.response.use(
+      (response) => {
+        logger.debug(`Response from ${response.config.url}: ${response.status}`);
+        return response;
+      },
+      (error: AxiosError) => {
+        if (error.response) {
+          logger.error(`Error response from ${error.config?.url}:`, {
+            status: error.response.status,
+            data: error.response.data,
+          });
+        } else if (error.request) {
+          logger.error('No response received:', error.message);
+        } else {
+          logger.error('Request setup error:', error.message);
+        }
+        return Promise.reject(error);
+      }
+    );
+  }
+
+  async validateUser(userId: string): Promise<boolean> {
+    try {
+      const response = await this.client.get(
+      `/api/auth/validate/${userId}`
+    );
+    
+    if (response.data) {
+      return response.data.valid === true;
+    }else
+      return response.data.valid === false
+    } catch (error: any) {
+      // If 404, user doesn't exist
+      if (error.response?.status === 404) {
+        logger.error(`User ${userId} not found`);
+        return false;
+      }
+
+      // If 400/401, user invalid or inactive
+      if (error.response?.status === 400 || error.response?.status === 401) {
+        logger.error(`User ${userId} invalid or inactive`);
+        return false;
+      }
+
+      logger.error('Failed to validate user:', error.message);
+      return false;
+    }
+  }
+
+  async getUser(userId: string): Promise<any> {
+    try {
+      const response = await this.client.get(`/api/users/${userId}`);
+      return response.data;
+    } catch (error: any) {
+      logger.error('Failed to get user:', error.message);
+      throw new Error('User not found');
+    }
+  }
+
+  async verifyToken(token: string): Promise<any> {
+    try {
+      const response = await this.client.post('/api/auth/verify-token', { token });
+      return response.data;
+    } catch (error: any) {
+      logger.error('Failed to verify token:', error.message);
+      throw new Error('Token verification failed');
+    }
+  }
+}
+
+export const httpClient = new HttpClient();
+```
+
+`utils\imageProcessor.ts`:
+
+```ts
+import sharp from 'sharp';
+import fs from 'fs/promises';
+import path from 'path';
+import { logger } from './logger';
+
+export interface ImageSize {
+  width: number;
+  height: number;
+  name: string;
+}
+
+export interface ProcessedImage {
+  original: {
+    path: string;
+    width: number;
+    height: number;
+    size: number;
+  };
+  variants: Record<string, {
+    path: string;
+    width: number;
+    height: number;
+    size: number;
+  }>;
+  metadata: {
+    format: string;
+    hasAlpha: boolean;
+    orientation?: number;
+  };
+}
+
+export class ImageProcessor {
+  private defaultSizes: ImageSize[] = [
+    { name: 'thumbnail', width: 100, height: 100 },
+    { name: 'small', width: 300, height: 300 },
+    { name: 'medium', width: 600, height: 600 },
+    { name: 'large', width: 1200, height: 1200 },
+  ];
+
+  async validateImage(filePath: string): Promise<boolean> {
+    try {
+      const metadata = await sharp(filePath).metadata();
+      return metadata.format !== undefined;
+    } catch (error) {
+      logger.error(`Invalid image file: ${filePath}`, error);
+      return false;
+    }
+  }
+
+  async getImageMetadata(filePath: string): Promise<sharp.Metadata> {
+    return await sharp(filePath).metadata();
+  }
+
+  async resizeImage(
+    inputPath: string,
+    outputPath: string,
+    width: number,
+    height: number,
+    options: {
+      fit?: keyof sharp.FitEnum;
+      position?: string;
+      quality?: number;
+    } = {}
+  ): Promise<void> {
+    const { fit = 'cover', position = 'center', quality = 80 } = options;
+
+    await sharp(inputPath)
+      .resize(width, height, {
+        fit,
+        position,
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality })
+      .png({ quality })
+      .toFile(outputPath);
+  }
+
+  async generateThumbnails(
+    inputPath: string,
+    outputDir: string,
+    sizes: ImageSize[] = this.defaultSizes
+  ): Promise<Record<string, string>> {
+    const results: Record<string, string> = {};
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    const extension = path.extname(inputPath);
+
+    for (const size of sizes) {
+      const outputPath = path.join(outputDir, `${baseName}_${size.name}${extension}`);
+      
+      await this.resizeImage(inputPath, outputPath, size.width, size.height);
+      results[size.name] = outputPath;
+      
+      logger.debug(`Generated thumbnail: ${outputPath} (${size.width}x${size.height})`);
+    }
+
+    return results;
+  }
+
+  async optimizeImage(
+    inputPath: string,
+    outputPath: string,
+    options: {
+      quality?: number;
+      maxWidth?: number;
+      maxHeight?: number;
+    } = {}
+  ): Promise<void> {
+    const { quality = 80, maxWidth, maxHeight } = options;
+    const metadata = await this.getImageMetadata(inputPath);
+
+    let resizeOptions = {};
+    if (maxWidth || maxHeight) {
+      resizeOptions = {
+        width: maxWidth,
+        height: maxHeight,
+        fit: 'inside',
+        withoutEnlargement: true,
+      };
+    }
+
+    const pipeline = sharp(inputPath);
+
+    if (Object.keys(resizeOptions).length > 0) {
+      pipeline.resize(resizeOptions);
+    }
+
+    if (metadata.format === 'jpeg' || metadata.format === 'jpg') {
+      pipeline.jpeg({ quality });
+    } else if (metadata.format === 'png') {
+      pipeline.png({ quality });
+    } else if (metadata.format === 'webp') {
+      pipeline.webp({ quality });
+    }
+
+    await pipeline.toFile(outputPath);
+  }
+
+  async compressImage(
+    inputPath: string,
+    outputPath: string,
+    targetSizeKB: number
+  ): Promise<void> {
+    const metadata = await this.getImageMetadata(inputPath);
+    const currentSizeKB = (await fs.stat(inputPath)).size / 1024;
+
+    if (currentSizeKB <= targetSizeKB) {
+      // Copy as-is if already smaller
+      await fs.copyFile(inputPath, outputPath);
+      return;
+    }
+
+    let quality = 90;
+    let iterations = 0;
+    const maxIterations = 10;
+
+    while (iterations < maxIterations) {
+      await this.optimizeImage(inputPath, outputPath, { quality });
+
+      const newSizeKB = (await fs.stat(outputPath)).size / 1024;
+      
+      if (newSizeKB <= targetSizeKB) {
+        logger.debug(`Compressed image to ${newSizeKB.toFixed(2)}KB with quality ${quality}`);
+        return;
+      }
+
+      quality -= 10;
+      iterations++;
+
+      if (quality <= 10) {
+        logger.warn(`Could not compress image below ${targetSizeKB}KB`);
+        break;
+      }
+    }
+  }
+
+  async convertToFormat(
+    inputPath: string,
+    outputPath: string,
+    format: 'jpeg' | 'png' | 'webp',
+    quality: number = 80
+  ): Promise<void> {
+    const pipeline = sharp(inputPath);
+
+    switch (format) {
+      case 'jpeg':
+        await pipeline.jpeg({ quality }).toFile(outputPath);
+        break;
+      case 'png':
+        await pipeline.png({ quality }).toFile(outputPath);
+        break;
+      case 'webp':
+        await pipeline.webp({ quality }).toFile(outputPath);
+        break;
+      default:
+        throw new Error(`Unsupported format: ${format}`);
+    }
+  }
+
+  async extractDominantColor(inputPath: string): Promise<string> {
+      try {
+        const { data, info } = await sharp(inputPath)
+          .resize(1, 1)
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+
+        // Get RGB values from the buffer
+        const buffer = Buffer.from(data);
+        const r = buffer.readUInt8(0);
+        const g = buffer.readUInt8(1);
+        const b = buffer.readUInt8(2);
+
+        // Convert RGB to hex
+        return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+      } catch (error) {
+        logger.error(`Failed to extract dominant color: ${inputPath}`, error);
+        return '#000000'; // Return black as default
+      }
+    }
+
+  async createImageHash(inputPath: string): Promise<string> {
+      try {
+        // Create a perceptual hash of the image
+        const buffer = await sharp(inputPath)
+          .resize(8, 8) // Resize to 8x8 pixels
+          .grayscale() // Convert to grayscale
+          .raw() // Get raw pixel data
+          .toBuffer();
+
+        // Calculate average pixel value
+        let sum = 0;
+        const pixelValues = [];
+
+        for (let i = 0; i < buffer.length; i++) {
+          const value = buffer.readUInt8(i);
+          pixelValues.push(value);
+          sum += value;
+        }
+
+        const avg = sum / pixelValues.length;
+
+        // Create hash: 1 for pixels above average, 0 for below
+        const hash = pixelValues.map(val => val > avg ? '1' : '0').join('');
+
+        return hash;
+      } catch (error) {
+        logger.error(`Failed to create image hash: ${inputPath}`, error);
+        return '0'.repeat(64); // Return 64-bit zero hash as default
+      }
+    }
+}
+
+export const imageProcessor = new ImageProcessor();
+```
+
+`utils\logger.ts`:
+
+```ts
+import winston from 'winston';
+import path from 'path';
+import fs from 'fs';
+
+// Ensure logs directory exists
+const logDir = '/app/logs';
+try {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+    console.log(`Created logs directory: ${logDir}`);
+  }
+} catch (error) {
+  console.warn(`Could not create logs directory: ${error}`);
+  // Fallback to current directory
+  const fallbackDir = path.join(process.cwd(), 'logs');
+  if (!fs.existsSync(fallbackDir)) {
+    fs.mkdirSync(fallbackDir, { recursive: true });
+  }
+}
+
+const logFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  winston.format.splat(),
+  winston.format.json()
+);
+
+const logger = winston.createLogger({
+  level: process.env.NODE_ENV === 'development' ? 'debug' : 'info',
+  format: logFormat,
+  defaultMeta: { service: 'driver-service' },
+  transports: [
+    new winston.transports.File({
+      filename: path.join(logDir, 'error.log'),
+      level: 'error',
+    }),
+    new winston.transports.File({
+      filename: path.join(logDir, 'combined.log'),
+    }),
+  ],
+});
+
+if (process.env.NODE_ENV === 'development') {
+  logger.add(
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.colorize(),
+        winston.format.simple()
+      ),
+    })
+  );
+}
+
+// Add this export
+export { logger };
+```
+
+`utils\validation.ts`:
+
+```ts
+// src/utils/validation.ts
+import Joi from 'joi';
+// Remove import from '../models' since models don't exist anymore
+// We'll import from types instead
+import { Driver, Vehicle, Document } from '../types';
+
+export const validationSchemas = {
+  // Driver validation
+  driver: {
+    create: Joi.object<Partial<Driver>>({
+      licenseNumber: Joi.string().max(50).optional(),
+      licenseExpiry: Joi.date().optional(),
+      insuranceNumber: Joi.string().max(50).optional(),
+      insuranceExpiry: Joi.date().optional(),
+    }),
+
+    update: Joi.object<Partial<Driver>>({
+      licenseNumber: Joi.string().max(50).optional(),
+      licenseExpiry: Joi.date().optional(),
+      insuranceNumber: Joi.string().max(50).optional(),
+      insuranceExpiry: Joi.date().optional(),
+      currentLocation: Joi.string().max(255).optional(),
+    }),
+  },
+
+  matchDrivers: Joi.object({
+    pickupAddress: Joi.string().required(),
+    pickupLat: Joi.number().min(-90).max(90).optional(),
+    pickupLng: Joi.number().min(-180).max(180).optional(),
+    dropoffAddress: Joi.string().optional(),
+    dropoffLat: Joi.number().min(-90).max(90).optional(),
+    dropoffLng: Joi.number().min(-180).max(180).optional(),
+    weight: Joi.number().positive().required(),
+    volume: Joi.number().positive().required(),
+    vehicleType: Joi.string()
+      .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+      .optional(),
+    urgency: Joi.string().valid('normal', 'urgent', 'express').default('normal'),
+    maxDistance: Joi.number().positive().default(20), // km
+  }),
+
+  discoverDrivers: Joi.object({
+    vehicleType: Joi.string()
+      .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+      .optional(),
+    estimatedWeight: Joi.number().positive().optional(),
+    estimatedVolume: Joi.number().positive().optional(),
+    limit: Joi.number().integer().min(1).max(50).default(20),
+    page: Joi.number().integer().min(1).default(1),
+  }),
+
+  // Vehicle validation
+  vehicle: {
+    create: Joi.object({
+      type: Joi.string()
+        .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+        .required(),
+      make: Joi.string().max(50).required(),
+      model: Joi.string().max(50).required(),
+      year: Joi.number().integer().min(1900).max(new Date().getFullYear() + 1).required(),
+      color: Joi.string().max(30).required(),
+      licensePlate: Joi.string().max(20).required(),
+      maxWeight: Joi.number().positive().required(),
+      maxVolume: Joi.number().positive().required(),
+      insuranceInfo: Joi.string().max(500).optional(),
+    }).required(),
+
+    update: Joi.object({
+      type: Joi.string()
+        .valid('motorbike', 'small_van', 'medium_truck', 'large_truck')
+        .optional(),
+      make: Joi.string().max(50).optional(),
+      model: Joi.string().max(50).optional(),
+      year: Joi.number().integer().min(1900).max(new Date().getFullYear() + 1).optional(),
+      color: Joi.string().max(30).optional(),
+      licensePlate: Joi.string().max(20).optional(),
+      maxWeight: Joi.number().positive().optional(),
+      maxVolume: Joi.number().positive().optional(),
+      insuranceInfo: Joi.string().max(500).optional(),
+      currentStatus: Joi.string()
+        .valid('available', 'in_use', 'maintenance')
+        .optional(),
+      isActive: Joi.boolean().optional(),
+    }),
+  },
+
+  // Document validation
+  document: {
+    create: Joi.object<Partial<Document>>({
+      type: Joi.string()
+        .valid('license', 'insurance', 'registration', 'inspection', 'background_check')
+        .required(),
+      name: Joi.string().max(100).required(),
+      expiryDate: Joi.date().optional(),
+    }),
+
+    update: Joi.object<Partial<Document>>({
+      status: Joi.string()
+        .valid('pending', 'approved', 'rejected', 'expired')
+        .optional(),
+      expiryDate: Joi.date().optional(),
+      rejectionReason: Joi.string().max(500).optional(),
+    }),
+  },
+
+  // Availability validation
+  availability: Joi.array().items(
+    Joi.object({
+      dayOfWeek: Joi.number().integer().min(0).max(6).required(),
+      startTime: Joi.string()
+        .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
+        .required()
+        .messages({
+          'string.pattern.base': 'Start time must be in HH:MM format (24-hour)',
+        }),
+      endTime: Joi.string()
+        .pattern(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/)
+        .required()
+        .messages({
+          'string.pattern.base': 'End time must be in HH:MM format (24-hour)',
+        }),
+      isActive: Joi.boolean().default(true),
+    })
+  ).min(0).max(7),
+
+  // Status validation
+  status: Joi.object({
+    isOnline: Joi.boolean().required(),
+    location: Joi.string().max(255).optional(),
+  }),
+
+  // Pagination validation
+  pagination: Joi.object({
+    page: Joi.number().integer().min(1).default(1),
+    limit: Joi.number().integer().min(1).max(100).default(10),
+    sortBy: Joi.string().optional(),
+    sortOrder: Joi.string().valid('asc', 'desc').default('desc'),
+  }),
+
+  // File upload validation
+  fileUpload: Joi.object({
+    fieldname: Joi.string().required(),
+    originalname: Joi.string().required(),
+    encoding: Joi.string().required(),
+    mimetype: Joi.string().required(),
+    size: Joi.number().integer().max(5 * 1024 * 1024).required(), // 5MB max
+    destination: Joi.string().required(),
+    filename: Joi.string().required(),
+    path: Joi.string().required(),
+  }),
+};
+
+export const validate = (schema: Joi.Schema, data: any) => {
+  const { error, value } = schema.validate(data, {
+    abortEarly: false,
+    stripUnknown: true,
+  });
+
+  if (error) {
+    const errors = error.details.map((detail) => ({
+      field: detail.path.join('.'),
+      message: detail.message,
+      type: detail.type,
+    }));
+
+    throw {
+      name: 'ValidationError',
+      message: 'Validation failed',
+      details: errors,
+    };
+  }
+
+  return value;
+};
+
+export const validateQuery = (schema: Joi.Schema, req: any, res: any, next: any) => {
+  try {
+    req.query = validate(schema, req.query);
+    next();
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: error.message,
+        details: error.details,
+      },
+    });
+  }
+};
+
+export const validateBody = (schema: Joi.Schema, req: any, res: any, next: any) => {
+  try {
+    req.body = validate(schema, req.body);
+    next();
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: error.message,
+        details: error.details,
+      },
+    });
+  }
+};
+
+export const validateParams = (schema: Joi.Schema, req: any, res: any, next: any) => {
+  try {
+    req.params = validate(schema, req.params);
+    next();
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: error.message,
+        details: error.details,
+      },
+    });
+  }
+};
+
+// Helper validation functions
+export const isValidEmail = (email: string): boolean => {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+};
+
+export const isValidPhone = (phone: string): boolean => {
+  const phoneRegex = /^\+?[\d\s\-\(\)]{10,}$/;
+  return phoneRegex.test(phone);
+};
+
+export const isValidDate = (date: string): boolean => {
+  const dateObj = new Date(date);
+  return !isNaN(dateObj.getTime());
+};
+
+export const isValidTime = (time: string): boolean => {
+  const timeRegex = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+  return timeRegex.test(time);
+};
+
+export const isValidLicensePlate = (plate: string): boolean => {
+  // Basic license plate validation (adjust based on your country)
+  const plateRegex = /^[A-Z0-9\s\-]{3,10}$/i;
+  return plateRegex.test(plate);
+};
+
+export const isValidDocumentType = (type: string): boolean => {
+  const validTypes = ['license', 'insurance', 'registration', 'inspection', 'background_check'];
+  return validTypes.includes(type);
+};
+
+export const isValidVehicleType = (type: string): boolean => {
+  const validTypes = ['motorbike', 'small_van', 'medium_truck', 'large_truck'];
+  return validTypes.includes(type);
+};
+```

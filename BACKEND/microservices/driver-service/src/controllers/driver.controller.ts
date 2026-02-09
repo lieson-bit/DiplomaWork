@@ -121,6 +121,38 @@ export class DriverController {
     }
   }
 
+  async getVehicleWithDriverPicture(req: Request, res: Response, next: NextFunction) {
+    try {
+      const vehicleId = req.params.id;
+
+      if (!vehicleId) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Vehicle ID is required' 
+        });
+      }
+
+      logger.info(`Getting vehicle with driver picture for vehicle ID: ${vehicleId}`);
+
+      const result = await driverService.getVehicleWithDriverPicture(vehicleId);
+
+      res.json({
+        success: true,
+        data: result
+      });
+    } catch (error: any) {
+      if (error.message === 'Vehicle not found') {
+        return res.status(404).json({
+          success: false,
+          error: error.message
+        });
+      }
+
+      logger.error('Get vehicle with driver picture error:', error);
+      next(error);
+    }
+  }
+
   async getVehicles(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user?.userId;

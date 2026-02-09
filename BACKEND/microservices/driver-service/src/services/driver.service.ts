@@ -574,6 +574,47 @@ export class DriverService {
   return profilePicture;
 }
 
+
+  async getVehicleWithDriverPicture(vehicleId: string): Promise<any> {
+    try {
+      // Get vehicle by ID
+      const vehicle = await this.vehicleRepository.findById(vehicleId);
+      if (!vehicle) {
+        throw new Error('Vehicle not found');
+      }
+
+      // Get driver's profile picture
+      const profilePicture = await this.profilePictureRepository.findByDriverId(vehicle.driverId);
+
+      return {
+        vehicle: {
+          id: vehicle.id,
+          type: vehicle.type,
+          make: vehicle.make,
+          model: vehicle.model,
+          year: vehicle.year,
+          color: vehicle.color,
+          licensePlate: vehicle.licensePlate,
+          maxWeight: vehicle.maxWeight,
+          maxVolume: vehicle.maxVolume,
+          imageUrl: vehicle.imageUrl,
+          currentStatus: vehicle.currentStatus,
+          createdAt: vehicle.createdAt
+        },
+        driverId: vehicle.driverId,
+        profilePicture: profilePicture ? {
+          originalUrl: profilePicture.originalUrl,
+          thumbnailUrl: profilePicture.thumbnailUrl,
+          smallUrl: profilePicture.smallUrl,
+          mediumUrl: profilePicture.mediumUrl
+        } : null
+      };
+    } catch (error: any) {
+      logger.error(`Error getting vehicle with driver picture for vehicle ${vehicleId}:`, error);
+      throw error;
+    }
+  }
+
   async deleteProfilePicture(userId: string): Promise<void> {
     const driver = await this.driverRepository.findByUserId(userId);
     if (!driver) {

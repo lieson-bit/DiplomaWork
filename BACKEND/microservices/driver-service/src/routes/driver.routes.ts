@@ -13,13 +13,17 @@ router.post(
   driverController.findMatchingDrivers
 );
 
-// Route for simple discovery (without distance calculations)
+// Route for simple discovery (without distance calculations) 
 router.get(
   '/drivers/available',
   authenticate,
   validate(validationSchemas.discoverDrivers),
   driverController.discoverDrivers
 );
+
+// Get vehicle with driver's profile picture - Public access
+router.get('/vehicles/:id/driver-picture', driverController.getVehicleWithDriverPicture);
+
 
 // Apply authentication to all routes
 router.use(authenticate);
