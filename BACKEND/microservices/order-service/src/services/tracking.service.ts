@@ -1,9 +1,8 @@
 import { Logger } from '../utils/logger';
 import { WebSocketUtil } from '../utils/websocket.util';
 import { TrackingRepository } from '../repositories/tracking.repository';
-import { OrderRepository } from '../repositories/order.repository';
+import { OrderRepository, Order } from '../repositories/order.repository';
 import { LocationTracking, CreateTrackingData } from '../repositories/tracking.repository';
-import { Order } from '../repositories/order.repository';
 
 export interface LocationUpdate {
   orderId: string;
@@ -88,12 +87,14 @@ export class TrackingService {
       
       await this.trackingRepository.create(trackingData);
 
-      // Update order with current driver location
-      await this.orderRepository.updateOrderDriverLocation(
-        update.orderId,
-        update.latitude,
-        update.longitude
-      );
+      // Update order with current driver location (if driver exists)
+      if (update.driverId) {
+        await this.updateOrderDriverLocation(
+          update.orderId,
+          update.latitude,
+          update.longitude
+        );
+      }
 
       // Broadcast to connected clients
       await this.broadcastLocationUpdate(update);
@@ -133,12 +134,9 @@ export class TrackingService {
         throw new Error(`Order ${orderId} not found`);
       }
 
-      // Get driver ID from order - adjust based on your actual Order type
-      const driverId = (order as any).driver_id || (order as any).driverId || '';
-
       return {
         orderId,
-        driverId,
+        driverId: order.driver_id || '',
         locations: locations.map((loc: LocationTracking) => ({
           latitude: loc.latitude,
           longitude: loc.longitude,
@@ -235,12 +233,17 @@ export class TrackingService {
     try {
       this.logger.info(`Simulating route for order ${orderId}`);
       
-      // Decode polyline to get route points
-      const routePoints = this.decodePolyline(routePolyline);
-      
-      if (routePoints.length < 2) {
-        throw new Error('Invalid route polyline');
+      // Get order to get pickup and delivery coordinates
+      const order = await this.orderRepository.findById(orderId);
+      if (!order) {
+        throw new Error(`Order ${orderId} not found`);
       }
+      
+      // Create route points from pickup to delivery
+      const routePoints = [
+        { lat: order.pickup_latitude, lng: order.pickup_longitude },
+        { lat: order.delivery_latitude, lng: order.delivery_longitude }
+      ];
       
       // Calculate total distance and time
       const totalDistance = this.calculateRouteDistance(routePoints);
@@ -248,20 +251,13 @@ export class TrackingService {
       
       // Generate simulated location updates
       const numUpdates = Math.ceil(totalTimeSeconds / intervalSeconds);
-      const distancePerUpdate = totalDistance / numUpdates;
       
       for (let i = 0; i <= numUpdates; i++) {
         const progress = i / numUpdates;
-        const pointIndex = Math.floor(progress * (routePoints.length - 1));
-        const nextPointIndex = Math.min(pointIndex + 1, routePoints.length - 1);
-        const segmentProgress = (progress * (routePoints.length - 1)) - pointIndex;
         
-        // Interpolate between points
-        const currentPoint = routePoints[pointIndex];
-        const nextPoint = routePoints[nextPointIndex];
-        
-        const lat = currentPoint.lat + (nextPoint.lat - currentPoint.lat) * segmentProgress;
-        const lng = currentPoint.lng + (nextPoint.lng - currentPoint.lng) * segmentProgress;
+        // Interpolate between pickup and delivery
+        const lat = order.pickup_latitude + (order.delivery_latitude - order.pickup_latitude) * progress;
+        const lng = order.pickup_longitude + (order.delivery_longitude - order.pickup_longitude) * progress;
         
         // Create simulated update
         const update: LocationUpdate = {
@@ -270,7 +266,10 @@ export class TrackingService {
           latitude: lat,
           longitude: lng,
           speed: speedKph,
-          bearing: this.calculateBearing(currentPoint, nextPoint),
+          bearing: this.calculateBearing(
+            { lat: order.pickup_latitude, lng: order.pickup_longitude },
+            { lat: order.delivery_latitude, lng: order.delivery_longitude }
+          ),
           accuracy: 10, // 10 meter accuracy in simulation
           batteryLevel: 80 - Math.floor(i * (20 / numUpdates)), // Simulate battery drain
           timestamp: new Date(Date.now() + i * intervalSeconds * 1000)
@@ -305,18 +304,16 @@ export class TrackingService {
         throw new Error(`Order ${orderId} not found`);
       }
       
-      // Cast to any to access properties or adjust based on your actual Order interface
-      const orderAny = order as any;
-      
       switch (format) {
         case 'json':
           return {
             order: {
-              id: orderAny.id,
-              order_number: orderAny.order_number || orderAny.orderNumber,
-              status: orderAny.status,
-              pickup_address: orderAny.pickup_address || orderAny.pickupAddress,
-              delivery_address: orderAny.delivery_address || orderAny.deliveryAddress
+              id: order.id,
+              order_number: order.order_number,
+              status: order.status,
+              pickup_address: order.pickup_address,
+              delivery_address: order.delivery_address,
+              driver_name: order.driver_name
             },
             tracking: trackingData
           };
@@ -364,6 +361,22 @@ export class TrackingService {
     }
   }
 
+  private async updateOrderDriverLocation(
+    orderId: string,
+    latitude: number,
+    longitude: number
+  ): Promise<void> {
+    try {
+      // Note: Your orders table doesn't have driver location columns
+      // If you want to track current driver location in orders table,
+      // you would need to add driver_current_lat and driver_current_lng columns
+      this.logger.debug(`Driver location: ${latitude}, ${longitude} for order ${orderId}`);
+      // For now, just log it
+    } catch (error) {
+      this.logger.warn(`Failed to update driver location for order ${orderId}:`, error);
+    }
+  }
+
   private async broadcastLocationUpdate(update: LocationUpdate): Promise<void> {
     const connections = this.liveConnections.get(update.orderId);
     if (connections && connections.size > 0) {
@@ -394,12 +407,9 @@ export class TrackingService {
         return;
       }
       
-      // Cast to any to access properties or adjust based on your actual Order interface
-      const orderAny = order as any;
-      
       // Check if delivery coordinates exist
-      const deliveryLatitude = orderAny.delivery_latitude || orderAny.deliveryLatitude;
-      const deliveryLongitude = orderAny.delivery_longitude || orderAny.deliveryLongitude;
+      const deliveryLatitude = order.delivery_latitude;
+      const deliveryLongitude = order.delivery_longitude;
       
       if (!deliveryLatitude || !deliveryLongitude) {
         return;
@@ -420,8 +430,7 @@ export class TrackingService {
       const currentSpeed = latestLocation.speed || 30; // km/h
       const etaMinutes = (distance / currentSpeed) * 60;
       
-      // Update order with ETA - you'll need to add this method to OrderRepository
-      // For now, we'll just log it
+      // Log ETA
       this.logger.info(`ETA for order ${orderId}: ${Math.round(etaMinutes)} minutes, distance: ${distance.toFixed(2)} km`);
       
       // Broadcast ETA update
@@ -430,7 +439,7 @@ export class TrackingService {
         const event: LiveTrackingEvent = {
           type: 'eta_update',
           orderId,
-          data: { etaMinutes: Math.round(etaMinutes), distance },
+          data: { etaMinutes: Math.round(etaMinutes), distance: parseFloat(distance.toFixed(2)) },
           timestamp: new Date()
         };
         
@@ -590,4 +599,3 @@ export class TrackingService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
-
