@@ -151,6 +151,11 @@ export interface CreateOrderData {
   total_price?: number;
   driver_earnings?: number;
   
+  // Communication fields (NEW - these are in the database)
+  unread_customer_messages?: number;
+  unread_driver_messages?: number;
+  route_order_index?: number;
+  
   // Route info
   estimated_distance_km?: number;
   estimated_duration_minutes?: number;

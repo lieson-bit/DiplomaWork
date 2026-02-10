@@ -230,7 +230,12 @@ export class OrderService {
     
     // Additional info
     customer_notes: `Urgency: ${jsonData.packageDetails.urgencyLabel}, Category: ${jsonData.packageDetails.categoryLabel}`,
-    is_bulk_order: false
+    is_bulk_order: false,
+    
+    // FIXED: Add missing fields that are in the database but not in the interface
+    unread_customer_messages: 0,
+    unread_driver_messages: 0,
+    route_order_index: 0
   };
 }
   
