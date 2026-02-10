@@ -15,7 +15,7 @@ export class OrderService {
   private websocketUtil: WebSocketUtil;
   private capacityOptimizationService: CapacityOptimizationService;
   private orderRepository: OrderRepository;
-  private trackingRepository: TrackingRepository; 
+  private trackingRepository: TrackingRepository;
 
   constructor(websocketUtil: WebSocketUtil, notificationService?: NotificationService) {
     this.logger = new Logger('OrderService');
@@ -25,83 +25,116 @@ export class OrderService {
     this.balanceService = new BalanceService();
     this.capacityOptimizationService = new CapacityOptimizationService();
     this.orderRepository = new OrderRepository();
-    this.trackingRepository = new TrackingRepository(); // Initialize tracking repository
+    this.trackingRepository = new TrackingRepository();
   }
-  
-  // Main method to create order from your exact structure
-  async createOrderFromRequest(orderData: any): Promise<any> {
-    try {
-      this.logger.info(`Processing order: ${orderData.orderId}`);
 
-       const dbOrderData = this.transformOrderData(orderData);
-      
-      // 1. Check driver capacity
-      const capacityCheck = await this.checkDriverCapacity(
-        orderData.driverInfo.driverId,
-        orderData
-      );
-      
-      if (!capacityCheck.canAccept) {
-        // Notify customer that booking failed
-        await this.notificationService.sendOrderNotification(
-          orderData.customerInfo.id,
-          orderData.orderId,
-          'booking_failed',
-          {
-            reason: capacityCheck.reason,
-            recommendations: capacityCheck.recommendations
-          }
+  // Transform external order data to match your database schema
+  async createOrderFromExternalRequest(externalData: any): Promise<any> {
+    try {
+      this.logger.info(`Creating order from external request: ${externalData.orderId}`);
+
+      // Transform to your database schema
+      const dbOrderData: CreateOrderData = {
+        order_number: externalData.orderId || undefined, // Use provided orderId or generate
+        customer_id: externalData.customerInfo?.id,
+        customer_name: externalData.customerInfo?.name,
+        customer_email: externalData.customerInfo?.email,
+        customer_phone: externalData.customerInfo?.phone,
+        
+        // Pickup location
+        pickup_address: externalData.locations?.pickup?.address,
+        pickup_latitude: externalData.locations?.pickup?.coordinates?.lat,
+        pickup_longitude: externalData.locations?.pickup?.coordinates?.lng,
+        
+        // Delivery location
+        delivery_address: externalData.locations?.delivery?.address,
+        delivery_latitude: externalData.locations?.delivery?.coordinates?.lat,
+        delivery_longitude: externalData.locations?.delivery?.coordinates?.lng,
+        distance_km: externalData.locations?.distance?.km,
+        
+        // Package details
+        package_category: externalData.packageDetails?.categoryLabel || 'General',
+        weight_kg: externalData.packageDetails?.weight?.value,
+        volume_m3: externalData.packageDetails?.volume?.value,
+        urgency: this.mapUrgency(externalData.packageDetails?.urgency),
+        
+        // Special requirements
+        fragile: externalData.specialRequirements?.fragile || false,
+        refrigerated: externalData.specialRequirements?.refrigerated || false,
+        oversized: externalData.specialRequirements?.oversized || false,
+        hazardous: externalData.specialRequirements?.hazardous || false,
+        
+        // Driver info (if provided)
+        driver_id: externalData.driverInfo?.driverId,
+        driver_name: externalData.driverInfo?.name,
+        driver_phone: externalData.driverInfo?.phone,
+        driver_email: externalData.driverInfo?.email,
+        driver_rating: externalData.driverInfo?.rating,
+        driver_match_score: externalData.driverInfo?.matchScore,
+        
+        // Vehicle info (if provided)
+        vehicle_type: externalData.vehicleInfo?.typeFormatted,
+        vehicle_make: externalData.vehicleInfo?.make,
+        vehicle_model: externalData.vehicleInfo?.model,
+        vehicle_license_plate: externalData.vehicleInfo?.licensePlate,
+        vehicle_image_url: externalData.vehicleInfo?.imageUrl,
+        vehicle_max_weight: externalData.vehicleInfo?.capacity?.maxWeight,
+        vehicle_max_volume: externalData.vehicleInfo?.capacity?.maxVolume,
+        
+        // Pricing
+        estimated_price_usd: externalData.pricing?.estimatedPrice?.usd || 0,
+        estimated_price_local: externalData.pricing?.estimatedPrice?.rub || 0,
+        currency: 'USD',
+        base_currency: 'RUB',
+        
+        // Timing
+        estimated_duration_minutes: externalData.timing?.estimatedDuration?.minutes,
+        pickup_time_estimated: externalData.timing?.pickupTime?.estimated 
+          ? new Date(externalData.timing.pickupTime.estimated) 
+          : null,
+        delivery_time_estimated: externalData.timing?.deliveryTime?.estimated 
+          ? new Date(externalData.timing.deliveryTime.estimated) 
+          : null,
+        
+        // Status - always start as pending
+        status: 'pending' as any
+      };
+
+      // Check driver capacity if driver is assigned
+      if (externalData.driverInfo?.driverId) {
+        const capacityCheck = await this.checkDriverCapacity(
+          externalData.driverInfo.driverId,
+          dbOrderData
         );
         
-        return {
-          success: false,
-          orderId: orderData.orderId,
-          reason: capacityCheck.reason,
-          recommendations: capacityCheck.recommendations,
-          message: 'Booking failed - driver capacity exceeded'
-        };
+        if (!capacityCheck.canAccept) {
+          return {
+            success: false,
+            message: 'Driver capacity exceeded',
+            reason: capacityCheck.reason,
+            recommendations: capacityCheck.recommendations
+          };
+        }
       }
-      
-      // 2. Create order in database
+
+      // Create order in database
       const order = await this.orderRepository.create(dbOrderData);
       
-      // 3. Send notification to driver to accept/reject
-      await this.notificationService.sendOrderNotification(
-        orderData.driverInfo.driverId,
-        orderData.orderId,
-        'order_assigned',
-        {
-          orderId: orderData.orderId,
-          orderNumber: order.order_number,
-          customerName: orderData.customerInfo.name,
-          pickupAddress: orderData.locations.pickup.address,
-          deliveryAddress: orderData.locations.delivery.address,
-          estimatedPrice: orderData.pricing.estimatedPrice.usd,
-          estimatedDuration: orderData.timing.estimatedDuration.minutes,
-          packageWeight: orderData.packageDetails.weight.value,
-          packageVolume: orderData.packageDetails.volume.value
-        }
-      );
+      // If driver is assigned, notify them
+      if (order.driver_id) {
+        await this.notifyDriverAssignment(order);
+      }
       
-      // 4. Send real-time update to customer via WebSocket
-      await this.websocketUtil.sendToUser(
-        orderData.customerInfo.id,
-        'order_pending_driver_acceptance',
-        { 
-          orderId: orderData.orderId,
-          orderNumber: order.order_number,
-          driverName: orderData.driverInfo.name,
-          driverRating: orderData.driverInfo.rating,
-          vehicleType: orderData.vehicleInfo.typeFormatted,
-          message: 'Order created. Waiting for driver acceptance...'
-        }
-      );
+      // Notify customer
+      await this.notifyCustomerOrderCreated(order);
+      
+      // Send WebSocket updates
+      await this.sendOrderCreationUpdates(order, externalData.customerInfo?.id);
       
       return {
         success: true,
-        order: this.formatOrderForUI(order, orderData),
-        capacityCheck,
-        message: 'Order created successfully. Waiting for driver acceptance.'
+        order: this.formatOrderResponse(order),
+        message: 'Order created successfully'
       };
       
     } catch (error: unknown) {
@@ -110,199 +143,46 @@ export class OrderService {
       throw new Error(`Order creation failed: ${errorMessage}`);
     }
   }
-  
-  // Check driver capacity before accepting order
-  private async checkDriverCapacity(driverId: string, orderData: any): Promise<any> {
+
+  // Check driver capacity
+  private async checkDriverCapacity(driverId: string, orderData: CreateOrderData): Promise<any> {
     try {
-      // Convert order data to capacity format
       const orderCapacity = {
-        orderId: orderData.orderId,
-        weight: orderData.packageDetails.weight.value,
-        volume: orderData.packageDetails.volume.value,
-        priority: orderData.packageDetails.urgency || 'normal',
+        orderId: orderData.order_number || 'temp',
+        weight: orderData.weight_kg,
+        volume: orderData.volume_m3,
+        priority: orderData.urgency || 'normal',
         pickupLocation: {
-          lat: orderData.locations.pickup.coordinates.lat,
-          lng: orderData.locations.pickup.coordinates.lng
+          lat: orderData.pickup_latitude,
+          lng: orderData.pickup_longitude
         },
         deliveryLocation: {
-          lat: orderData.locations.delivery.coordinates.lat,
-          lng: orderData.locations.delivery.coordinates.lng
-        },
-        estimatedValue: orderData.pricing.estimatedPrice.usd
+          lat: orderData.delivery_latitude,
+          lng: orderData.delivery_longitude
+        }
       };
       
-      // Get driver's active orders
-      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
-        status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
-      });
-      
-      // Convert active orders to capacity format
-      const existingOrdersCapacity = activeOrders.map(order => ({
-        orderId: order.id,
-        weight: order.total_weight_kg,
-        volume: order.total_volume_m3,
-        priority: order.priority || 'normal',
-        pickupLocation: {
-          lat: order.pickup_latitude,
-          lng: order.pickup_longitude
-        },
-        deliveryLocation: {
-          lat: order.delivery_latitude,
-          lng: order.delivery_longitude
-        }
-      }));
-      
-      // Check capacity with existing orders
       const capacityResult = await this.capacityOptimizationService.canDriverAcceptOrder(
         driverId,
-        orderCapacity,
-        existingOrdersCapacity
+        orderCapacity
       );
       
       return capacityResult;
       
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Capacity check failed:', errorMessage);
-      
-      // Default to allowing order if capacity check fails
+      this.logger.warn('Capacity check failed, defaulting to allow:', error);
       return {
         canAccept: true,
         reason: 'Capacity check unavailable',
-        capacityCheck: {
-          weight: { required: 0, available: 100, passes: true },
-          volume: { required: 0, available: 10, passes: true },
-          orders: { required: 1, available: 10, passes: true }
-        },
-        estimatedUtilization: { weight: 0, volume: 0, orders: 0 },
         recommendations: []
       };
     }
   }
 
-  private transformOrderData(jsonData: any): CreateOrderData {
-  const totalPrice = jsonData.pricing?.estimatedPrice?.usd || 0;
-  
-  return {
-    order_number: jsonData.orderId,
-    customer_id: jsonData.customerInfo.id,
-    driver_id: jsonData.driverInfo.driverId,
-    
-    // Pickup info
-    pickup_address: jsonData.locations.pickup.address,
-    pickup_latitude: jsonData.locations.pickup.coordinates.lat,
-    pickup_longitude: jsonData.locations.pickup.coordinates.lng,
-    pickup_contact_name: jsonData.customerInfo.name,
-    pickup_contact_phone: jsonData.customerInfo.phone,
-    pickup_instructions: jsonData.specialRequirements.requirementsList?.join(', ') || null,
-    
-    // Delivery info
-    delivery_address: jsonData.locations.delivery.address,
-    delivery_latitude: jsonData.locations.delivery.coordinates.lat,
-    delivery_longitude: jsonData.locations.delivery.coordinates.lng,
-    delivery_contact_name: jsonData.customerInfo.name,
-    delivery_contact_phone: jsonData.customerInfo.phone,
-    
-    // Package info
-    total_weight_kg: jsonData.packageDetails.weight.value,
-    total_volume_m3: jsonData.packageDetails.volume.value,
-    package_description: `${jsonData.packageDetails.categoryLabel} - ${jsonData.packageDetails.weight.value}kg, ${jsonData.packageDetails.volume.value}m³`,
-    fragile_items: jsonData.specialRequirements.fragile,
-    temperature_controlled: jsonData.specialRequirements.refrigerated,
-    
-    // Pricing - all calculated from total
-    total_price: totalPrice,
-    subtotal_price: totalPrice,
-    base_price: totalPrice * 0.3,
-    distance_fee: totalPrice * 0.5,
-    weight_fee: totalPrice * 0.1,
-    volume_fee: totalPrice * 0.1,
-    platform_fee: totalPrice * 0.15,
-    platform_fee_percent: 15.00,
-    driver_earnings: totalPrice * 0.8,
-    
-    // Route info
-    estimated_distance_km: jsonData.locations.distance.km,
-    estimated_duration_minutes: jsonData.timing.estimatedDuration.minutes,
-    
-    // Status
-    priority: jsonData.packageDetails.urgency || 'normal',
-    
-    // Additional info
-    customer_notes: `Urgency: ${jsonData.packageDetails.urgencyLabel}, Category: ${jsonData.packageDetails.categoryLabel}`,
-    is_bulk_order: false,
-    
-    // FIXED: Add missing fields that are in the database but not in the interface
-    unread_customer_messages: 0,
-    unread_driver_messages: 0,
-    route_order_index: 0
-  };
-}
-  
-  // Convert your structure to database format
-  private async createOrderRecord(data: any): Promise<Order> {
-    const orderPayload: CreateOrderData = {
-      order_number: data.orderId,
-      customer_id: data.customerInfo.id,
-      driver_id: data.driverInfo.driverId,
-      
-      // Pickup Information
-      pickup_address: data.locations.pickup.address,
-      pickup_latitude: data.locations.pickup.coordinates.lat,
-      pickup_longitude: data.locations.pickup.coordinates.lng,
-      pickup_contact_name: data.customerInfo.name,
-      pickup_contact_phone: data.customerInfo.phone,
-      pickup_instructions: data.specialRequirements.requirementsList?.join(', ') || '',
-      
-      // Delivery Information
-      delivery_address: data.locations.delivery.address,
-      delivery_latitude: data.locations.delivery.coordinates.lat,
-      delivery_longitude: data.locations.delivery.coordinates.lng,
-      delivery_contact_name: data.customerInfo.name,
-      delivery_contact_phone: data.customerInfo.phone,
-      delivery_instructions: '',
-      
-      // Package Information
-      total_weight_kg: data.packageDetails.weight.value,
-      total_volume_m3: data.packageDetails.volume.value,
-      package_description: `${data.packageDetails.categoryLabel} - ${data.packageDetails.weight.value}kg, ${data.packageDetails.volume.value}m³`,
-      fragile_items: data.specialRequirements.fragile,
-      temperature_controlled: data.specialRequirements.refrigerated,
-      
-      // Pricing
-      base_price: data.pricing.estimatedPrice.usd * 0.3, // 30% base
-      distance_fee: data.pricing.estimatedPrice.usd * 0.5, // 50% distance
-      weight_fee: data.pricing.estimatedPrice.usd * 0.1, // 10% weight
-      volume_fee: data.pricing.estimatedPrice.usd * 0.1, // 10% volume
-      total_price: data.pricing.estimatedPrice.usd,
-      subtotal_price: data.pricing.estimatedPrice.usd,
-      
-      // Route Information
-      estimated_distance_km: data.locations.distance.km,
-      estimated_duration_minutes: data.timing.estimatedDuration.minutes,
-      
-      // Status
-      priority: data.packageDetails.urgency || 'normal',
-      
-      // Additional
-      customer_notes: `Urgency: ${data.packageDetails.urgencyLabel}, Category: ${data.packageDetails.categoryLabel}`,
-      is_bulk_order: false,
-
-      // Initialize communication fields
-      unread_customer_messages: 0,
-      unread_driver_messages: 0,
-
-      // Initialize route order index
-      route_order_index: 0
-    };
-    
-    return await this.orderRepository.create(orderPayload);
-  }
-  
-  // Driver accepts the order
+  // Driver accepts/rejects order
   async acceptOrder(orderId: string, driverId: string): Promise<any> {
     try {
-      const order = await this.orderRepository.findByOrderNumber(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -311,59 +191,42 @@ export class OrderService {
         throw new Error('Driver not assigned to this order');
       }
       
-      // Update order status
-      const updatedOrder = await this.orderRepository.update(order.id, {
-        status: 'driver_accepted',
-        accepted_at: new Date()
-      });
+      // Update driver acceptance
+      await this.orderRepository.updateDriverAcceptance(orderId, true);
       
-      if (!updatedOrder) {
-        throw new Error('Failed to update order');
-      }
+      // Update status to driver_assigned
+      await this.orderRepository.updateStatus(orderId, 'driver_assigned');
       
-      // Send notification to customer
-      await this.notificationService.sendOrderNotification(
-        order.customer_id,
-        orderId,
-        'driver_accepted',
-        {
-          driverName: await this.getDriverName(driverId),
-          driverRating: await this.getDriverRating(driverId),
-          vehicleInfo: await this.getVehicleInfo(driverId),
-          estimatedArrival: 'Calculating...'
-        }
-      );
+      // Notify customer
+      await this.notifyCustomerDriverAccepted(order);
       
-      // Send real-time updates
+      // Send WebSocket update
       await this.websocketUtil.sendToUser(
         order.customer_id,
-        'order_status_changed',
+        'driver_accepted',
         {
           orderId: order.order_number,
-          status: 'driver_accepted',
-          message: 'Driver has accepted your order',
-          driverId,
-          timestamp: new Date().toISOString()
+          driverName: order.driver_name,
+          driverRating: order.driver_rating,
+          vehicleType: order.vehicle_type,
+          message: 'Driver has accepted your order'
         }
       );
       
-      // Start simulation if this is the first order for driver today
-      const driverOrders = await this.orderRepository.findByDriverId(driverId, {
-        status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+      // Start route simulation if this is driver's first active order
+      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
+        status: ['driver_assigned', 'route_to_pickup', 'in_transit']
       });
       
-      if (driverOrders.length === 1) {
+      if (activeOrders.length === 1) {
         // Start simulation for this order
-        await this.startRouteSimulation(order.id, driverId);
-      } else if (driverOrders.length > 1) {
-        // Re-optimize route for multiple orders
-        await this.optimizeAndSimulateDriverRoute(driverId);
+        await this.startRouteSimulation(orderId, driverId);
       }
       
       return {
         success: true,
-        order: this.formatOrderForUI(updatedOrder, null),
-        message: 'Order accepted successfully'
+        message: 'Order accepted successfully',
+        order: this.formatOrderResponse(order)
       };
       
     } catch (error: unknown) {
@@ -372,11 +235,10 @@ export class OrderService {
       throw error;
     }
   }
-  
-  // Driver rejects the order
+
   async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
     try {
-      const order = await this.orderRepository.findByOrderNumber(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -385,29 +247,17 @@ export class OrderService {
         throw new Error('Driver not assigned to this order');
       }
       
-      // Update order status to cancelled
-      const updatedOrder = await this.orderRepository.update(order.id, {
-        status: 'cancelled',
-        cancelled_at: new Date(),
-        driver_notes: reason || 'Driver rejected the order'
-      });
+      // Update driver acceptance (rejected)
+      await this.orderRepository.updateDriverAcceptance(orderId, false);
+      
+      // Update status to cancelled
+      await this.orderRepository.updateStatus(orderId, 'cancelled');
       
       // Notify customer
-      await this.notificationService.sendOrderNotification(
-        order.customer_id,
-        orderId,
-        'order_cancelled',
-        {
-          reason: reason || 'Driver unavailable',
-          message: 'We are looking for another driver for your order'
-        }
-      );
-      
-      // TODO: Implement logic to find another driver
+      await this.notifyCustomerDriverRejected(order, reason);
       
       return {
         success: true,
-        orderId,
         message: 'Order rejected successfully'
       };
       
@@ -417,363 +267,90 @@ export class OrderService {
       throw error;
     }
   }
-  
-  // Start route simulation for an order
-  private async startRouteSimulation(orderId: string, driverId: string): Promise<void> {
+
+  // Update order status through workflow
+  async updateOrderStatus(
+    orderId: string,
+    driverId: string,
+    status: Order['status'],
+    location?: { latitude: number; longitude: number }
+  ): Promise<any> {
     try {
       const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
       
-      // Simulate driver moving from current location to pickup
-      await this.simulateMovement(
-        orderId,
-        driverId,
-        { lat: 59.925209, lng: 30.34174539999999 }, // Default starting point (St. Petersburg center)
-        { lat: order.pickup_latitude, lng: order.pickup_longitude },
-        'to_pickup'
-      );
+      if (order.driver_id !== driverId) {
+        throw new Error('Driver not authorized to update this order');
+      }
       
-      // Update status to driver_enroute
-      await this.orderRepository.update(orderId, {
-        status: 'driver_enroute',
-        driver_enroute_at: new Date()
-      });
+      // Validate status transition
+      if (!this.isValidStatusTransition(order.status, status)) {
+        throw new Error(`Invalid status transition from ${order.status} to ${status}`);
+      }
       
-      // Notify customer
-      await this.notificationService.sendOrderNotification(
-        order.customer_id,
-        order.order_number,
-        'driver_enroute',
-        {
-          message: 'Driver is on the way to pickup location',
-          estimatedArrival: '10-15 minutes'
-        }
-      );
+      // Update status
+      await this.orderRepository.updateStatus(orderId, status);
       
-      // After pickup simulation, simulate delivery
-      setTimeout(async () => {
-        await this.simulateMovement(
-          orderId,
-          driverId,
-          { lat: order.pickup_latitude, lng: order.pickup_longitude },
-          { lat: order.delivery_latitude, lng: order.delivery_longitude },
-          'to_delivery'
-        );
-        
-        // Update status to delivered
-        await this.orderRepository.update(orderId, {
-          status: 'delivered',
-          delivered_at: new Date(),
-          completed_at: new Date()
+      // Update specific timestamps based on status
+      switch (status) {
+        case 'route_to_pickup':
+          // No specific timestamp in your schema
+          break;
+        case 'in_transit':
+          await this.orderRepository.updateDeliveryTiming(orderId, true);
+          break;
+        case 'delivered':
+          await this.orderRepository.updateDeliveryTiming(orderId, false);
+          break;
+        case 'completed':
+          // Process payment when order is completed
+          await this.processOrderPayment(orderId);
+          break;
+      }
+      
+      // Update location if provided
+      if (location && order.driver_id) {
+        await this.trackingRepository.create({
+          order_id: orderId,
+          driver_id: order.driver_id,
+          latitude: location.latitude,
+          longitude: location.longitude
         });
-        
-        // Process payment
-        await this.processPayment(orderId, order.customer_id, driverId, order.total_price);
-        
-        // Notify customer
-        await this.notificationService.sendOrderNotification(
-          order.customer_id,
-          order.order_number,
-          'order_delivered',
-          {
-            message: 'Your order has been delivered successfully',
-            deliveryTime: new Date().toLocaleTimeString()
-          }
-        );
-        
-        // Ask for rating
-        await this.websocketUtil.sendToUser(
-          order.customer_id,
-          'request_rating',
-          {
-            orderId: order.order_number,
-            driverId,
-            driverName: await this.getDriverName(driverId),
-            message: 'How was your delivery experience?'
-          }
-        );
-        
-      }, 30000); // Wait 30 seconds for pickup simulation
+      }
+      
+      // Notify customer about status change
+      await this.notifyCustomerStatusChange(order, status);
+      
+      return {
+        success: true,
+        message: `Order status updated to ${status}`,
+        order: this.formatOrderResponse(await this.orderRepository.findById(orderId) as Order)
+      };
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Route simulation failed:', errorMessage);
+      this.logger.error('Failed to update order status:', errorMessage);
+      throw error;
     }
   }
-  
-  // Simulate driver movement between points
-  private async simulateMovement(
-    orderId: string,
-    driverId: string,
-    startPoint: { lat: number; lng: number },
-    endPoint: { lat: number; lng: number },
-    phase: 'to_pickup' | 'to_delivery'
-  ): Promise<void> {
-    const steps = 10; // Number of simulation steps
-    const interval = 5000; // 5 seconds between updates
-    
-    for (let i = 0; i <= steps; i++) {
-      const progress = i / steps;
-      
-      // Calculate intermediate point
-      const currentLat = startPoint.lat + (endPoint.lat - startPoint.lat) * progress;
-      const currentLng = startPoint.lng + (endPoint.lng - startPoint.lng) * progress;
-      
-      // Create tracking point
-      await this.trackingRepository.create({
-        order_id: orderId,
-        driver_id: driverId,
-        latitude: currentLat,
-        longitude: currentLng,
-        speed: 30 + Math.random() * 20, // Random speed 30-50 km/h
-        bearing: this.calculateBearing(startPoint.lat, startPoint.lng, endPoint.lat, endPoint.lng),
-        accuracy: 10
-      });
-      
-      // Update order with current location
-      await this.orderRepository.updateOrderDriverLocation(orderId, currentLat, currentLng);
-      
-      // Get order for customer ID
-      const order = await this.orderRepository.findById(orderId);
-      if (order) {
-        // Send real-time location update to customer
-        await this.websocketUtil.sendToUser(
-          order.customer_id,
-          'location_update',
-          {
-            orderId: order.order_number,
-            location: { lat: currentLat, lng: currentLng },
-            phase,
-            progress: Math.round(progress * 100),
-            timestamp: new Date().toISOString()
-          }
-        );
-      }
-      
-      // Update status based on progress
-      if (phase === 'to_pickup' && progress >= 0.5 && i === Math.floor(steps / 2)) {
-        await this.orderRepository.update(orderId, {
-          status: 'pickup_started',
-          pickup_started_at: new Date()
-        });
-        
-        if (order) {
-          await this.notificationService.sendOrderNotification(
-            order.customer_id,
-            order.order_number,
-            'pickup_started',
-            {
-              message: 'Driver has started pickup',
-              timestamp: new Date().toISOString()
-            }
-          );
-        }
-      }
-      
-      if (phase === 'to_delivery' && progress >= 0.5 && i === Math.floor(steps / 2)) {
-        await this.orderRepository.update(orderId, {
-          status: 'in_transit',
-          in_transit_at: new Date()
-        });
-        
-        if (order) {
-          await this.notificationService.sendOrderNotification(
-            order.customer_id,
-            order.order_number,
-            'in_transit',
-            {
-              message: 'Order is in transit to delivery location',
-              timestamp: new Date().toISOString()
-            }
-          );
-        }
-      }
-      
-      // Wait before next update
-      await this.delay(interval);
-    }
-  }
-  
-  // Optimize and simulate route for multiple orders
-  private async optimizeAndSimulateDriverRoute(driverId: string): Promise<void> {
-    try {
-      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
-        status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
-      });
-      
-      if (activeOrders.length <= 1) return;
-      
-      // Convert to capacity format for optimization
-      const orderCapacities = activeOrders.map(order => ({
-        orderId: order.id,
-        weight: order.total_weight_kg,
-        volume: order.total_volume_m3,
-        priority: order.priority || 'normal',
-        pickupLocation: {
-          lat: order.pickup_latitude,
-          lng: order.pickup_longitude
-        },
-        deliveryLocation: {
-          lat: order.delivery_latitude,
-          lng: order.delivery_longitude
-        }
-      }));
-      
-      // Get optimized route
-      const optimization = await this.capacityOptimizationService.optimizeMultipleOrders(
-        driverId,
-        orderCapacities
-      );
-      
-      // Update orders with sequence
-      for (const orderId of optimization.optimalSequence) {
-        const order = activeOrders.find(o => o.id === orderId);
-        if (order) {
-          const sequenceIndex = optimization.optimalSequence.indexOf(orderId);
-          await this.orderRepository.update(orderId, {
-            route_order_index: sequenceIndex + 1
-          });
-        }
-      } 
-      
-      // Send optimized route to driver
-      await this.websocketUtil.sendToUser(
-        driverId,
-        'route_optimized',
-        {
-          optimization,
-          message: `Optimized route for ${activeOrders.length} orders`,
-          totalDistance: optimization.totalDistance || 0,
-          totalDuration: optimization.totalDuration || 0,
-          sequence: optimization.optimalSequence.map((id: string, index: number) => {
-            const order = activeOrders.find(o => o.id === id);
-            return {
-              sequence: index + 1,
-              orderNumber: order?.order_number,
-              address: order?.delivery_address
-            };
-          })
-        }
-      );
-      
-      // Start simulation for optimized route
-      await this.simulateOptimizedRoute(driverId, optimization, activeOrders);
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Route optimization failed:', errorMessage);
-    }
-  }
-  
-  // Simulate optimized route
-  private async simulateOptimizedRoute(
-    driverId: string,
-    optimization: any,
-    orders: Order[]
-  ): Promise<void> {
-    // Get driver's current location (simulated)
-    const startPoint = { lat: 59.925209, lng: 30.34174539999999 };
-    
-    // Follow the optimized sequence
-    for (const orderId of optimization.optimalSequence) {
-      const order = orders.find(o => o.id === orderId);
-      if (!order) continue;
-      
-      // Simulate to pickup
-      await this.simulateMovement(
-        order.id,
-        driverId,
-        startPoint,
-        { lat: order.pickup_latitude, lng: order.pickup_longitude },
-        'to_pickup'
-      );
-      
-      // Update start point to pickup location for next iteration
-      startPoint.lat = order.pickup_latitude;
-      startPoint.lng = order.pickup_longitude;
-      
-      // Simulate to delivery
-      await this.simulateMovement(
-        order.id,
-        driverId,
-        startPoint,
-        { lat: order.delivery_latitude, lng: order.delivery_longitude },
-        'to_delivery'
-      );
-      
-      // Update start point to delivery location for next iteration
-      startPoint.lat = order.delivery_latitude;
-      startPoint.lng = order.delivery_longitude;
-      
-      // Mark order as delivered
-      await this.orderRepository.update(order.id, {
-        status: 'delivered',
-        delivered_at: new Date(),
-        completed_at: new Date()
-      });
-      
-      // Process payment
-      await this.processPayment(order.id, order.customer_id, driverId, order.total_price);
-      
-      // Notify customer
-      await this.notificationService.sendOrderNotification(
-        order.customer_id,
-        order.order_number,
-        'order_delivered',
-        {
-          message: 'Your order has been delivered successfully',
-          deliveryTime: new Date().toLocaleTimeString()
-        }
-      );
-    }
-  }
-  
-  // Process payment
-  private async processPayment(
-    orderId: string,
-    customerId: string,
-    driverId: string,
-    amount: number
-  ): Promise<void> {
-    try {
-      await this.balanceService.processOrderPayment(
-        customerId,
-        driverId,
-        amount,
-        orderId
-      );
-      
-      this.logger.info(`Payment processed: $${amount} from customer ${customerId} to driver ${driverId}`);
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Payment processing failed:', errorMessage);
-      // Retry logic could be implemented here
-    }
-  }
-  
-  // Get order with full details
-  async getOrder(orderId: string, includeOptimization: boolean = false): Promise<any> {
+
+  // Get order details
+  async getOrder(orderId: string): Promise<any> {
     try {
       const order = await this.orderRepository.findById(orderId);
       if (!order) {
+        // Try by order number
         const orderByNumber = await this.orderRepository.findByOrderNumber(orderId);
         if (!orderByNumber) {
           throw new Error('Order not found');
         }
-        return await this.getOrder(orderByNumber.id, includeOptimization);
+        return await this.getOrder(orderByNumber.id);
       }
       
       // Get tracking data
       const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 50 });
-      
-      // Get driver info
-      const driverInfo = order.driver_id ? await this.getDriverInfo(order.driver_id) : null;
-      
-      // Get vehicle info
-      const vehicleInfo = order.driver_id ? await this.getVehicleInfo(order.driver_id) : null;
       
       // Get messages
       const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
@@ -781,75 +358,8 @@ export class OrderService {
       // Calculate progress
       const progress = this.calculateOrderProgress(order);
       
-      // Get optimization if requested and driver has multiple orders
-      let optimization = null;
-      if (includeOptimization && order.driver_id) {
-        const driverOrders = await this.orderRepository.findByDriverId(order.driver_id, {
-          status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
-        });
-        
-        if (driverOrders.length > 1) {
-          optimization = await this.getOptimizationForDriver(order.driver_id, driverOrders);
-        }
-      }
-      
-      // Format response
       return {
-        id: order.id,
-        orderId: order.order_number,
-        status: order.status,
-        createdAt: order.created_at,
-        
-        customerInfo: {
-          id: order.customer_id,
-          name: order.pickup_contact_name,
-          phone: order.pickup_contact_phone
-        },
-        
-        locations: {
-          pickup: {
-            address: order.pickup_address,
-            coordinates: {
-              lat: order.pickup_latitude,
-              lng: order.pickup_longitude
-            }
-          },
-          delivery: {
-            address: order.delivery_address,
-            coordinates: {
-              lat: order.delivery_latitude,
-              lng: order.delivery_longitude
-            }
-          },
-          distance: {
-            km: order.estimated_distance_km
-          }
-        },
-        
-        packageDetails: {
-          weight: order.total_weight_kg,
-          volume: order.total_volume_m3,
-          description: order.package_description
-        },
-        
-        driverInfo,
-        vehicleInfo,
-        
-        pricing: {
-          total: order.total_price,
-          breakdown: {
-            base: order.base_price,
-            distance: order.distance_fee,
-            weight: order.weight_fee,
-            volume: order.volume_fee
-          }
-        },
-        
-        timing: {
-          estimatedDuration: order.estimated_duration_minutes,
-          actualDuration: order.actual_duration_minutes
-        },
-        
+        ...this.formatOrderResponse(order),
         progress,
         tracking: tracking.map(t => ({
           latitude: t.latitude,
@@ -857,7 +367,6 @@ export class OrderService {
           timestamp: t.timestamp,
           speed: t.speed
         })),
-        
         messages: messages.map(msg => ({
           id: msg.id,
           senderType: msg.sender_type,
@@ -865,15 +374,7 @@ export class OrderService {
           content: msg.content,
           createdAt: msg.created_at,
           readStatus: msg.read_status
-        })),
-        
-        optimization,
-        
-        currentLocation: order.driver_current_lat && order.driver_current_lng ? {
-          latitude: order.driver_current_lat,
-          longitude: order.driver_current_lng,
-          lastUpdated: order.driver_last_updated
-        } : null
+        }))
       };
       
     } catch (error: unknown) {
@@ -882,45 +383,40 @@ export class OrderService {
       throw error;
     }
   }
-  
+
   // Get customer orders
-  async getCustomerOrders(customerId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
+  async getCustomerOrders(
+    customerId: string, 
+    status?: string, 
+    page: number = 1, 
+    limit: number = 20
+  ): Promise<any> {
     try {
+      const offset = (page - 1) * limit;
       const orders = await this.orderRepository.findByCustomerId(customerId, {
         status,
         limit,
-        offset: (page - 1) * limit
+        offset
       });
       
-      const ordersWithDetails = await Promise.all(
-        orders.map(async (order) => {
-          const progress = this.calculateOrderProgress(order);
-          const driverInfo = order.driver_id ? await this.getDriverInfo(order.driver_id) : null;
-          
-          return {
-            id: order.id,
-            orderId: order.order_number,
-            status: order.status,
-            createdAt: order.created_at,
-            pickupAddress: order.pickup_address,
-            deliveryAddress: order.delivery_address,
-            totalPrice: order.total_price,
-            packageWeight: order.total_weight_kg,
-            packageVolume: order.total_volume_m3,
-            driverInfo,
-            progress
-          };
-        })
-      );
+      const ordersWithProgress = orders.map(order => ({
+        ...this.formatOrderResponse(order),
+        progress: this.calculateOrderProgress(order)
+      }));
+      
+      // Get total count for pagination
+      const totalOrders = await this.getOrderCount(customerId, undefined, status);
       
       return {
         success: true,
-        orders: ordersWithDetails,
+        orders: ordersWithProgress,
         pagination: {
           page,
           limit,
-          total: orders.length,
-          hasMore: orders.length === limit
+          total: totalOrders,
+          totalPages: Math.ceil(totalOrders / limit),
+          hasNext: page < Math.ceil(totalOrders / limit),
+          hasPrev: page > 1
         }
       };
       
@@ -930,61 +426,52 @@ export class OrderService {
       throw error;
     }
   }
-  
-  // Get driver orders with optimization
-  async getDriverOrders(driverId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
+
+  // Get driver orders
+  async getDriverOrders(
+    driverId: string, 
+    status?: string, 
+    page: number = 1, 
+    limit: number = 20
+  ): Promise<any> {
     try {
+      const offset = (page - 1) * limit;
       const orders = await this.orderRepository.findByDriverId(driverId, {
         status: status as any,
         limit,
-        offset: (page - 1) * limit
+        offset
       });
       
+      const ordersWithProgress = orders.map(order => ({
+        ...this.formatOrderResponse(order),
+        progress: this.calculateOrderProgress(order),
+        routeOrderIndex: order.route_order_index
+      }));
+      
+      // Get total count for pagination
+      const totalOrders = await this.getOrderCount(undefined, driverId, status);
+      
       // Get optimization for active orders
-      const activeOrders = orders.filter(o => 
-        ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit'].includes(o.status)
-      );
-      
       let optimization = null;
-      if (activeOrders.length > 1) {
-        optimization = await this.getOptimizationForDriver(driverId, activeOrders);
-      }
-      
-      const ordersWithDetails = await Promise.all(
-        orders.map(async (order) => {
-          const progress = this.calculateOrderProgress(order);
-          const customerInfo = {
-            name: order.pickup_contact_name,
-            phone: order.pickup_contact_phone
-          };
-          
-          return {
-            id: order.id,
-            orderId: order.order_number,
-            status: order.status,
-            createdAt: order.created_at,
-            pickupAddress: order.pickup_address,
-            deliveryAddress: order.delivery_address,
-            totalPrice: order.total_price,
-            driverEarnings: order.driver_earnings,
-            packageWeight: order.total_weight_kg,
-            packageVolume: order.total_volume_m3,
-            customerInfo,
-            progress,
-            routeOrderIndex: order.route_order_index
-          };
-        })
+      const activeOrders = orders.filter(o => 
+        ['driver_assigned', 'route_to_pickup', 'in_transit'].includes(o.status)
       );
+      
+      if (activeOrders.length > 1) {
+        optimization = await this.getOptimizedRouteForDriver(driverId, activeOrders);
+      }
       
       return {
         success: true,
-        orders: ordersWithDetails,
+        orders: ordersWithProgress,
         optimization,
         pagination: {
           page,
           limit,
-          total: orders.length,
-          hasMore: orders.length === limit
+          total: totalOrders,
+          totalPages: Math.ceil(totalOrders / limit),
+          hasNext: page < Math.ceil(totalOrders / limit),
+          hasPrev: page > 1
         }
       };
       
@@ -994,7 +481,62 @@ export class OrderService {
       throw error;
     }
   }
-  
+
+  // Rate driver
+  async rateDriver(
+    orderId: string, 
+    customerId: string, 
+    rating: number, 
+    review?: string
+  ): Promise<any> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      if (order.customer_id !== customerId) {
+        throw new Error('Only customer can rate this order');
+      }
+      
+      if (!['delivered', 'completed'].includes(order.status)) {
+        throw new Error('Can only rate delivered or completed orders');
+      }
+      
+      if (rating < 1 || rating > 5) {
+        throw new Error('Rating must be between 1 and 5');
+      }
+      
+      // Update customer rating in order
+      await this.orderRepository.updateCustomerRating(orderId, rating, review);
+      
+      // Also save to driver_ratings table if it exists
+      if (order.driver_id) {
+        await this.messagingService.saveDriverRating(
+          orderId,
+          customerId,
+          order.driver_id,
+          rating,
+          review
+        );
+      }
+      
+      // Calculate new driver average rating
+      const newAverage = await this.calculateNewDriverRating(order.driver_id, rating);
+      
+      return {
+        success: true,
+        newAverageRating: newAverage,
+        message: 'Rating submitted successfully'
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to rate driver:', errorMessage);
+      throw error;
+    }
+  }
+
   // Send message
   async sendMessage(
     orderId: string,
@@ -1039,13 +581,17 @@ export class OrderService {
       
       // Update unread count
       if (receiverType === 'customer') {
-        await this.orderRepository.update(orderId, {
-          unread_customer_messages: ((order as any).unread_customer_messages || 0) + 1
-        });
+        await this.orderRepository.updateUnreadMessages(
+          orderId,
+          order.unread_customer_messages + 1,
+          order.unread_driver_messages
+        );
       } else {
-        await this.orderRepository.update(orderId, {
-          unread_driver_messages: ((order as any).unread_driver_messages || 0) + 1
-        });
+        await this.orderRepository.updateUnreadMessages(
+          orderId,
+          order.unread_customer_messages,
+          order.unread_driver_messages + 1
+        );
       }
       
       // Send real-time notification
@@ -1079,66 +625,14 @@ export class OrderService {
       throw error;
     }
   }
-  
-  // Rate driver
-  async rateDriver(orderId: string, customerId: string, rating: number, review?: string): Promise<any> {
-    try {
-      const order = await this.orderRepository.findById(orderId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
-      
-      if (order.customer_id !== customerId) {
-        throw new Error('Only customer can rate this order');
-      }
-      
-      if (order.status !== 'delivered' && order.status !== 'completed') {
-        throw new Error('Can only rate delivered orders');
-      }
-      
-      if (rating < 1 || rating > 5) {
-        throw new Error('Rating must be between 1 and 5');
-      }
-      
-      // Save rating
-      await this.messagingService.saveDriverRating(
-        orderId,
-        customerId,
-        order.driver_id!,
-        rating,
-        review
-      );
-      
-      // Calculate new average (your formula: (current + new) / 2)
-      const currentRating = await this.getDriverRating(order.driver_id!);
-      const newAverage = (currentRating + rating) / 2;
-      
-      // Update driver rating in database
-      // This would typically update the driver service, but for now we'll log it
-      this.logger.info(`Driver ${order.driver_id} rated ${rating}. Current: ${currentRating}, New average: ${newAverage}`);
-      
-      return {
-        success: true,
-        newAverageRating: parseFloat(newAverage.toFixed(2)),
-        message: 'Rating submitted successfully'
-      };
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to rate driver:', errorMessage);
-      throw error;
-    }
-  }
-  
+
   // Get user balance
   async getUserBalance(userId: string, userType: 'customer' | 'driver'): Promise<any> {
     try {
       const balance = await this.balanceService.getUserBalance(userId, userType);
-      
-      // Get recent transactions
       const recentTransactions = await this.balanceService.getRecentTransactions(userId, 10);
       
-      // Calculate this week's totals from orders
+      // Get this week's totals from orders
       const startOfWeek = new Date();
       startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
       startOfWeek.setHours(0, 0, 0, 0);
@@ -1151,8 +645,8 @@ export class OrderService {
         });
         
         thisWeekTotal = thisWeekOrders
-          .filter(order => order.completed_at && new Date(order.completed_at) >= startOfWeek)
-          .reduce((sum, order) => sum + order.total_price, 0);
+          .filter(order => order.delivery_completed_at && new Date(order.delivery_completed_at) >= startOfWeek)
+          .reduce((sum, order) => sum + order.amount_paid, 0);
       } else {
         const thisWeekOrders = await this.orderRepository.findByDriverId(userId, {
           status: 'completed',
@@ -1160,8 +654,8 @@ export class OrderService {
         });
         
         thisWeekTotal = thisWeekOrders
-          .filter(order => order.completed_at && new Date(order.completed_at) >= startOfWeek)
-          .reduce((sum, order) => sum + (order.driver_earnings || 0), 0);
+          .filter(order => order.delivery_completed_at && new Date(order.delivery_completed_at) >= startOfWeek)
+          .reduce((sum, order) => sum + (order.estimated_price_usd * 0.8), 0); // Assuming 80% to driver
       }
       
       return {
@@ -1179,395 +673,15 @@ export class OrderService {
       throw error;
     }
   }
-  
-  // Helper methods
-  private calculateOrderProgress(order: Order): any {
-    const steps = [
-      { key: 'order_placed', label: 'Order Placed', date: order.created_at },
-      { key: 'driver_assigned', label: 'Driver Assigned', date: order.matched_at },
-      { key: 'driver_accepted', label: 'Driver Accepted', date: order.accepted_at },
-      { key: 'driver_enroute', label: 'Enroute to Pickup', date: order.driver_route_at },
-      { key: 'pickup_started', label: 'Pickup Started', date: order.pickup_started_at },
-      { key: 'in_transit', label: 'In Transit', date: order.in_transit_at },
-      { key: 'delivered', label: 'Delivered', date: order.delivered_at }
-    ];
-    
-    let currentStep = 0;
-    let progressPercentage = 0;
-    
-    switch (order.status) {
-      case 'pending':
-        currentStep = 0;
-        progressPercentage = 10;
-        break;
-      case 'matched':
-        currentStep = 1;
-        progressPercentage = 20;
-        break;
-      case 'driver_accepted':
-        currentStep = 2;
-        progressPercentage = 30;
-        break;
-      case 'driver_enroute':
-        currentStep = 3;
-        progressPercentage = 40;
-        break;
-      case 'pickup_started':
-        currentStep = 4;
-        progressPercentage = 50;
-        break;
-      case 'in_transit':
-        currentStep = 5;
-        progressPercentage = 70;
-        break;
-      case 'delivered':
-      case 'completed':
-        currentStep = 6;
-        progressPercentage = 100;
-        break;
-      default:
-        currentStep = 0;
-        progressPercentage = 0;
-    }
-    
-    return {
-      steps: steps.slice(0, currentStep + 1),
-      currentStep,
-      progressPercentage,
-      currentStatus: order.status
-    };
-  }
-  
-  private formatOrderForUI(order: Order, originalData: any | null): any {
-    if (originalData) {
-      // Use original data for rich formatting
-      return {
-        ...originalData,
-        databaseId: order.id,
-        status: order.status,
-        createdAt: order.created_at,
-        updatedAt: order.updated_at,
-        
-        // Add database fields
-        driverEarnings: order.driver_earnings,
-        paymentStatus: order.payment_status,
-        
-        // Add progress
-        progress: this.calculateOrderProgress(order)
-      };
-    }
-    
-    // Fallback to database data
-    return {
-      id: order.id,
-      orderId: order.order_number,
-      status: order.status,
-      createdAt: order.created_at,
-      
-      customerInfo: {
-        id: order.customer_id,
-        name: order.pickup_contact_name,
-        phone: order.pickup_contact_phone
-      },
-      
-      locations: {
-        pickup: {
-          address: order.pickup_address,
-          coordinates: {
-            lat: order.pickup_latitude,
-            lng: order.pickup_longitude
-          }
-        },
-        delivery: {
-          address: order.delivery_address,
-          coordinates: {
-            lat: order.delivery_latitude,
-            lng: order.delivery_longitude
-          }
-        },
-        distance: {
-          km: order.estimated_distance_km
-        }
-      },
-      
-      packageDetails: {
-        weight: order.total_weight_kg,
-        volume: order.total_volume_m3,
-        description: order.package_description
-      },
-      
-      pricing: {
-        total: order.total_price
-      },
-      
-      progress: this.calculateOrderProgress(order)
-    };
-  }
-  
-  private async getDriverInfo(driverId: string): Promise<any> {
-    // In production, this would call your driver service
-    // For simulation, return mock data
-    return {
-      id: driverId,
-      name: `Driver ${driverId.substring(0, 8)}`,
-      phone: '+1234567890',
-      email: `driver${driverId.substring(0, 8)}@example.com`,
-      rating: 4.5,
-      profileImage: `https://ui-avatars.com/api/?name=Driver&background=random`,
-      totalDeliveries: Math.floor(Math.random() * 100) + 10
-    };
-  }
-  
-  private async getDriverName(driverId: string): Promise<string> {
-    const info = await this.getDriverInfo(driverId);
-    return info.name;
-  }
-  
-  private async getDriverRating(driverId: string): Promise<number> {
-    const info = await this.getDriverInfo(driverId);
-    return info.rating;
-  }
-  
-  private async getVehicleInfo(driverId: string): Promise<any> {
-    // In production, this would call your vehicle service
-    return {
-      type: 'Small Van',
-      make: 'Ford',
-      model: 'Transit',
-      licensePlate: 'ABC-123',
-      capacity: {
-        maxWeight: 100,
-        maxVolume: 10
-      },
-      imageUrl: 'https://example.com/van.jpg'
-    };
-  }
-  
-  private async getOptimizationForDriver(driverId: string, orders: Order[]): Promise<any> {
-    const orderCapacities = orders.map(order => ({
-      orderId: order.id,
-      weight: order.total_weight_kg,
-      volume: order.total_volume_m3,
-      priority: order.priority || 'normal',
-      pickupLocation: {
-        lat: order.pickup_latitude,
-        lng: order.pickup_longitude
-      },
-      deliveryLocation: {
-        lat: order.delivery_latitude,
-        lng: order.delivery_longitude
-      }
-    }));
-    
-    return await this.capacityOptimizationService.optimizeMultipleOrders(
-      driverId,
-      orderCapacities
-    );
-  }
 
-  async getOrderWithProgress(orderId: string): Promise<{
-    order: any;
-    progress: any;
-    messages: any[];
-    tracking: any[];
-    driverLocation?: any;
-  }> {
-    try {
-      const order = await this.orderRepository.findById(orderId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
-      
-      // Calculate progress
-      const progress = this.calculateOrderProgress(order);
-      
-      // Get messages
-      const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
-      
-      // Get tracking data
-      const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 50 });
-      
-      // Get current driver location
-      const driverLocation = order.driver_current_lat && order.driver_current_lng ? {
-        latitude: order.driver_current_lat,
-        longitude: order.driver_current_lng,
-        lastUpdated: order.driver_last_updated
-      } : undefined;
-      
-      // Format order response
-      const formattedOrder = this.formatOrderForUI(order, null);
-      
-      return {
-        order: formattedOrder,
-        progress,
-        messages,
-        tracking,
-        driverLocation
-      };
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get order with progress:', errorMessage);
-      throw error;
-    }
-  }
-
-  // Update order status (for driver)
-  async updateOrderStatus(
-    orderId: string,
-    driverId: string,
-    status: string,
-    location?: { latitude: number; longitude: number }
-  ): Promise<any> {
-    try {
-      const order = await this.orderRepository.findById(orderId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
-
-      if (order.driver_id !== driverId) {
-        throw new Error('Driver not authorized to update this order');
-      }
-
-      // Validate status transition
-      if (!this.isValidStatusTransition(order.status, status)) {
-        throw new Error(`Invalid status transition from ${order.status} to ${status}`);
-      }
-
-      // Update order with status-specific timestamps
-      const updateData: any = {
-        status: status as any,
-        updated_at: new Date()
-      };
-
-      // Set specific timestamps based on status
-      switch (status) {
-        case 'driver_enroute':
-          updateData.driver_enroute_at = new Date();
-          break;
-        case 'pickup_started':
-          updateData.pickup_started_at = new Date();
-          break;
-        case 'in_transit':
-          updateData.in_transit_at = new Date();
-          break;
-        case 'delivered':
-          updateData.delivered_at = new Date();
-          // Complete payment when delivered
-          await this.balanceService.completeOrderPayment(orderId);
-          break;
-        case 'completed':
-          updateData.completed_at = new Date();
-          break;
-      }
-
-      // Update driver location if provided
-      if (location) {
-        updateData.driver_current_lat = location.latitude;
-        updateData.driver_current_lng = location.longitude;
-        updateData.driver_last_updated = new Date();
-      }
-
-      const updatedOrder = await this.orderRepository.update(orderId, updateData);
-
-      // Notify customer about status change
-      await this.notifyCustomerStatusChange(order.customer_id, orderId, status, updatedOrder);
-
-      // Send real-time update
-      await this.websocketUtil.sendToUser(
-        order.customer_id,
-        'order_status_changed',
-        {
-          orderId: order.order_number,
-          status,
-          driverId,
-          timestamp: new Date().toISOString(),
-          ...(location && { location })
-        }
-      );
-
-      // If driver has multiple active orders, re-optimize route
-      if (status === 'driver_enroute' || status === 'in_transit') {
-        const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
-          driverId,
-          ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
-        );
-
-        if (activeOrders.length > 1) {
-          await this.optimizeAndSimulateDriverRoute(driverId);
-        }
-      }
-
-      return {
-        success: true,
-        order: this.formatOrderForUI(updatedOrder!, null),
-        message: `Order status updated to ${status}`
-      };
-
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to update order status:', errorMessage);
-      throw error;
-    }
-  }
-
-  // Validate status transition
-  private isValidStatusTransition(currentStatus: string, newStatus: string): boolean {
-    const validTransitions: Record<string, string[]> = {
-      'pending': ['matched'],
-      'matched': ['driver_accepted', 'cancelled'],
-      'driver_accepted': ['driver_enroute', 'cancelled'],
-      'driver_enroute': ['pickup_started', 'cancelled'],
-      'pickup_started': ['in_transit', 'cancelled'],
-      'in_transit': ['delivered', 'cancelled'],
-      'delivered': ['completed'],
-      'completed': [],
-      'cancelled': []
-    };
-
-    return validTransitions[currentStatus]?.includes(newStatus) || false;
-  }
-
-  // Notify customer about status change
-  private async notifyCustomerStatusChange(
-    customerId: string,
-    orderId: string,
-    status: string,
-    order: any
-  ): Promise<void> {
-    const statusMessages: Record<string, string> = {
-      'driver_accepted': 'Driver has accepted your order',
-      'driver_enroute': 'Driver is on the way to pickup location',
-      'pickup_started': 'Driver has started pickup',
-      'in_transit': 'Order is in transit to delivery location',
-      'delivered': 'Your order has been delivered',
-      'completed': 'Order completed successfully'
-    };
-
-    const message = statusMessages[status];
-    if (message) {
-      await this.notificationService.sendOrderNotification(
-        customerId,
-        orderId,
-        'status_change',
-        {
-          status,
-          message,
-          orderNumber: order.order_number,
-          timestamp: new Date().toISOString()
-        }
-      );
-    }
-  }
-
-  // Get driver's optimized route
+  // Get optimized route for driver
   async getDriverOptimizedRoute(driverId: string): Promise<any> {
     try {
       const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
         driverId,
-        ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+        ['driver_assigned', 'route_to_pickup', 'in_transit']
       );
-
+      
       if (activeOrders.length === 0) {
         return {
           success: true,
@@ -1575,65 +689,15 @@ export class OrderService {
           route: null
         };
       }
-
-      // Convert to route optimization format
-      const orderPoints = activeOrders.flatMap(order => [
-        {
-          orderId: order.id,
-          orderNumber: order.order_number,
-          type: 'pickup',
-          address: order.pickup_address,
-          coordinates: {
-            lat: order.pickup_latitude,
-            lng: order.pickup_longitude
-          }
-        },
-        {
-          orderId: order.id,
-          orderNumber: order.order_number,
-          type: 'delivery',
-          address: order.delivery_address,
-          coordinates: {
-            lat: order.delivery_latitude,
-            lng: order.delivery_longitude
-          }
-        }
-      ]);
-
-      // Get driver's current location
-      const driverLocation = await this.getDriverCurrentLocation(driverId);
-
-      // Optimize route using TSP algorithm
-      const optimizedRoute = this.optimizeRoute(driverLocation, orderPoints);
-
-      // Calculate route metrics
-      const routeMetrics = this.calculateRouteMetrics(optimizedRoute);
-
-      // Generate polyline for map
-      const polyline = this.generateRoutePolyline(optimizedRoute);
-
+      
+      const optimization = await this.getOptimizedRouteForDriver(driverId, activeOrders);
+      
       return {
         success: true,
-        route: {
-          driverId,
-          optimizedSequence: optimizedRoute,
-          totalDistance: routeMetrics.distance,
-          totalDuration: routeMetrics.duration,
-          estimatedSavings: routeMetrics.savings,
-          polyline,
-          orders: activeOrders.map(order => ({
-            id: order.id,
-            orderNumber: order.order_number,
-            pickupAddress: order.pickup_address,
-            deliveryAddress: order.delivery_address,
-            currentLocation: order.driver_current_lat && order.driver_current_lng ? {
-              lat: order.driver_current_lat,
-              lng: order.driver_current_lng
-            } : null
-          }))
-        }
+        route: optimization,
+        orders: activeOrders.map(order => this.formatOrderResponse(order))
       };
-
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to get optimized route:', errorMessage);
@@ -1641,136 +705,511 @@ export class OrderService {
     }
   }
 
-  // Simple TSP optimization (nearest neighbor)
-  private optimizeRoute(startPoint: any, points: any[]): any[] {
-    if (points.length === 0) return [];
-
-    const result: any[] = [];
-    const visited = new Set<string>();
-    let currentPoint = startPoint;
-
-    // Ensure pickup comes before delivery
-    const pendingDeliveries = new Map<string, boolean>(); // orderId -> pickupVisited
-
-    while (result.length < points.length) {
-      let nearestIndex = -1;
-      let nearestDistance = Infinity;
-
-      for (let i = 0; i < points.length; i++) {
-        if (!visited.has(points[i].orderId + '_' + points[i].type)) {
-          // Check constraints: delivery only after pickup
-          if (points[i].type === 'delivery') {
-            const pickupVisited = pendingDeliveries.get(points[i].orderId);
-            if (!pickupVisited) continue; // Skip delivery if pickup not visited yet
-          }
-
-          const distance = this.calculateHaversineDistance(
-            { lat: currentPoint.lat, lng: currentPoint.lng },
-            points[i].coordinates
-          );
-
-          if (distance < nearestDistance) {
-            nearestDistance = distance;
-            nearestIndex = i;
-          }
-        }
-      }
-
-      if (nearestIndex !== -1) {
-        const selectedPoint = points[nearestIndex];
-        visited.add(selectedPoint.orderId + '_' + selectedPoint.type);
-        result.push(selectedPoint);
-        currentPoint = selectedPoint.coordinates;
-
-        // Mark pickup as visited
-        if (selectedPoint.type === 'pickup') {
-          pendingDeliveries.set(selectedPoint.orderId, true);
-        }
-      }
+  // Helper methods
+  private mapUrgency(urgency: string): 'normal' | 'high' | 'urgent' {
+    switch (urgency?.toLowerCase()) {
+      case 'urgent':
+      case 'express':
+        return 'urgent';
+      case 'high':
+        return 'high';
+      default:
+        return 'normal';
     }
-
-    return result;
   }
 
-  // Calculate route metrics
-  private calculateRouteMetrics(route: any[]): { distance: number; duration: number; savings: any } {
-    let totalDistance = 0;
+  private async notifyDriverAssignment(order: Order): Promise<void> {
+    if (!order.driver_id) return;
+    
+    await this.notificationService.sendOrderNotification(
+      order.driver_id,
+      order.order_number,
+      'order_assigned',
+      {
+        orderNumber: order.order_number,
+        customerName: order.customer_name,
+        pickupAddress: order.pickup_address,
+        deliveryAddress: order.delivery_address,
+        estimatedPrice: order.estimated_price_usd,
+        packageWeight: order.weight_kg,
+        packageVolume: order.volume_m3
+      }
+    );
+  }
 
-    for (let i = 0; i < route.length - 1; i++) {
-      totalDistance += this.calculateHaversineDistance(
-        route[i].coordinates,
-        route[i + 1].coordinates
-      );
-    }
+  private async notifyCustomerOrderCreated(order: Order): Promise<void> {
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      order.order_number,
+      'order_created',
+      {
+        orderNumber: order.order_number,
+        message: 'Your order has been created successfully',
+        estimatedDelivery: order.delivery_time_estimated
+      }
+    );
+  }
 
-    const duration = (totalDistance / 30) * 60; // Assuming 30 km/h average
+  private async sendOrderCreationUpdates(order: Order, customerId: string): Promise<void> {
+    if (!customerId) return;
+    
+    await this.websocketUtil.sendToUser(
+      customerId,
+      'order_created',
+      {
+        orderId: order.order_number,
+        status: order.status,
+        estimatedDelivery: order.delivery_time_estimated,
+        driverAssigned: !!order.driver_id
+      }
+    );
+  }
 
-    // Compare with simple sequential route (pickup1, delivery1, pickup2, delivery2...)
-    const sequentialDistance = this.calculateSequentialDistance(route);
-    const savings = {
-      distance: sequentialDistance - totalDistance,
-      time: ((sequentialDistance - totalDistance) / 30) * 60
+  private async notifyCustomerDriverAccepted(order: Order): Promise<void> {
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      order.order_number,
+      'driver_accepted',
+      {
+        driverName: order.driver_name,
+        driverRating: order.driver_rating,
+        vehicleType: order.vehicle_type,
+        message: 'Driver has accepted your order'
+      }
+    );
+  }
+
+  private async notifyCustomerDriverRejected(order: Order, reason?: string): Promise<void> {
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      order.order_number,
+      'driver_rejected',
+      {
+        reason: reason || 'Driver unavailable',
+        message: 'We are looking for another driver for your order'
+      }
+    );
+  }
+
+  private async notifyCustomerStatusChange(order: Order, newStatus: Order['status']): Promise<void> {
+    const statusMessages: Record<Order['status'], string> = {
+      'pending': 'Order is pending',
+      'driver_assigned': 'Driver has been assigned',
+      'route_to_pickup': 'Driver is on the way to pickup location',
+      'in_transit': 'Order is in transit to delivery location',
+      'delivered': 'Order has been delivered',
+      'cancelled': 'Order has been cancelled',
+      'completed': 'Order completed successfully'
     };
+    
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      order.order_number,
+      'status_change',
+      {
+        status: newStatus,
+        message: statusMessages[newStatus] || 'Order status updated'
+      }
+    );
+  }
 
+  private async startRouteSimulation(orderId: string, driverId: string): Promise<void> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      if (!order || !order.driver_id) return;
+      
+      // Simulate driver moving to pickup
+      await this.simulateMovement(
+        orderId,
+        driverId,
+        { lat: 59.925209, lng: 30.341745 }, // Default start
+        { lat: order.pickup_latitude, lng: order.pickup_longitude },
+        'to_pickup'
+      );
+      
+      // Update status
+      await this.orderRepository.updateStatus(orderId, 'route_to_pickup');
+      
+      // Simulate pickup to delivery
+      setTimeout(async () => {
+        await this.simulateMovement(
+          orderId,
+          driverId,
+          { lat: order.pickup_latitude, lng: order.pickup_longitude },
+          { lat: order.delivery_latitude, lng: order.delivery_longitude },
+          'to_delivery'
+        );
+        
+        await this.orderRepository.updateStatus(orderId, 'delivered');
+        
+        // Process payment
+        await this.processOrderPayment(orderId);
+        
+      }, 30000); // 30 seconds delay
+      
+    } catch (error) {
+      this.logger.error('Route simulation failed:', error);
+    }
+  }
+
+  private async simulateMovement(
+    orderId: string,
+    driverId: string,
+    startPoint: { lat: number; lng: number },
+    endPoint: { lat: number; lng: number },
+    phase: 'to_pickup' | 'to_delivery'
+  ): Promise<void> {
+    const steps = 10;
+    const interval = 5000;
+    
+    for (let i = 0; i <= steps; i++) {
+      const progress = i / steps;
+      const currentLat = startPoint.lat + (endPoint.lat - startPoint.lat) * progress;
+      const currentLng = startPoint.lng + (endPoint.lng - startPoint.lng) * progress;
+      
+      await this.trackingRepository.create({
+        order_id: orderId,
+        driver_id: driverId,
+        latitude: currentLat,
+        longitude: currentLng,
+        speed: 30 + Math.random() * 20
+      });
+      
+      await this.delay(interval);
+    }
+  }
+
+  private async processOrderPayment(orderId: string): Promise<void> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      if (!order || !order.driver_id) return;
+      
+      // Update payment status
+      await this.orderRepository.updatePaymentStatus(
+        orderId,
+        'completed',
+        order.estimated_price_usd
+      );
+      
+      // Update order status to completed
+      await this.orderRepository.updateStatus(orderId, 'completed');
+      
+      // Process balance transactions
+      await this.balanceService.processOrderPayment(
+        order.customer_id,
+        order.driver_id,
+        order.estimated_price_usd,
+        orderId
+      );
+      
+      this.logger.info(`Payment processed for order ${orderId}`);
+      
+    } catch (error) {
+      this.logger.error('Payment processing failed:', error);
+    }
+  }
+
+  private isValidStatusTransition(currentStatus: Order['status'], newStatus: Order['status']): boolean {
+    const validTransitions: Record<Order['status'], Order['status'][]> = {
+      'pending': ['driver_assigned', 'cancelled'],
+      'driver_assigned': ['route_to_pickup', 'cancelled'],
+      'route_to_pickup': ['in_transit', 'cancelled'],
+      'in_transit': ['delivered', 'cancelled'],
+      'delivered': ['completed'],
+      'completed': [],
+      'cancelled': []
+    };
+    
+    return validTransitions[currentStatus]?.includes(newStatus) || false;
+  }
+
+  private calculateOrderProgress(order: Order): any {
+    const steps = [
+      { status: 'pending', label: 'Order Placed', completed: true },
+      { status: 'driver_assigned', label: 'Driver Assigned', completed: ['driver_assigned', 'route_to_pickup', 'in_transit', 'delivered', 'completed'].includes(order.status) },
+      { status: 'route_to_pickup', label: 'Enroute to Pickup', completed: ['route_to_pickup', 'in_transit', 'delivered', 'completed'].includes(order.status) },
+      { status: 'in_transit', label: 'In Transit', completed: ['in_transit', 'delivered', 'completed'].includes(order.status) },
+      { status: 'delivered', label: 'Delivered', completed: ['delivered', 'completed'].includes(order.status) },
+      { status: 'completed', label: 'Completed', completed: order.status === 'completed' }
+    ];
+    
+    let currentStepIndex = steps.findIndex(step => step.status === order.status);
+    if (currentStepIndex === -1) currentStepIndex = 0;
+    
+    const progressPercentage = Math.round((currentStepIndex / (steps.length - 1)) * 100);
+    
     return {
-      distance: parseFloat(totalDistance.toFixed(2)),
-      duration: Math.ceil(duration),
-      savings
+      steps,
+      currentStatus: order.status,
+      progressPercentage,
+      nextStep: currentStepIndex < steps.length - 1 ? steps[currentStepIndex + 1].status : null
     };
   }
 
-  // Calculate sequential distance for comparison
-  private calculateSequentialDistance(points: any[]): number {
-    let distance = 0;
+  private formatOrderResponse(order: Order): any {
+    return {
+      id: order.id,
+      order_number: order.order_number,
+      status: order.status,
+      
+      customer_info: {
+        id: order.customer_id,
+        name: order.customer_name,
+        email: order.customer_email,
+        phone: order.customer_phone
+      },
+      
+      driver_info: order.driver_id ? {
+        id: order.driver_id,
+        name: order.driver_name,
+        phone: order.driver_phone,
+        email: order.driver_email,
+        rating: order.driver_rating
+      } : null,
+      
+      pickup_location: {
+        address: order.pickup_address,
+        latitude: order.pickup_latitude,
+        longitude: order.pickup_longitude
+      },
+      
+      delivery_location: {
+        address: order.delivery_address,
+        latitude: order.delivery_latitude,
+        longitude: order.delivery_longitude
+      },
+      
+      package_details: {
+        category: order.package_category,
+        weight_kg: order.weight_kg,
+        volume_m3: order.volume_m3,
+        urgency: order.urgency,
+        fragile: order.fragile,
+        refrigerated: order.refrigerated,
+        oversized: order.oversized,
+        hazardous: order.hazardous
+      },
+      
+      vehicle_info: order.vehicle_type ? {
+        type: order.vehicle_type,
+        make: order.vehicle_make,
+        model: order.vehicle_model,
+        license_plate: order.vehicle_license_plate,
+        max_weight: order.vehicle_max_weight,
+        max_volume: order.vehicle_max_volume
+      } : null,
+      
+      pricing: {
+        estimated_usd: order.estimated_price_usd,
+        estimated_local: order.estimated_price_local,
+        currency: order.currency,
+        base_currency: order.base_currency,
+        amount_paid: order.amount_paid,
+        payment_status: order.payment_status
+      },
+      
+      timing: {
+        estimated_duration_minutes: order.estimated_duration_minutes,
+        pickup_time_estimated: order.pickup_time_estimated,
+        delivery_time_estimated: order.delivery_time_estimated,
+        created_at: order.created_at,
+        updated_at: order.updated_at,
+        driver_accepted_at: order.driver_accepted_at,
+        delivery_started_at: order.delivery_started_at,
+        delivery_completed_at: order.delivery_completed_at
+      },
+      
+      route_info: {
+        polyline: order.route_polyline,
+        order_index: order.route_order_index
+      },
+      
+      rating: order.customer_rating ? {
+        rating: order.customer_rating,
+        review: order.customer_review,
+        given_at: order.rating_given_at
+      } : null,
+      
+      communication: {
+        unread_customer_messages: order.unread_customer_messages,
+        unread_driver_messages: order.unread_driver_messages
+      }
+    };
+  }
 
-    for (let i = 0; i < points.length - 1; i++) {
-      distance += this.calculateHaversineDistance(
-        points[i].coordinates,
-        points[i + 1].coordinates
-      );
+  private async getOrderCount(customerId?: string, driverId?: string, status?: string): Promise<number> {
+    try {
+      let whereClause = 'WHERE 1=1';
+      const params: any[] = [];
+      
+      if (customerId) {
+        whereClause += ' AND customer_id = ?';
+        params.push(customerId);
+      }
+      
+      if (driverId) {
+        whereClause += ' AND driver_id = ?';
+        params.push(driverId);
+      }
+      
+      if (status) {
+        whereClause += ' AND status = ?';
+        params.push(status);
+      }
+      
+      const sql = `SELECT COUNT(*) as total FROM orders ${whereClause}`;
+      const result = await db.queryOne<{ total: number }>(sql, params);
+      return result?.total || 0;
+      
+    } catch (error) {
+      this.logger.error('Failed to get order count:', error);
+      return 0;
     }
-
-    return distance;
   }
 
-  // Generate polyline for map
-  private generateRoutePolyline(route: any[]): string {
-    const coordinates = route.map(point => [point.coordinates.lat, point.coordinates.lng]);
-    return JSON.stringify(coordinates); // Simple JSON array for now
+  private async getOptimizedRouteForDriver(driverId: string, orders: Order[]): Promise<any> {
+    // Convert to route optimization format
+    const orderPoints = orders.flatMap(order => [
+      {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        type: 'pickup',
+        address: order.pickup_address,
+        coordinates: {
+          lat: order.pickup_latitude,
+          lng: order.pickup_longitude
+        }
+      },
+      {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        type: 'delivery',
+        address: order.delivery_address,
+        coordinates: {
+          lat: order.delivery_latitude,
+          lng: order.delivery_longitude
+        }
+      }
+    ]);
+    
+    // Get driver's current location
+    const driverLocation = await this.getDriverCurrentLocation(driverId);
+    
+    // Optimize route
+    const optimizedRoute = this.optimizeRoute(driverLocation, orderPoints);
+    
+    // Calculate metrics
+    const routeMetrics = this.calculateRouteMetrics(optimizedRoute);
+    
+    return {
+      driverId,
+      optimizedSequence: optimizedRoute,
+      totalDistance: routeMetrics.distance,
+      totalDuration: routeMetrics.duration,
+      polyline: this.generateRoutePolyline(optimizedRoute),
+      orders: orders.map(order => ({
+        id: order.id,
+        order_number: order.order_number,
+        pickup_address: order.pickup_address,
+        delivery_address: order.delivery_address,
+        route_order_index: order.route_order_index
+      }))
+    };
   }
 
-  // Get driver current location
   private async getDriverCurrentLocation(driverId: string): Promise<any> {
     const latestTracking = await this.trackingRepository.getDriverLatestLocation(driverId);
     if (latestTracking) {
       return { lat: latestTracking.latitude, lng: latestTracking.longitude };
     }
-
-    // Fallback to first active order's pickup location
+    
     const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
       driverId,
-      ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
+      ['driver_assigned', 'route_to_pickup', 'in_transit']
     );
-
+    
     if (activeOrders.length > 0) {
       return { 
         lat: activeOrders[0].pickup_latitude, 
         lng: activeOrders[0].pickup_longitude 
       };
     }
-
-    // Default location
-    return { lat: 59.925209, lng: 30.34174539999999 };
+    
+    return { lat: 59.925209, lng: 30.341745 };
   }
 
-  // Haversine distance calculation
+  private optimizeRoute(startPoint: any, points: any[]): any[] {
+    if (points.length === 0) return [];
+    
+    const result: any[] = [];
+    const visited = new Set<string>();
+    let currentPoint = startPoint;
+    
+    const pendingDeliveries = new Map<string, boolean>();
+    
+    while (result.length < points.length) {
+      let nearestIndex = -1;
+      let nearestDistance = Infinity;
+      
+      for (let i = 0; i < points.length; i++) {
+        if (!visited.has(points[i].orderId + '_' + points[i].type)) {
+          if (points[i].type === 'delivery') {
+            const pickupVisited = pendingDeliveries.get(points[i].orderId);
+            if (!pickupVisited) continue;
+          }
+          
+          const distance = this.calculateHaversineDistance(
+            currentPoint,
+            points[i].coordinates
+          );
+          
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = i;
+          }
+        }
+      }
+      
+      if (nearestIndex !== -1) {
+        const selectedPoint = points[nearestIndex];
+        visited.add(selectedPoint.orderId + '_' + selectedPoint.type);
+        result.push(selectedPoint);
+        currentPoint = selectedPoint.coordinates;
+        
+        if (selectedPoint.type === 'pickup') {
+          pendingDeliveries.set(selectedPoint.orderId, true);
+        }
+      }
+    }
+    
+    return result;
+  }
+
+  private calculateRouteMetrics(route: any[]): { distance: number; duration: number } {
+    let totalDistance = 0;
+    
+    for (let i = 0; i < route.length - 1; i++) {
+      totalDistance += this.calculateHaversineDistance(
+        route[i].coordinates,
+        route[i + 1].coordinates
+      );
+    }
+    
+    const duration = (totalDistance / 30) * 60;
+    
+    return {
+      distance: parseFloat(totalDistance.toFixed(2)),
+      duration: Math.ceil(duration)
+    };
+  }
+
   private calculateHaversineDistance(point1: any, point2: any): number {
-    const R = 6371; // Earth's radius in km
+    const R = 6371;
     const dLat = this.toRad(point2.lat - point1.lat);
     const dLon = this.toRad(point2.lng - point1.lng);
     const a = 
       Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(this.toRad(point1.lat)) * Math.cos(this.toRad(point2.lat)) * 
+      Math.cos(this.toRad(point1.lat)) * Math.cos(this.toRad(point2.lat)) *
       Math.sin(dLon/2) * Math.sin(dLon/2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     return R * c;
@@ -1779,23 +1218,29 @@ export class OrderService {
   private toRad(degrees: number): number {
     return degrees * (Math.PI / 180);
   }
-  
-  private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const toRad = (degrees: number) => degrees * (Math.PI / 180);
-    const toDeg = (radians: number) => radians * (180 / Math.PI);
-    
-    const dLon = toRad(lon2 - lon1);
-    const y = Math.sin(dLon) * Math.cos(toRad(lat2));
-    const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
-              Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
-    
-    let bearing = Math.atan2(y, x);
-    bearing = toDeg(bearing);
-    bearing = (bearing + 360) % 360;
-    
-    return Math.round(bearing);
+
+  private generateRoutePolyline(route: any[]): string {
+    const coordinates = route.map(point => [point.coordinates.lat, point.coordinates.lng]);
+    return JSON.stringify(coordinates);
   }
-  
+
+  private async calculateNewDriverRating(driverId: string | null, newRating: number): Promise<number> {
+    if (!driverId) return newRating;
+    
+    try {
+      const ratings = await this.messagingService.getDriverRatings(driverId);
+      if (ratings.length === 0) return newRating;
+      
+      const total = ratings.reduce((sum, r) => sum + r.rating, 0);
+      const average = (total + newRating) / (ratings.length + 1);
+      return parseFloat(average.toFixed(2));
+      
+    } catch (error) {
+      this.logger.error('Failed to calculate new driver rating:', error);
+      return newRating;
+    }
+  }
+
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
