@@ -17,12 +17,13 @@ CREATE TABLE IF NOT EXISTS orders (
     
     -- Locations
     pickup_address TEXT NOT NULL,
-    pickup_lat DECIMAL(10, 8),
-    pickup_lng DECIMAL(11, 8),
+    pickup_latitude DECIMAL(10, 8),      
+    pickup_longitude DECIMAL(11, 8),     
     
     delivery_address TEXT NOT NULL,
-    delivery_lat DECIMAL(10, 8),
-    delivery_lng DECIMAL(11, 8),
+    delivery_latitude DECIMAL(10, 8),    
+    delivery_longitude DECIMAL(11, 8),
+    
     
     distance_km DECIMAL(8, 2),
     
