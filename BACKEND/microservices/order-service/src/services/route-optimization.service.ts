@@ -1,6 +1,6 @@
 import { Logger } from '../utils/logger';
 import { distanceUtil } from '../utils/distance.util';
-import { Order } from '../types';
+import { Order } from '../repositories/order.repository'; // Use your actual Order type
 
 export interface OptimizedRoute {
   driverId: string;
@@ -59,19 +59,25 @@ export class RouteOptimizationService {
       orders.forEach(order => {
         allPoints.push({
           orderId: order.id,
-          orderNumber: order.orderNumber,
+          orderNumber: order.order_number,
           type: 'pickup',
-          address: order.locations.pickup.address,
-          coordinates: order.locations.pickup.coordinates,
+          address: order.pickup_address,
+          coordinates: { 
+            lat: order.pickup_latitude, 
+            lng: order.pickup_longitude 
+          },
           isPickup: true
         });
         
         allPoints.push({
           orderId: order.id,
-          orderNumber: order.orderNumber,
+          orderNumber: order.order_number,
           type: 'delivery',
-          address: order.locations.delivery.address,
-          coordinates: order.locations.delivery.coordinates,
+          address: order.delivery_address,
+          coordinates: { 
+            lat: order.delivery_latitude, 
+            lng: order.delivery_longitude 
+          },
           isPickup: false
         });
       });
