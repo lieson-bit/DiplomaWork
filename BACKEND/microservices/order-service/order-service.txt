@@ -1192,12 +1192,11 @@ import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
 import { Logger } from './utils/logger';
-import pool from './config/database';
+import { db } from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
-import { OrderService } from './services/order.service'; // Import OrderService
-import { TrackingRepository } from './repositories/tracking.repository';
 import { OrderRepository } from './repositories/order.repository';
-import { OrderController } from './controllers/order.controller';
+import { TrackingRepository } from './repositories/tracking.repository';
+
 const logger = new Logger('Server');
 
 const PORT = process.env.PORT || 3004;
@@ -1211,16 +1210,11 @@ const wss = new WebSocketUtil(server);
 const trackingRepository = new TrackingRepository();
 const orderRepository = new OrderRepository();
 
-// FIXED: Create OrderService with the WebSocketUtil instance
-// This ensures all services use the same WebSocketUtil instance
-const orderService = new OrderService(wss);
-const orderController = new OrderController(orderService);
-
 // Test database connection on startup
 async function testDatabaseConnection() {
   try {
     // Use the Database implementation's testConnection method instead of getConnection
-    await pool.testConnection();
+    await db.testConnection();
     logger.info('✅ Database connection established successfully');
   } catch (error) {
     logger.error('❌ Failed to connect to database:', error);
@@ -1259,14 +1253,14 @@ function setupGracefulShutdown() {
     }
     
     // Close database connections
-    if (typeof (pool as any)?.end === 'function') {
-      await (pool as any).end();
+    if (typeof (db as any)?.end === 'function') {
+      await (db as any).end();
       logger.info('Database connections closed');
-    } else if (typeof (pool as any)?.close === 'function') {
-      await (pool as any).close();
+    } else if (typeof (db as any)?.close === 'function') {
+      await (db as any).close();
       logger.info('Database connections closed');
-    } else if (typeof (pool as any)?.destroy === 'function') {
-      await (pool as any).destroy();
+    } else if (typeof (db as any)?.destroy === 'function') {
+      await (db as any).destroy();
       logger.info('Database connections destroyed');
     } else {
       logger.info('No database close method found on pool; skipping close');
@@ -1356,7 +1350,8 @@ process.on('unhandledRejection', (reason, promise) => {
   process.exit(1);
 });
 
-export { server, wss, orderService, trackingRepository, orderRepository, orderController };
+// Export only what's needed
+export { server, wss };
 ```
 
 `middleware\auth.middleware.ts`:
@@ -1981,6 +1976,7 @@ export class OrderRepository {
           id,
           order_number,
           customer_id,
+          driver_id,
           pickup_address,
           pickup_latitude,
           pickup_longitude,
@@ -2017,13 +2013,14 @@ export class OrderRepository {
           customer_notes,
           is_bulk_order,
           bulk_order_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       const params = [
-        uuidv4(), // 👈 Add UUID for id
-        orderNumber, // 👈 Use generated order number
+        uuidv4(), // 
+        orderNumber,
         data.customer_id,
+        data.driver_id || null,
         data.pickup_address,
         data.pickup_latitude,
         data.pickup_longitude,
@@ -3040,9 +3037,18 @@ export default trackingRepository;
 ```ts
 import express from 'express';
 import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
-import { orderController } from '../index';
+import { OrderController } from '../controllers/order.controller';
+import { OrderService } from '../services/order.service';
+import { OrderRepository } from '../repositories/order.repository';
+import { TrackingRepository } from '../repositories/tracking.repository';
+import { wss } from '../index'; // Import wss from index
 
 const router = express.Router();
+const orderRepository = new OrderRepository();
+const trackingRepository = new TrackingRepository();
+const orderService = new OrderService(wss);
+const orderController = new OrderController(orderService);
+
 
 /**
  * @swagger
@@ -4265,6 +4271,8 @@ async completeOrderPayment(orderId: string): Promise<void> {
 ```ts
 import { Logger } from '../utils/logger';
 import { db } from '../config/database';
+import { createRequire } from 'module';
+
 
 export interface VehicleCapacity {
   maxWeight: number; // kg
@@ -4525,73 +4533,167 @@ export class CapacityOptimizationService {
     }
   }
 
-  // Get driver's vehicle capacity
-  private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
+  private async getDriverActiveOrders(driverId: string): Promise<any[]> {
     try {
-      // Query database for driver's vehicle capacity
       const query = `
-        SELECT 
-          vehicle_max_weight,
-          vehicle_max_volume,
-          (SELECT COUNT(*) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_orders,
-          (SELECT COALESCE(SUM(total_weight_kg), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_weight,
-          (SELECT COALESCE(SUM(total_volume_m3), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_volume
+        SELECT total_weight_kg, total_volume_m3 
         FROM orders 
-        WHERE driver_id = ?
-        LIMIT 1
+        WHERE driver_id = ? 
+          AND status IN ('driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')
       `;
       
-      const result = await db.queryOne<any>(query, [driverId, driverId, driverId, driverId]);
+      const result = await db.query<any>(query, [driverId]);
+      return result || [];
+    } catch (error) {
+      this.logger.error('Failed to get driver active orders:', error);
+      return [];
+    }
+  }
+
+  private async makeHttpRequest(url: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const http = require('http');
+    const https = require('https');
+    
+    const parsedUrl = new URL(url);
+    const client = parsedUrl.protocol === 'https:' ? https : http;
+    
+    const options = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+      path: parsedUrl.pathname + parsedUrl.search,
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      timeout: 5000
+    };
+    
+    const req = client.request(options, (res: any) => {
+      let data = '';
       
-      if (!result) {
-        // Return default capacity if not found
-        return {
-          maxWeight: 100, // 100kg default
-          maxVolume: 10,  // 10m³ default
-          maxOrders: 10,  // 10 orders default
-          currentWeight: 0,
-          currentVolume: 0,
-          currentOrders: 0,
-          remainingWeight: 100,
-          remainingVolume: 10,
-          remainingOrders: 10,
+      res.on('data', (chunk: string) => {
+        data += chunk;
+      });
+      
+      res.on('end', () => {
+        try {
+          const parsedData = JSON.parse(data);
+          resolve(parsedData);
+        } catch (error) {
+          reject(new Error(`Failed to parse response: ${error}`));
+        }
+      });
+    });
+    
+    req.on('error', (error: any) => {
+      reject(error);
+    });
+    
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Request timeout'));
+    });
+    
+    req.end();
+  });
+}
+
+// Then update the getDriverVehicleCapacity method:
+private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
+  try {
+    let vehicleCapacity: VehicleCapacity | null = null;
+    
+    try {
+      // Call driver service API using built-in HTTP
+      const driverServiceUrl = process.env.DRIVER_SERVICE_URL || 'http://localhost:3002';
+      const url = `${driverServiceUrl}/api/drivers/${driverId}/vehicles-picture`;
+      
+      const data = await this.makeHttpRequest(url);
+      
+      if (data?.success && data?.data?.vehicles?.length > 0) {
+        const vehicle = data.data.vehicles[0];
+        
+        // Get driver's active orders from database
+        const activeOrders = await this.getDriverActiveOrders(driverId);
+        
+        const currentWeight = activeOrders.reduce((sum: number, order: any) => 
+          sum + (order.total_weight_kg || 0), 0);
+        const currentVolume = activeOrders.reduce((sum: number, order: any) => 
+          sum + (order.total_volume_m3 || 0), 0);
+        const currentOrders = activeOrders.length;
+        
+        const maxWeight = vehicle.maxWeight || 100;
+        const maxVolume = vehicle.maxVolume || 10;
+        const maxOrders = 10;
+        
+        vehicleCapacity = {
+          maxWeight,
+          maxVolume,
+          maxOrders,
+          currentWeight,
+          currentVolume,
+          currentOrders,
+          remainingWeight: Math.max(0, maxWeight - currentWeight),
+          remainingVolume: Math.max(0, maxVolume - currentVolume),
+          remainingOrders: Math.max(0, maxOrders - currentOrders),
           utilization: {
-            weight: 0,
-            volume: 0,
-            orders: 0
+            weight: maxWeight > 0 ? (currentWeight / maxWeight) * 100 : 0,
+            volume: maxVolume > 0 ? (currentVolume / maxVolume) * 100 : 0,
+            orders: (currentOrders / maxOrders) * 100
           }
         };
+        
+        this.logger.info(`Vehicle capacity for driver ${driverId}: ${maxWeight}kg, ${maxVolume}m³`);
       }
+    } catch (error: any) {
+      this.logger.warn('Failed to fetch vehicle capacity from driver service:', error.message);
+    }
+    
+    // If we couldn't get from driver service, use default values
+    if (!vehicleCapacity) {
+      this.logger.info(`Using default capacity for driver ${driverId}`);
       
-      const maxWeight = result.vehicle_max_weight || 100;
-      const maxVolume = result.vehicle_max_volume || 10;
-      const maxOrders = 10; // Default max orders
-      const currentWeight = result.current_weight || 0;
-      const currentVolume = result.current_volume || 0;
-      const currentOrders = result.current_orders || 0;
+      const activeOrders = await this.getDriverActiveOrders(driverId);
       
-      return {
-        maxWeight,
-        maxVolume,
-        maxOrders,
+      const currentWeight = activeOrders.reduce((sum: number, order: any) => 
+        sum + (order.total_weight_kg || 0), 0);
+      const currentVolume = activeOrders.reduce((sum: number, order: any) => 
+        sum + (order.total_volume_m3 || 0), 0);
+      const currentOrders = activeOrders.length;
+      
+      const defaultMaxWeight = 100;
+      const defaultMaxVolume = 10;
+      const defaultMaxOrders = 10;
+      
+      vehicleCapacity = {
+        maxWeight: defaultMaxWeight,
+        maxVolume: defaultMaxVolume,
+        maxOrders: defaultMaxOrders,
         currentWeight,
         currentVolume,
         currentOrders,
-        remainingWeight: maxWeight - currentWeight,
-        remainingVolume: maxVolume - currentVolume,
-        remainingOrders: maxOrders - currentOrders,
+        remainingWeight: Math.max(0, defaultMaxWeight - currentWeight),
+        remainingVolume: Math.max(0, defaultMaxVolume - currentVolume),
+        remainingOrders: Math.max(0, defaultMaxOrders - currentOrders),
         utilization: {
-          weight: (currentWeight / maxWeight) * 100,
-          volume: (currentVolume / maxVolume) * 100,
-          orders: (currentOrders / maxOrders) * 100
+          weight: defaultMaxWeight > 0 ? (currentWeight / defaultMaxWeight) * 100 : 0,
+          volume: defaultMaxVolume > 0 ? (currentVolume / defaultMaxVolume) * 100 : 0,
+          orders: (currentOrders / defaultMaxOrders) * 100
         }
       };
-      
-    } catch (error: unknown) {
-      this.logger.error('Failed to get vehicle capacity:', error);
-      return null;
     }
+    
+    return vehicleCapacity;
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to get vehicle capacity:', errorMessage);
+    return null;
   }
+}
+
   
   // Update the getDriverCapacityDashboard method (replace lines 318-348):
   async getDriverCapacityDashboard(driverId: string): Promise<{
@@ -5304,14 +5406,14 @@ export class NotificationService {
 
 ```ts
 import { Logger } from '../utils/logger';
-import { Order, CreateOrderData } from '../repositories/order.repository';
-import { trackingRepository } from '../repositories/tracking.repository';
+import { Order, CreateOrderData, OrderRepository } from '../repositories/order.repository';
+import { TrackingRepository } from '../repositories/tracking.repository';
 import { NotificationService } from './notification.service';
 import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
 import { CapacityOptimizationService } from './capacity-optimization.service';
 import { WebSocketUtil } from '../utils/websocket.util';
-import { orderRepository } from '../index';
+
 export class OrderService {
   private logger: Logger;
   private notificationService: NotificationService;
@@ -5319,14 +5421,18 @@ export class OrderService {
   private balanceService: BalanceService;
   private websocketUtil: WebSocketUtil;
   private capacityOptimizationService: CapacityOptimizationService;
-  
-  constructor(websocketUtil: WebSocketUtil) {
+  private orderRepository: OrderRepository;
+  private trackingRepository: TrackingRepository; 
+
+  constructor(websocketUtil: WebSocketUtil, notificationService?: NotificationService) {
     this.logger = new Logger('OrderService');
     this.websocketUtil = websocketUtil;
-    this.notificationService = new NotificationService(websocketUtil);
+    this.notificationService = notificationService || new NotificationService(websocketUtil);
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
     this.capacityOptimizationService = new CapacityOptimizationService();
+    this.orderRepository = new OrderRepository();
+    this.trackingRepository = new TrackingRepository(); // Initialize tracking repository
   }
   
   // Main method to create order from your exact structure
@@ -5431,7 +5537,7 @@ export class OrderService {
       };
       
       // Get driver's active orders
-      const activeOrders = await orderRepository.findByDriverId(driverId, {
+      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
         status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       });
       
@@ -5536,13 +5642,13 @@ export class OrderService {
       route_order_index: 0
     };
     
-    return await orderRepository.create(orderPayload);
+    return await this.orderRepository.create(orderPayload);
   }
   
   // Driver accepts the order
   async acceptOrder(orderId: string, driverId: string): Promise<any> {
     try {
-      const order = await orderRepository.findByOrderNumber(orderId);
+      const order = await this.orderRepository.findByOrderNumber(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -5552,7 +5658,7 @@ export class OrderService {
       }
       
       // Update order status
-      const updatedOrder = await orderRepository.update(order.id, {
+      const updatedOrder = await this.orderRepository.update(order.id, {
         status: 'driver_accepted',
         accepted_at: new Date()
       });
@@ -5588,7 +5694,7 @@ export class OrderService {
       );
       
       // Start simulation if this is the first order for driver today
-      const driverOrders = await orderRepository.findByDriverId(driverId, {
+      const driverOrders = await this.orderRepository.findByDriverId(driverId, {
         status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       });
       
@@ -5616,7 +5722,7 @@ export class OrderService {
   // Driver rejects the order
   async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
     try {
-      const order = await orderRepository.findByOrderNumber(orderId);
+      const order = await this.orderRepository.findByOrderNumber(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -5626,7 +5732,7 @@ export class OrderService {
       }
       
       // Update order status to cancelled
-      const updatedOrder = await orderRepository.update(order.id, {
+      const updatedOrder = await this.orderRepository.update(order.id, {
         status: 'cancelled',
         cancelled_at: new Date(),
         driver_notes: reason || 'Driver rejected the order'
@@ -5661,7 +5767,7 @@ export class OrderService {
   // Start route simulation for an order
   private async startRouteSimulation(orderId: string, driverId: string): Promise<void> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -5676,7 +5782,7 @@ export class OrderService {
       );
       
       // Update status to driver_enroute
-      await orderRepository.update(orderId, {
+      await this.orderRepository.update(orderId, {
         status: 'driver_enroute',
         driver_enroute_at: new Date()
       });
@@ -5703,7 +5809,7 @@ export class OrderService {
         );
         
         // Update status to delivered
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           status: 'delivered',
           delivered_at: new Date(),
           completed_at: new Date()
@@ -5762,7 +5868,7 @@ export class OrderService {
       const currentLng = startPoint.lng + (endPoint.lng - startPoint.lng) * progress;
       
       // Create tracking point
-      await trackingRepository.create({
+      await this.trackingRepository.create({
         order_id: orderId,
         driver_id: driverId,
         latitude: currentLat,
@@ -5773,10 +5879,10 @@ export class OrderService {
       });
       
       // Update order with current location
-      await orderRepository.updateOrderDriverLocation(orderId, currentLat, currentLng);
+      await this.orderRepository.updateOrderDriverLocation(orderId, currentLat, currentLng);
       
       // Get order for customer ID
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (order) {
         // Send real-time location update to customer
         await this.websocketUtil.sendToUser(
@@ -5794,7 +5900,7 @@ export class OrderService {
       
       // Update status based on progress
       if (phase === 'to_pickup' && progress >= 0.5 && i === Math.floor(steps / 2)) {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           status: 'pickup_started',
           pickup_started_at: new Date()
         });
@@ -5813,7 +5919,7 @@ export class OrderService {
       }
       
       if (phase === 'to_delivery' && progress >= 0.5 && i === Math.floor(steps / 2)) {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           status: 'in_transit',
           in_transit_at: new Date()
         });
@@ -5839,7 +5945,7 @@ export class OrderService {
   // Optimize and simulate route for multiple orders
   private async optimizeAndSimulateDriverRoute(driverId: string): Promise<void> {
     try {
-      const activeOrders = await orderRepository.findByDriverId(driverId, {
+      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
         status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       });
       
@@ -5872,7 +5978,7 @@ export class OrderService {
         const order = activeOrders.find(o => o.id === orderId);
         if (order) {
           const sequenceIndex = optimization.optimalSequence.indexOf(orderId);
-          await orderRepository.update(orderId, {
+          await this.orderRepository.update(orderId, {
             route_order_index: sequenceIndex + 1
           });
         }
@@ -5948,7 +6054,7 @@ export class OrderService {
       startPoint.lng = order.delivery_longitude;
       
       // Mark order as delivered
-      await orderRepository.update(order.id, {
+      await this.orderRepository.update(order.id, {
         status: 'delivered',
         delivered_at: new Date(),
         completed_at: new Date()
@@ -5997,9 +6103,9 @@ export class OrderService {
   // Get order with full details
   async getOrder(orderId: string, includeOptimization: boolean = false): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
-        const orderByNumber = await orderRepository.findByOrderNumber(orderId);
+        const orderByNumber = await this.orderRepository.findByOrderNumber(orderId);
         if (!orderByNumber) {
           throw new Error('Order not found');
         }
@@ -6007,7 +6113,7 @@ export class OrderService {
       }
       
       // Get tracking data
-      const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
+      const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 50 });
       
       // Get driver info
       const driverInfo = order.driver_id ? await this.getDriverInfo(order.driver_id) : null;
@@ -6024,7 +6130,7 @@ export class OrderService {
       // Get optimization if requested and driver has multiple orders
       let optimization = null;
       if (includeOptimization && order.driver_id) {
-        const driverOrders = await orderRepository.findByDriverId(order.driver_id, {
+        const driverOrders = await this.orderRepository.findByDriverId(order.driver_id, {
           status: ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
         });
         
@@ -6126,7 +6232,7 @@ export class OrderService {
   // Get customer orders
   async getCustomerOrders(customerId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
     try {
-      const orders = await orderRepository.findByCustomerId(customerId, {
+      const orders = await this.orderRepository.findByCustomerId(customerId, {
         status,
         limit,
         offset: (page - 1) * limit
@@ -6174,7 +6280,7 @@ export class OrderService {
   // Get driver orders with optimization
   async getDriverOrders(driverId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
     try {
-      const orders = await orderRepository.findByDriverId(driverId, {
+      const orders = await this.orderRepository.findByDriverId(driverId, {
         status: status as any,
         limit,
         offset: (page - 1) * limit
@@ -6245,7 +6351,7 @@ export class OrderService {
     metadata?: any
   ): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -6279,11 +6385,11 @@ export class OrderService {
       
       // Update unread count
       if (receiverType === 'customer') {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           unread_customer_messages: ((order as any).unread_customer_messages || 0) + 1
         });
       } else {
-        await orderRepository.update(orderId, {
+        await this.orderRepository.update(orderId, {
           unread_driver_messages: ((order as any).unread_driver_messages || 0) + 1
         });
       }
@@ -6323,7 +6429,7 @@ export class OrderService {
   // Rate driver
   async rateDriver(orderId: string, customerId: string, rating: number, review?: string): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -6385,7 +6491,7 @@ export class OrderService {
       
       let thisWeekTotal = 0;
       if (userType === 'customer') {
-        const thisWeekOrders = await orderRepository.findByCustomerId(userId, {
+        const thisWeekOrders = await this.orderRepository.findByCustomerId(userId, {
           status: 'completed',
           limit: 100
         });
@@ -6394,7 +6500,7 @@ export class OrderService {
           .filter(order => order.completed_at && new Date(order.completed_at) >= startOfWeek)
           .reduce((sum, order) => sum + order.total_price, 0);
       } else {
-        const thisWeekOrders = await orderRepository.findByDriverId(userId, {
+        const thisWeekOrders = await this.orderRepository.findByDriverId(userId, {
           status: 'completed',
           limit: 100
         });
@@ -6606,51 +6712,51 @@ export class OrderService {
   }
 
   async getOrderWithProgress(orderId: string): Promise<{
-  order: any;
-  progress: any;
-  messages: any[];
-  tracking: any[];
-  driverLocation?: any;
-}> {
-  try {
-    const order = await orderRepository.findById(orderId);
-    if (!order) {
-      throw new Error('Order not found');
+    order: any;
+    progress: any;
+    messages: any[];
+    tracking: any[];
+    driverLocation?: any;
+  }> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      // Calculate progress
+      const progress = this.calculateOrderProgress(order);
+      
+      // Get messages
+      const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
+      
+      // Get tracking data
+      const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 50 });
+      
+      // Get current driver location
+      const driverLocation = order.driver_current_lat && order.driver_current_lng ? {
+        latitude: order.driver_current_lat,
+        longitude: order.driver_current_lng,
+        lastUpdated: order.driver_last_updated
+      } : undefined;
+      
+      // Format order response
+      const formattedOrder = this.formatOrderForUI(order, null);
+      
+      return {
+        order: formattedOrder,
+        progress,
+        messages,
+        tracking,
+        driverLocation
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get order with progress:', errorMessage);
+      throw error;
     }
-    
-    // Calculate progress
-    const progress = this.calculateOrderProgress(order);
-    
-    // Get messages
-    const messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
-    
-    // Get tracking data
-    const tracking = await trackingRepository.findByOrderId(orderId, { limit: 50 });
-    
-    // Get current driver location
-    const driverLocation = order.driver_current_lat && order.driver_current_lng ? {
-      latitude: order.driver_current_lat,
-      longitude: order.driver_current_lng,
-      lastUpdated: order.driver_last_updated
-    } : undefined;
-    
-    // Format order response
-    const formattedOrder = this.formatOrderForUI(order, null);
-    
-    return {
-      order: formattedOrder,
-      progress,
-      messages,
-      tracking,
-      driverLocation
-    };
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Failed to get order with progress:', errorMessage);
-    throw error;
   }
-}
 
   // Update order status (for driver)
   async updateOrderStatus(
@@ -6660,7 +6766,7 @@ export class OrderService {
     location?: { latitude: number; longitude: number }
   ): Promise<any> {
     try {
-      const order = await orderRepository.findById(orderId);
+      const order = await this.orderRepository.findById(orderId);
       if (!order) {
         throw new Error('Order not found');
       }
@@ -6708,7 +6814,7 @@ export class OrderService {
         updateData.driver_last_updated = new Date();
       }
 
-      const updatedOrder = await orderRepository.update(orderId, updateData);
+      const updatedOrder = await this.orderRepository.update(orderId, updateData);
 
       // Notify customer about status change
       await this.notifyCustomerStatusChange(order.customer_id, orderId, status, updatedOrder);
@@ -6728,7 +6834,7 @@ export class OrderService {
 
       // If driver has multiple active orders, re-optimize route
       if (status === 'driver_enroute' || status === 'in_transit') {
-        const activeOrders = await orderRepository.findByDriverIdWithStatus(
+        const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
           driverId,
           ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
         );
@@ -6803,7 +6909,7 @@ export class OrderService {
   // Get driver's optimized route
   async getDriverOptimizedRoute(driverId: string): Promise<any> {
     try {
-      const activeOrders = await orderRepository.findByDriverIdWithStatus(
+      const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
         driverId,
         ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
       );
@@ -6981,13 +7087,13 @@ export class OrderService {
 
   // Get driver current location
   private async getDriverCurrentLocation(driverId: string): Promise<any> {
-    const latestTracking = await trackingRepository.getDriverLatestLocation(driverId);
+    const latestTracking = await this.trackingRepository.getDriverLatestLocation(driverId);
     if (latestTracking) {
       return { lat: latestTracking.latitude, lng: latestTracking.longitude };
     }
 
     // Fallback to first active order's pickup location
-    const activeOrders = await orderRepository.findByDriverIdWithStatus(
+    const activeOrders = await this.orderRepository.findByDriverIdWithStatus(
       driverId,
       ['driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit']
     );
@@ -7040,8 +7146,6 @@ export class OrderService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 }
-
-
 ```
 
 `services\route-optimization.service.ts`:
@@ -8977,6 +9081,37 @@ export interface WebSocketEvent {
   data: any;
   timestamp: Date;
 }
+
+export interface DriverVehicle {
+  id: string;
+  type: string;
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+  maxWeight: number;
+  maxVolume: number;
+  imageUrl: string;
+  currentStatus: string;
+  createdAt: string;
+}
+
+export interface DriverProfilePicture {
+  originalUrl: string;
+  thumbnailUrl: string;
+  smallUrl: string;
+  mediumUrl: string;
+}
+
+export interface DriverVehiclesResponse {
+  success: boolean;
+  data: {
+    driverId: string;
+    profilePicture: DriverProfilePicture;
+    vehicles: DriverVehicle[];
+  };
+}
 ```
 
 `utils\distance.util.ts`:
@@ -10064,6 +10199,8 @@ export class HttpClient {
     }
   }
 }
+
+
 ```
 
 `utils\logger.ts`:

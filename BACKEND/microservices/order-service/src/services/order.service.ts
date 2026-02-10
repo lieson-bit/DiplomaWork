@@ -32,6 +32,8 @@ export class OrderService {
   async createOrderFromRequest(orderData: any): Promise<any> {
     try {
       this.logger.info(`Processing order: ${orderData.orderId}`);
+
+       const dbOrderData = this.transformOrderData(orderData);
       
       // 1. Check driver capacity
       const capacityCheck = await this.checkDriverCapacity(
@@ -61,7 +63,7 @@ export class OrderService {
       }
       
       // 2. Create order in database
-      const order = await this.createOrderRecord(orderData);
+      const order = await this.orderRepository.create(dbOrderData);
       
       // 3. Send notification to driver to accept/reject
       await this.notificationService.sendOrderNotification(
@@ -177,6 +179,61 @@ export class OrderService {
       };
     }
   }
+
+  private transformOrderData(jsonData: any): CreateOrderData {
+  return {
+    order_number: jsonData.orderId,
+    customer_id: jsonData.customerInfo.id,
+    driver_id: jsonData.driverInfo.driverId,
+    
+    // Pickup info
+    pickup_address: jsonData.locations.pickup.address,
+    pickup_latitude: jsonData.locations.pickup.coordinates.lat,
+    pickup_longitude: jsonData.locations.pickup.coordinates.lng,
+    pickup_contact_name: jsonData.customerInfo.name,
+    pickup_contact_phone: jsonData.customerInfo.phone,
+    pickup_instructions: jsonData.specialRequirements.requirementsList?.join(', ') || null,
+    
+    // Delivery info
+    delivery_address: jsonData.locations.delivery.address,
+    delivery_latitude: jsonData.locations.delivery.coordinates.lat,
+    delivery_longitude: jsonData.locations.delivery.coordinates.lng,
+    delivery_contact_name: jsonData.customerInfo.name,
+    delivery_contact_phone: jsonData.customerInfo.phone,
+    delivery_instructions: null,
+    
+    // Package info
+    total_weight_kg: jsonData.packageDetails.weight.value,
+    total_volume_m3: jsonData.packageDetails.volume.value,
+    package_description: `${jsonData.packageDetails.categoryLabel} - ${jsonData.packageDetails.weight.value}kg, ${jsonData.packageDetails.volume.value}m³`,
+    fragile_items: jsonData.specialRequirements.fragile,
+    temperature_controlled: jsonData.specialRequirements.refrigerated,
+    
+    // Pricing
+    total_price: jsonData.pricing.estimatedPrice.usd,
+    
+    // Route info
+    estimated_distance_km: jsonData.locations.distance.km,
+    estimated_duration_minutes: jsonData.timing.estimatedDuration.minutes,
+    
+    // Status
+    priority: jsonData.packageDetails.urgency || 'normal',
+    
+    // Additional info
+    customer_notes: `Urgency: ${jsonData.packageDetails.urgencyLabel}, Category: ${jsonData.packageDetails.categoryLabel}`,
+    
+    // Set default values for other required fields
+    base_price: jsonData.pricing.estimatedPrice.usd * 0.3,
+    subtotal_price: jsonData.pricing.estimatedPrice.usd,
+    
+    // Communication fields
+    unread_customer_messages: 0,
+    unread_driver_messages: 0,
+    
+    // Route optimization
+    route_order_index: 0
+  };
+}
   
   // Convert your structure to database format
   private async createOrderRecord(data: any): Promise<Order> {

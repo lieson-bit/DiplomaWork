@@ -22,7 +22,7 @@ export interface Order {
   delivery_longitude: number;
   delivery_contact_name: string;
   delivery_contact_phone: string;
-  delivery_instructions: string;
+  delivery_instructions?: string;
   
   // Package Information
   total_weight_kg: number;
@@ -125,7 +125,7 @@ export interface CreateOrderData {
   delivery_longitude: number;
   delivery_contact_name: string;
   delivery_contact_phone: string;
-  delivery_instructions?: string;
+  delivery_instructions?: string | null;
   
   total_weight_kg: number;
   total_volume_m3: number;
@@ -154,12 +154,27 @@ export interface CreateOrderData {
   
   priority?: 'low' | 'normal' | 'high' | 'urgent';
   
-  customer_notes?: string;
   is_bulk_order?: boolean;
   bulk_order_id?: string;
   route_order_index?: number;
   unread_customer_messages?: number;
   unread_driver_messages?: number;
+  customer_notes?: string;
+  driver_earnings?: number;
+  driver_enroute_at?: Date;
+  pickup_started_at?: Date;
+  in_transit_at?: Date;
+  delivered_at?: Date;
+  completed_at?: Date;
+  cancelled_at?: Date;
+  driver_current_lat?: number;
+  driver_current_lng?: number;
+  driver_last_updated?: Date;
+  customer_balance_updated?: boolean;
+  driver_balance_updated?: boolean;
+  balance_update_attempts?: number;
+  driver_notes?: string;
+  internal_notes?: string;
 }
 
 export interface UpdateOrderData {
@@ -226,90 +241,187 @@ export class OrderRepository {
       const orderNumber = data.order_number || this.generateOrderNumber();
 
       const sql = `
-        INSERT INTO orders (
-          id,
-          order_number,
-          customer_id,
-          pickup_address,
-          pickup_latitude,
-          pickup_longitude,
-          pickup_contact_name,
-          pickup_contact_phone,
-          pickup_instructions,
-          delivery_address,
-          delivery_latitude,
-          delivery_longitude,
-          delivery_contact_name,
-          delivery_contact_phone,
-          delivery_instructions,
-          total_weight_kg,
-          total_volume_m3,
-          package_description,
-          fragile_items,
-          temperature_controlled,
-          base_price,
-          distance_fee,
-          weight_fee,
-          volume_fee,
-          rush_fee,
-          fuel_surcharge,
-          tip_amount,
-          tax_amount,
-          platform_fee,
-          platform_fee_percent,
-          subtotal_price,
-          total_price,
-          estimated_distance_km,
-          estimated_duration_minutes,
-          route_polyline,
-          priority,
-          customer_notes,
-          is_bulk_order,
-          bulk_order_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+      INSERT INTO orders (
+        id,
+        order_number,
+        customer_id,
+        driver_id,
+        pickup_address,
+        pickup_latitude,
+        pickup_longitude,
+        pickup_contact_name,
+        pickup_contact_phone,
+        pickup_instructions,
+        delivery_address,
+        delivery_latitude,
+        delivery_longitude,
+        delivery_contact_name,
+        delivery_contact_phone,
+        delivery_instructions,
+        total_weight_kg,
+        total_volume_m3,
+        package_description,
+        fragile_items,
+        temperature_controlled,
+        base_price,
+        distance_fee,
+        weight_fee,
+        volume_fee,
+        rush_fee,
+        fuel_surcharge,
+        tip_amount,
+        tax_amount,
+        platform_fee,
+        platform_fee_percent,
+        subtotal_price,
+        total_price,
+        driver_earnings,
+        payment_status,
+        payment_method,
+        payment_transaction_id,
+        payment_processed_at,
+        estimated_distance_km,
+        estimated_duration_minutes,
+        actual_distance_km,
+        actual_duration_minutes,
+        route_polyline,
+        route_order_index,
+        status,
+        priority,
+        created_at,
+        scheduled_pickup_at,
+        matched_at,
+        accepted_at,
+        driver_enroute_at,
+        pickup_started_at,
+        in_transit_at,
+        delivered_at,
+        completed_at,
+        cancelled_at,
+        driver_current_lat,
+        driver_current_lng,
+        driver_last_updated,
+        customer_balance_updated,
+        driver_balance_updated,
+        balance_update_attempts,
+        unread_customer_messages,
+        unread_driver_messages,
+        is_bulk_order,
+        bulk_order_id,
+        internal_notes,
+        customer_notes,
+        driver_notes,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
 
-      const params = [
-        uuidv4(), // 👈 Add UUID for id
-        orderNumber, // 👈 Use generated order number
-        data.customer_id,
-        data.pickup_address,
-        data.pickup_latitude,
-        data.pickup_longitude,
-        data.pickup_contact_name,
-        data.pickup_contact_phone,
-        data.pickup_instructions || null,
-        data.delivery_address,
-        data.delivery_latitude,
-        data.delivery_longitude,
-        data.delivery_contact_name,
-        data.delivery_contact_phone,
-        data.delivery_instructions || null,
-        data.total_weight_kg,
-        data.total_volume_m3,
-        data.package_description || null,
-        data.fragile_items || false,
-        data.temperature_controlled || false,
-        data.base_price,
-        data.distance_fee || 0,
-        data.weight_fee || 0,
-        data.volume_fee || 0,
-        data.rush_fee || 0,
-        data.fuel_surcharge || 0,
-        data.tip_amount || 0,
-        data.tax_amount || 0,
-        data.platform_fee || (data.total_price * 0.15),
-        data.platform_fee_percent || 15.00,
-        data.subtotal_price,
-        data.total_price,
-        data.estimated_distance_km,
-        data.estimated_duration_minutes,
-        data.route_polyline || null,
-        data.priority || 'normal',
-        data.customer_notes || null,
-        data.is_bulk_order || false,
-        data.bulk_order_id || null
-      ];
+      const totalPrice = data.total_price || (data as any).pricing?.estimatedPrice?.usd || 0;
+      const driverEarnings = data.driver_earnings || totalPrice * 0.8;
+
+       const params = [
+      // Basic order info
+      uuidv4(),
+      orderNumber,
+      data.customer_id,
+      data.driver_id || null,
+      
+      // Pickup info
+      data.pickup_address,
+      data.pickup_latitude,
+      data.pickup_longitude,
+      data.pickup_contact_name || (data as any).customerInfo?.name || 'Unknown',
+      data.pickup_contact_phone || (data as any).customerInfo?.phone || '',
+      data.pickup_instructions || null,
+      
+      // Delivery info
+      data.delivery_address,
+      data.delivery_latitude,
+      data.delivery_longitude,
+      data.delivery_contact_name || (data as any).customerInfo?.name || 'Unknown',
+      data.delivery_contact_phone || (data as any).customerInfo?.phone || '',
+      data.delivery_instructions || null,
+      
+      // Package info
+      data.total_weight_kg || (data as any).packageDetails?.weight?.value || 0,
+      data.total_volume_m3 || (data as any).packageDetails?.volume?.value || 0,
+      data.package_description || 
+        `${(data as any).packageDetails?.categoryLabel || 'Package'} - ${(data as any).packageDetails?.weight?.value || 0}kg, ${(data as any).packageDetails?.volume?.value || 0}m³`,
+      data.fragile_items || (data as any).specialRequirements?.fragile || false,
+      data.temperature_controlled || (data as any).specialRequirements?.refrigerated || false,
+      
+      // Pricing - calculate from JSON if not provided
+      data.base_price || (totalPrice * 0.3), // 30% base
+      data.distance_fee || (totalPrice * 0.5), // 50% distance
+      data.weight_fee || (totalPrice * 0.1), // 10% weight
+      data.volume_fee || (totalPrice * 0.1), // 10% volume
+      data.rush_fee || 0,
+      data.fuel_surcharge || 0,
+      data.tip_amount || 0,
+      data.tax_amount || 0,
+      data.platform_fee || (totalPrice * 0.15),
+      data.platform_fee_percent || 15.00,
+      data.subtotal_price || totalPrice,
+      totalPrice,
+      
+      // Driver earnings (80% of total)
+      driverEarnings,
+      
+      // Payment info
+      'pending', // payment_status
+      null, // payment_method
+      null, // payment_transaction_id
+      null, // payment_processed_at
+      
+      // Route info - extract from JSON
+      data.estimated_distance_km || (data as any).locations?.distance?.km || 0,
+      data.estimated_duration_minutes || (data as any).timing?.estimatedDuration?.minutes || 0,
+      0, // actual_distance_km
+      0, // actual_duration_minutes
+      data.route_polyline || null,
+      0, // route_order_index
+      
+      // Status
+      'pending', // status
+      data.priority || (data as any).packageDetails?.urgency || 'normal',
+      
+      // Timestamps
+      new Date(), // created_at (now)
+      null, // scheduled_pickup_at
+      new Date(), // matched_at (now, since driver is already assigned)
+      null, // accepted_at
+      null, // driver_enroute_at
+      null, // pickup_started_at
+      null, // in_transit_at
+      null, // delivered_at
+      null, // completed_at
+      null, // cancelled_at
+      
+      // Driver location tracking
+      null, // driver_current_lat
+      null, // driver_current_lng
+      null, // driver_last_updated
+      
+      // Balance updates
+      false, // customer_balance_updated
+      false, // driver_balance_updated
+      0, // balance_update_attempts
+      
+      // Communication
+      0, // unread_customer_messages
+      0, // unread_driver_messages
+      
+      // Bulk order info
+      data.is_bulk_order || false,
+      data.bulk_order_id || null,
+      
+      // Notes
+      data.internal_notes || null,
+      data.customer_notes || (data as any).customerNotes || null,
+      data.driver_notes || null,
+      
+      // Updated timestamp
+      new Date() // updated_at
+    ];
 
       await db.execute(sql, params);
       return await this.findByOrderNumber(orderNumber) as Order;
