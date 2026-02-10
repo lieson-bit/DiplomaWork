@@ -4,6 +4,8 @@ import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import { db } from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
+import { OrderRepository } from './repositories/order.repository';
+import { TrackingRepository } from './repositories/tracking.repository';
 
 const logger = new Logger('Server');
 
@@ -15,6 +17,8 @@ const server = createServer(app);
 
 // Initialize WebSocket server WITH the HTTP server
 const wss = new WebSocketUtil(server);
+const trackingRepository = new TrackingRepository();
+const orderRepository = new OrderRepository();
 
 // Test database connection on startup
 async function testDatabaseConnection() {

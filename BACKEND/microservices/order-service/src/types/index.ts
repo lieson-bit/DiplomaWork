@@ -476,3 +476,34 @@ export interface WebSocketEvent {
   data: any;
   timestamp: Date;
 }
+
+export interface DriverVehicle {
+  id: string;
+  type: string;
+  make: string;
+  model: string;
+  year: number;
+  color: string;
+  licensePlate: string;
+  maxWeight: number;
+  maxVolume: number;
+  imageUrl: string;
+  currentStatus: string;
+  createdAt: string;
+}
+
+export interface DriverProfilePicture {
+  originalUrl: string;
+  thumbnailUrl: string;
+  smallUrl: string;
+  mediumUrl: string;
+}
+
+export interface DriverVehiclesResponse {
+  success: boolean;
+  data: {
+    driverId: string;
+    profilePicture: DriverProfilePicture;
+    vehicles: DriverVehicle[];
+  };
+}

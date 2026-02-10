@@ -15,12 +15,12 @@ export class OrderService {
   private websocketUtil: WebSocketUtil;
   private capacityOptimizationService: CapacityOptimizationService;
   private orderRepository: OrderRepository;
-  private trackingRepository: TrackingRepository; // Added missing dependency
+  private trackingRepository: TrackingRepository; 
 
-  constructor(websocketUtil: WebSocketUtil) {
+  constructor(websocketUtil: WebSocketUtil, notificationService?: NotificationService) {
     this.logger = new Logger('OrderService');
     this.websocketUtil = websocketUtil;
-    this.notificationService = new NotificationService(websocketUtil);
+    this.notificationService = notificationService || new NotificationService(websocketUtil);
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
     this.capacityOptimizationService = new CapacityOptimizationService();
