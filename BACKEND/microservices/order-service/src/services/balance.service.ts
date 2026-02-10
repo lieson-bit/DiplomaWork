@@ -187,60 +187,64 @@ export class BalanceService {
     }
   }
   
-  // Fix the completeOrderPayment method - replace lines 102-106:
-async completeOrderPayment(orderId: string): Promise<void> {
-  try {
-    // Get order details - FIXED QUERY
-    const orderQuery = `
-      SELECT driver_id, total_price, driver_earnings 
-      FROM orders 
-      WHERE id = ?
-    `;
-    
-    const order = await db.queryOne<any>(orderQuery, [orderId]);
-    
-    if (!order) {
-      throw new Error('Order not found');
+  async completeOrderPayment(orderId: string): Promise<void> {
+    try {
+      // Get order details - updated query for your schema
+      const orderQuery = `
+        SELECT customer_id, driver_id, estimated_price_usd 
+        FROM orders 
+        WHERE id = ?
+      `;
+      
+      const order = await db.queryOne<any>(orderQuery, [orderId]);
+      
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      
+      const customerId = order.customer_id;
+      const driverId = order.driver_id;
+      const amount = order.estimated_price_usd;
+      
+      if (!driverId) {
+        throw new Error('No driver assigned to order');
+      }
+      
+      await db.transaction(async (connection) => {
+        // Move from pending to available balance for driver
+        const updateQuery = `
+          UPDATE user_balances 
+          SET pending_balance = pending_balance - ?,
+              available_balance = available_balance + ?,
+              total_earned = total_earned + ?,
+              updated_at = NOW()
+          WHERE user_id = ? AND user_type = 'driver'
+        `;
+        
+        await connection.execute(updateQuery, [amount, amount, amount, driverId]);
+        
+        // Update driver transaction status
+        const transactionQuery = `
+          UPDATE balance_transactions 
+          SET description = ?
+          WHERE user_id = ? AND order_id = ? AND transaction_type = 'payment' AND amount > 0
+        `;
+        
+        await connection.execute(transactionQuery, [
+          `Completed earnings from order ${orderId}`,
+          driverId,
+          orderId
+        ]);
+      });
+      
+      this.logger.info(`Order payment completed: $${amount} released to driver ${driverId}`);
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to complete order payment:', errorMessage);
+      throw error;
     }
-    
-    const driverId = order.driver_id;
-    const amount = order.driver_earnings || order.total_price * 0.8; // 80% to driver if not specified
-    
-    await db.transaction(async (connection) => {
-      // Move from pending to available balance for driver
-      const updateQuery = `
-        UPDATE user_balances 
-        SET pending_balance = pending_balance - ?,
-            available_balance = available_balance + ?,
-            total_earned = total_earned + ?,
-            updated_at = NOW()
-        WHERE user_id = ? AND user_type = 'driver'
-      `;
-      
-      await connection.execute(updateQuery, [amount, amount, amount, driverId]);
-      
-      // Update driver transaction status
-      const transactionQuery = `
-        UPDATE balance_transactions 
-        SET description = ?
-        WHERE user_id = ? AND order_id = ? AND transaction_type = 'payment' AND amount > 0
-      `;
-      
-      await connection.execute(transactionQuery, [
-        `Completed earnings from order ${orderId}`,
-        driverId,
-        orderId
-      ]);
-    });
-    
-    this.logger.info(`Order payment completed: $${amount} released to driver ${driverId}`);
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Failed to complete order payment:', errorMessage);
-    throw error;
   }
-}
   
   // Get recent transactions
   async getRecentTransactions(userId: string, limit: number = 10): Promise<Transaction[]> {

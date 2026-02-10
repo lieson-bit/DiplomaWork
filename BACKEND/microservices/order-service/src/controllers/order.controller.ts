@@ -14,18 +14,13 @@ export class OrderController {
     this.orderService = orderService;
   }
   
-  // New endpoint to receive order from external service
+  // Receive order from external service
   async receiveOrder(req: Request, res: Response) {
     try {
-      this.logger.info('Receiving order from external service:', req.body.orderId);
+      this.logger.info('Receiving order from external service:', req.body);
       
-      // Validate the incoming order structure
-      if (!req.body.orderId || !req.body.customerInfo || !req.body.driverInfo) {
-        return ResponseUtil.error(res, 'Invalid order structure', 400);
-      }
-      
-      // Process the order
-      const result = await this.orderService.createOrderFromRequest(req.body);
+      // Transform and validate external data
+      const result = await this.orderService.createOrderFromExternalRequest(req.body);
       
       if (!result.success) {
         return ResponseUtil.error(res, result.message, 400, {
@@ -38,7 +33,7 @@ export class OrderController {
         res,
         result,
         'Order received and processing started',
-        202 // Accepted
+        202
       );
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -88,22 +83,21 @@ export class OrderController {
     }
   }
   
-  // Get order details (for both customer and driver)
+  // Get order details
   async getOrder(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
-      const includeOptimization = req.query.optimize === 'true';
       const userId = req.user!.userId;
       const userType = req.user!.userType;
       
-      const order = await this.orderService.getOrder(orderId, includeOptimization);
+      const order = await this.orderService.getOrder(orderId);
       
       // Verify access
-      if (userType === 'customer' && order.customerInfo.id !== userId) {
+      if (userType === 'customer' && order.customer_info.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+      if (userType === 'driver' && order.driver_info?.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
@@ -119,29 +113,27 @@ export class OrderController {
     }
   }
 
-  // Get order with full progress tracking
+  // Get order with progress tracking
   async getOrderWithProgress(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
       const userId = req.user!.userId;
       const userType = req.user!.userType;
 
-      const result = await this.orderService.getOrderWithProgress(orderId);
+      const order = await this.orderService.getOrder(orderId);
 
       // Verify access
-      const order = await this.orderService.getOrder(orderId, false);
-
-      if (userType === 'customer' && order.customerInfo.id !== userId) {
+      if (userType === 'customer' && order.customer_info.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
 
-      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+      if (userType === 'driver' && order.driver_info?.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
 
       return ResponseUtil.success(
         res,
-        result,
+        order,
         'Order with progress retrieved successfully'
       );
     } catch (error: unknown) {
@@ -207,26 +199,20 @@ export class OrderController {
       const userId = req.user!.userId;
       const userType = req.user!.userType;
       
-      // Verify access - you need to get the order first
-      // Since we don't have getOrder method in controller, let's call the service
-      const order = await this.orderService.getOrder(orderId, false);
+      // Verify access
+      const order = await this.orderService.getOrder(orderId);
       
-      if (!order) {
-        return ResponseUtil.notFound(res, 'Order not found');
-      }
-      
-      if (userType === 'customer' && order.customerInfo.id !== userId) {
+      if (userType === 'customer' && order.customer_info.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+      if (userType === 'driver' && order.driver_info?.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      // Get tracking data with proper typing
       const tracking = await trackingRepository.findByOrderId(orderId, { 
         limit: 100,
-        orderBy: 'ASC' as const // Add type assertion
+        orderBy: 'ASC' as const
       });
       
       return ResponseUtil.success(
@@ -284,13 +270,13 @@ export class OrderController {
       const userType = req.user!.userType;
       
       // Get order to verify access
-      const order = await this.orderService.getOrder(orderId, false);
+      const order = await this.orderService.getOrder(orderId);
       
-      if (userType === 'customer' && order.customerInfo.id !== userId) {
+      if (userType === 'customer' && order.customer_info.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      if (userType === 'driver' && order.driverInfo?.id !== userId) {
+      if (userType === 'driver' && order.driver_info?.id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
@@ -397,43 +383,12 @@ export class OrderController {
     }
   }
   
-  // Get order tracking
-  async getTracking(req: Request, res: Response) {
-    try {
-      const orderId = req.params.id;
-      const userId = req.user!.userId;
-      const userType = req.user!.userType;
-      
-      // Get order to verify access
-      const order = await this.orderService.getOrder(orderId, false);
-      
-      if (userType === 'customer' && order.customerInfo.id !== userId) {
-        return ResponseUtil.forbidden(res, 'Access denied');
-      }
-      
-      if (userType === 'driver' && order.driverInfo?.id !== userId) {
-        return ResponseUtil.forbidden(res, 'Access denied');
-      }
-      
-      return ResponseUtil.success(
-        res,
-        order.tracking,
-        'Tracking data retrieved'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Get tracking error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get tracking data', 400, errorMessage);
-    }
-  }
-  
   // Optimize driver route
   async optimizeRoute(req: Request, res: Response) {
     try {
       const driverId = req.user!.userId;
       
       // This would trigger re-optimization
-      // In practice, optimization happens automatically when driver accepts new orders
       return ResponseUtil.success(
         res,
         { message: 'Route optimization is automatic when accepting new orders' },
@@ -446,4 +401,3 @@ export class OrderController {
     }
   }
 }
-

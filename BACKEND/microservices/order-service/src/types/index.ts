@@ -1,204 +1,125 @@
 export interface Order {
   id: string;
-  orderId: string;
-  orderNumber: string;
+  order_number: string;
+  customer_id: string;
+  driver_id: string | null;
+  
+  // Status tracking
   status: 'pending' | 'driver_assigned' | 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled' | 'completed';
-  createdAt: Date;
-  lastUpdated: Date;
   
   // Customer Info
-  customerInfo: {
-    id: string;
-    name: string;
-    email: string;
-    phone: string;
-    userType: 'customer';
-  };
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
   
   // Locations
-  locations: {
-    pickup: {
-      address: string;
-      coordinates: {
-        lat: number;
-        lng: number;
-      };
-      geocoded: boolean;
-      geocodingMethod: string;
-      accuracy: string;
-    };
-    delivery: {
-      address: string;
-      coordinates: {
-        lat: number;
-        lng: number;
-      };
-      geocoded: boolean;
-      geocodingMethod: string;
-      accuracy: string;
-    };
-    distance: {
-      km: number;
-      miles: number;
-    };
-  };
+  pickup_address: string;
+  pickup_latitude: number;
+  pickup_longitude: number;
+  
+  delivery_address: string;
+  delivery_latitude: number;
+  delivery_longitude: number;
+  
+  distance_km: number;
   
   // Package Details
-  packageDetails: {
-    category: string;
-    categoryLabel: string;
-    weight: {
-      value: number;
-      unit: 'kg';
-    };
-    volume: {
-      value: number;
-      unit: 'm³';
-    };
-    urgency: 'normal' | 'urgent' | 'express';
-    urgencyLabel: string;
-  };
+  package_category: string;
+  weight_kg: number;
+  volume_m3: number;
+  urgency: 'normal' | 'high' | 'urgent';
   
   // Special Requirements
-  specialRequirements: {
-    fragile: boolean;
-    refrigerated: boolean;
-    oversized: boolean;
-    hazardous: boolean;
-    requirementsList: string[];
-  };
+  fragile: boolean;
+  refrigerated: boolean;
+  oversized: boolean;
+  hazardous: boolean;
   
   // Driver Info
-  driverInfo: {
-    id: string;
-    driverId: string;
-    userId: string;
-    name: string;
-    phone: string;
-    email: string;
-    rating: number;
-    matchScore: number;
-    suitability: 'excellent' | 'good' | 'fair' | 'poor';
-    estimatedArrival: string;
-    profileImage?: string;
-  };
+  driver_name: string | null;
+  driver_phone: string | null;
+  driver_email: string | null;
+  driver_rating: number | null;
+  driver_match_score: number | null;
   
   // Vehicle Info
-  vehicleInfo: {
-    type: string;
-    typeFormatted: string;
-    make: string;
-    model: string;
-    licensePlate: string;
-    capacity: {
-      maxWeight: number;
-      maxVolume: number;
-      unit: {
-        weight: string;
-        volume: string;
-      };
-    };
-    imageUrl: string;
-    imageError: boolean;
-  };
+  vehicle_type: string | null;
+  vehicle_make: string | null;
+  vehicle_model: string | null;
+  vehicle_license_plate: string | null;
+  vehicle_image_url: string | null;
+  vehicle_max_weight: number | null;
+  vehicle_max_volume: number | null;
   
   // Pricing
-  pricing: {
-    estimatedPrice: {
-      usd: number;
-      rub: number;
-      formatted: {
-        usd: string;
-        rub: string;
-      };
-    };
-    confidenceInterval: {
-      low: number;
-      high: number;
-      formatted: string;
-    };
-    currency: string;
-    baseCurrency: string;
-  };
+  estimated_price_usd: number;
+  estimated_price_local: number;
+  currency: string;
+  base_currency: string;
   
   // Timing
-  timing: {
-    estimatedDuration: {
-      minutes: number;
-      text: string;
-      formatted: string;
-    };
-    pickupTime: {
-      estimated: Date;
-      driverArrival: string;
-    };
-    deliveryTime: {
-      estimated: Date;
-      scheduled: Date;
-    };
-    urgencyLevel: string;
-    serviceHours: string;
-  };
+  estimated_duration_minutes: number;
+  pickup_time_estimated: Date | null;
+  delivery_time_estimated: Date | null;
   
+  // Route Optimization
+  route_polyline: string | null;
+  route_order_index: number;
   
-  // System Info
-  systemInfo: {
-    geocodingStatus: {
-      pickup: string;
-      delivery: string;
-    };
-    calculationTimestamp: string;
-    apiVersion: string;
-    source: string;
-  };
+  // Payment
+  amount_paid: number;
+  payment_status: 'pending' | 'processing' | 'completed' | 'refunded';
   
-  // Metadata
-  metadata: {
-    geocodingAttempts: number;
-    driverSelectionTime: Date;
-    userAgent: string;
-    platform: string;
-  };
+  // Driver acceptance
+  driver_accepted: boolean;
+  driver_accepted_at: Date | null;
   
-  // Additional fields for our system
-  driverAccepted: boolean;
-  driverAcceptedAt?: Date;
-  deliveryStartedAt?: Date;
-  deliveryCompletedAt?: Date;
-  customerRating?: number;
-  customerReview?: string;
-  routeOrderIndex: number;
-  progressPercentage: number;
+  // Delivery tracking
+  delivery_started_at: Date | null;
+  delivery_completed_at: Date | null;
   
-  // Balance info
-  amountPaid: number;
-  paymentStatus: 'pending' | 'processing' | 'completed' | 'refunded';
+  // Rating
+  customer_rating: number | null;
+  customer_review: string | null;
+  rating_given_at: Date | null;
+  
+  // Communication
+  unread_customer_messages: number;
+  unread_driver_messages: number;
+  
+  // Timestamps
+  created_at: Date;
+  updated_at: Date;
 }
+
+
 
 // Order Progress Interface
 export interface OrderProgress {
-  orderPlaced: Date;
-  driverAssigned?: Date;
-  routeToPickup?: Date;
-  inTransit?: Date;
-  delivered?: Date;
+  steps: Array<{
+    status: Order['status'];
+    label: string;
+    completed: boolean;
+    timestamp?: Date;
+  }>;
+  currentStatus: Order['status'];
   progressPercentage: number;
-  currentStep: string;
+  nextStep?: Order['status'];
 }
 
 // Message Interface for Communication
 export interface OrderMessage {
   id: string;
-  orderId: string;
-  senderId: string;
-  senderType: 'customer' | 'driver';
-  senderName: string;
-  senderImage?: string;
-  messageType: 'text' | 'location' | 'image' | 'status_update';
+  order_id: string;
+  sender_id: string;
+  sender_type: 'customer' | 'driver';
+  sender_name?: string;
+  sender_image?: string;
+  message_type: 'text' | 'location' | 'image' | 'status_update';
   content: string;
-  readStatus: boolean;
-  readAt?: Date;
-  createdAt: Date;
+  read_status: boolean;
+  read_at?: Date;
+  created_at: Date;
   metadata?: any;
 }
 
@@ -257,91 +178,111 @@ export interface Notification {
 
 // Driver Rating Interface
 export interface DriverRating {
-  orderId: string;
-  customerId: string;
-  driverId: string;
-  rating: number; // 1-5
-  review?: string;
-  createdAt: Date;
+  id: string;
+  driver_id: string;
+  order_id: string;
+  customer_id: string;
+  rating: number;
+  review: string | null;
+  created_at: Date;
 }
 
 // API Request/Response Types
 export interface CreateOrderRequest {
-  // Your order structure
-  orderId: string;
-  status: string;
-  customerInfo: {
-    id: string;
-    name: string;
-    email: string;
-    phone: string;
-    userType: string;
-  };
-  locations: {
-    pickup: {
-      address: string;
-      coordinates: {
-        lat: number;
-        lng: number;
-      };
-    };
-    delivery: {
-      address: string;
-      coordinates: {
-        lat: number;
-        lng: number;
-      };
-    };
-    distance: {
-      km: number;
-      miles: number;
-    };
-  };
-  packageDetails: {
-    category: string;
-    weight: {
-      value: number;
-      unit: string;
-    };
-    volume: {
-      value: number;
-      unit: string;
-    };
-    urgency: string;
-  };
-  driverInfo: {
-    id: string;
-    driverId: string;
-    userId: string;
-    name: string;
-    phone: string;
-    email: string;
-    rating: number;
-    matchScore: number;
-  };
-  vehicleInfo: {
-    type: string;
-    make: string;
-    model: string;
-    licensePlate: string;
-    capacity: {
-      maxWeight: number;
-      maxVolume: number;
-    };
-  };
-  pricing: {
-    estimatedPrice: {
-      usd: number;
-      rub: number;
-    };
-    currency: string;
-    baseCurrency: string;
-  };
-  timing: {
-    estimatedDuration: {
-      minutes: number;
-    };
-  };
+  order_number: string;
+  customer_id: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  
+  // Locations
+  pickup_address: string;
+  pickup_latitude: number;
+  pickup_longitude: number;
+  delivery_address: string;
+  delivery_latitude: number;
+  delivery_longitude: number;
+  distance_km: number;
+  
+  // Package Details
+  package_category: string;
+  weight_kg: number;
+  volume_m3: number;
+  urgency: 'normal' | 'high' | 'urgent';
+  
+  // Special Requirements
+  fragile: boolean;
+  refrigerated: boolean;
+  oversized: boolean;
+  hazardous: boolean;
+  
+  // Driver Info (optional on creation)
+  driver_id?: string | null;
+  driver_name?: string | null;
+  driver_phone?: string | null;
+  driver_email?: string | null;
+  driver_rating?: number | null;
+  driver_match_score?: number | null;
+  
+  // Vehicle Info (optional on creation)
+  vehicle_type?: string | null;
+  vehicle_make?: string | null;
+  vehicle_model?: string | null;
+  vehicle_license_plate?: string | null;
+  vehicle_image_url?: string | null;
+  vehicle_max_weight?: number | null;
+  vehicle_max_volume?: number | null;
+  
+  // Pricing
+  estimated_price_usd: number;
+  estimated_price_local: number;
+  currency?: string;
+  base_currency?: string;
+  
+  // Timing
+  estimated_duration_minutes: number;
+  pickup_time_estimated?: Date | null;
+  delivery_time_estimated?: Date | null;
+  
+  // Route Optimization
+  route_polyline?: string | null;
+  route_order_index?: number;
+  
+  // Payment (optional with defaults)
+  amount_paid?: number;
+  payment_status?: 'pending' | 'processing' | 'completed' | 'refunded';
+}
+
+export interface UpdateOrderRequest {
+  driver_id?: string | null;
+  status?: Order['status'];
+  
+  // Driver acceptance
+  driver_accepted?: boolean;
+  driver_accepted_at?: Date | null;
+  
+  // Delivery tracking
+  delivery_started_at?: Date | null;
+  delivery_completed_at?: Date | null;
+  
+  // Rating
+  customer_rating?: number | null;
+  customer_review?: string | null;
+  rating_given_at?: Date | null;
+  
+  // Communication
+  unread_customer_messages?: number;
+  unread_driver_messages?: number;
+  
+  // Payment
+  amount_paid?: number;
+  payment_status?: Order['payment_status'];
+  
+  // Route Optimization
+  route_order_index?: number;
+  route_polyline?: string | null;
+  
+  // Timestamps will be auto-updated
 }
 
 export interface AcceptOrderRequest {
@@ -374,13 +315,81 @@ export interface RateDriverRequest {
   review?: string;
 }
 
-// Response Types
 export interface OrderResponse {
-  success: boolean;
-  order: Order;
-  progress?: OrderProgress;
-  messages?: OrderMessage[];
-  driverRoute?: OptimizedRoute;
+  id: string;
+  order_number: string;
+  status: Order['status'];
+  customer_info: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+  };
+  driver_info?: {
+    id: string | null;
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+    rating: number | null;
+  };
+  pickup_location: {
+    address: string;
+    latitude: number;
+    longitude: number;
+  };
+  delivery_location: {
+    address: string;
+    latitude: number;
+    longitude: number;
+  };
+  package_details: {
+    category: string;
+    weight_kg: number;
+    volume_m3: number;
+    urgency: string;
+    fragile: boolean;
+    refrigerated: boolean;
+  };
+  pricing: {
+    estimated_usd: number;
+    estimated_local: number;
+    currency: string;
+    amount_paid: number;
+    payment_status: Order['payment_status'];
+  };
+  timing: {
+    estimated_duration_minutes: number;
+    pickup_time_estimated: Date | null;
+    delivery_time_estimated: Date | null;
+    created_at: Date;
+  };
+  progress: OrderProgress;
+}
+
+export interface ApiOrderRequest {
+  order_number: string;
+  customer_id: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  pickup_address: string;
+  pickup_latitude: number;
+  pickup_longitude: number;
+  delivery_address: string;
+  delivery_latitude: number;
+  delivery_longitude: number;
+  distance_km: number;
+  package_category: string;
+  weight_kg: number;
+  volume_m3: number;
+  urgency: 'normal' | 'high' | 'urgent';
+  fragile: boolean;
+  refrigerated: boolean;
+  oversized: boolean;
+  hazardous: boolean;
+  estimated_price_usd: number;
+  estimated_price_local: number;
+  estimated_duration_minutes: number;
 }
 
 export interface OrdersListResponse {
@@ -451,15 +460,16 @@ export interface WebSocketEvent {
 
 export interface OrderProgress {
   steps: Array<{
-    key: string;
+    status: 'pending' | 'driver_assigned' | 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled' | 'completed';
     label: string;
-    date?: Date;
     completed: boolean;
+    timestamp?: Date;
   }>;
-  currentStep: string;
+  currentStatus: 'pending' | 'driver_assigned' | 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled' | 'completed';
   progressPercentage: number;
-  currentStatus: string;
+  nextStep?: 'pending' | 'driver_assigned' | 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled' | 'completed';
 }
+
 
 export interface OrderWithProgress extends Order {
   progress: OrderProgress;
@@ -507,3 +517,7 @@ export interface DriverVehiclesResponse {
     vehicles: DriverVehicle[];
   };
 }
+
+
+
+

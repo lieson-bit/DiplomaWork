@@ -6,6 +6,7 @@ import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
 import { CapacityOptimizationService } from './capacity-optimization.service';
 import { WebSocketUtil } from '../utils/websocket.util';
+import { db } from '../config/database';
 
 export class OrderService {
   private logger: Logger;

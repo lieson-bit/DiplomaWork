@@ -3,11 +3,11 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import path from 'path';
-import swaggerJSDoc from 'swagger-jsdoc'; 
-import swaggerUi from 'swagger-ui-express'; 
+import swaggerJSDoc from 'swagger-jsdoc';
+import swaggerUi from 'swagger-ui-express';
 import orderRoutes from './routes/order.routes';
 import { errorHandler } from './middleware/error.middleware';
-import { defaultLogger } from './utils/logger'; 
+import { defaultLogger } from './utils/logger';
 
 const app = express();
 
@@ -17,7 +17,7 @@ const logger = defaultLogger;
 // Get absolute path for Swagger file resolution
 const swaggerDirname = process.cwd();
 
-// Swagger configuration with comprehensive schemas
+// Swagger configuration
 const swaggerOptions = {
   definition: {
     openapi: '3.0.0',
@@ -38,10 +38,6 @@ const swaggerOptions = {
       {
         url: process.env.APP_URL || 'http://localhost:3004',
         description: 'Development server'
-      },
-      {
-        url: 'https://api.orderservice.com',
-        description: 'Production server'
       }
     ],
     components: {
@@ -59,287 +55,136 @@ const swaggerOptions = {
       },
       schemas: {
         // Request Schemas
-        CreateOrderRequest: {
+        OrderRequest: {
           type: 'object',
-          required: ['pickup_address', 'delivery_address', 'total_weight_kg', 'total_volume_m3'],
           properties: {
-            pickup_address: { type: 'string', example: '123 Main St, New York, NY' },
-            pickup_latitude: { type: 'number', format: 'float', example: 40.7128 },
-            pickup_longitude: { type: 'number', format: 'float', example: -74.0060 },
-            pickup_contact_name: { type: 'string', example: 'John Doe' },
-            pickup_contact_phone: { type: 'string', example: '+1234567890' },
-            pickup_instructions: { type: 'string', example: 'Ring bell twice' },
-            
-            delivery_address: { type: 'string', example: '456 Park Ave, Brooklyn, NY' },
-            delivery_latitude: { type: 'number', format: 'float', example: 40.6782 },
-            delivery_longitude: { type: 'number', format: 'float', example: -73.9442 },
-            delivery_contact_name: { type: 'string', example: 'Jane Smith' },
-            delivery_contact_phone: { type: 'string', example: '+1234567891' },
-            delivery_instructions: { type: 'string', example: 'Leave at front desk' },
-            
-            total_weight_kg: { type: 'number', format: 'float', minimum: 0.1, example: 5.5 },
-            total_volume_m3: { type: 'number', format: 'float', minimum: 0.01, example: 0.2 },
-            package_description: { type: 'string', example: 'Electronics package' },
-            fragile_items: { type: 'boolean', default: false },
-            temperature_controlled: { type: 'boolean', default: false },
-            
-            priority: { 
-              type: 'string', 
-              enum: ['low', 'normal', 'high', 'urgent'],
-              default: 'normal'
-            },
-            
-            order_items: {
-              type: 'array',
-              items: {
-                $ref: '#/components/schemas/OrderItem'
+            orderId: { type: 'string' },
+            customerInfo: { 
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                email: { type: 'string' },
+                phone: { type: 'string' },
+                userType: { type: 'string' }
               }
             },
-            
-            customer_notes: { type: 'string', example: 'Handle with care' },
-            scheduled_pickup_at: { type: 'string', format: 'date-time' }
-          }
-        },
-        
-        BulkOrderRequest: {
-          type: 'object',
-          required: ['orders'],
-          properties: {
-            orders: {
-              type: 'array',
-              minItems: 1,
-              maxItems: 100,
-              items: {
-                type: 'object',
-                properties: {
-                  pickup_address: { type: 'string' },
-                  pickup_latitude: { type: 'number' },
-                  pickup_longitude: { type: 'number' },
-                  delivery_address: { type: 'string' },
-                  delivery_latitude: { type: 'number' },
-                  delivery_longitude: { type: 'number' },
-                  total_weight_kg: { type: 'number' },
-                  total_volume_m3: { type: 'number' }
-                }
+            driverInfo: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                driverId: { type: 'string' },
+                name: { type: 'string' },
+                phone: { type: 'string' },
+                email: { type: 'string' },
+                rating: { type: 'number' }
               }
-            }
-          }
-        },
-        
-        CancelOrderRequest: {
-          type: 'object',
-          required: ['reason'],
-          properties: {
-            reason: { type: 'string', example: 'Change of plans' },
-            detailed_reason: { type: 'string', example: 'Need to reschedule delivery' }
-          }
-        },
-        
-        CompleteOrderRequest: {
-          type: 'object',
-          properties: {
-            payment_method: { 
-              type: 'string', 
-              enum: ['wallet', 'card', 'cash', 'bank_transfer'],
-              default: 'wallet'
             },
-            proof_image: { type: 'string', format: 'uri' },
-            delivery_notes: { type: 'string' }
-          }
-        },
-        
-        LocationUpdateRequest: {
-          type: 'object',
-          required: ['latitude', 'longitude'],
-          properties: {
-            latitude: { type: 'number', minimum: -90, maximum: 90, example: 40.7128 },
-            longitude: { type: 'number', minimum: -180, maximum: 180, example: -74.0060 },
-            speed: { type: 'number', minimum: 0, maximum: 200, example: 45.5 },
-            bearing: { type: 'number', minimum: 0, maximum: 360, example: 90 },
-            accuracy: { type: 'number', minimum: 0, example: 10.5 }
-          }
-        },
-
-        MessageRequest: {
-          type: 'object',
-          required: ['content'],
-          properties: {
-            content: { type: 'string', maxLength: 1000, example: 'Hello, where are you?' },
-            messageType: { 
-              type: 'string', 
-              enum: ['text', 'location', 'image', 'status_update'],
-              default: 'text' 
-            },
-            metadata: { type: 'object' }
-          }
-        },
-        
-        // Data Models
-        Order: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', format: 'uuid' },
-            order_number: { type: 'string', example: 'ORD-20240101-0001' },
-            customer_id: { type: 'string', format: 'uuid' },
-            driver_id: { type: 'string', format: 'uuid' },
-            status: { 
-              type: 'string', 
-              enum: ['pending', 'matched', 'driver_accepted', 'driver_enroute', 
-                     'pickup_started', 'in_transit', 'arrived', 'delivered', 
-                     'completed', 'cancelled', 'failed'] 
-            },
-            total_price: { type: 'number', format: 'float' },
-            created_at: { type: 'string', format: 'date-time' },
-            updated_at: { type: 'string', format: 'date-time' }
-          }
-        },
-        
-        OrderItem: {
-          type: 'object',
-          properties: {
-            id: { type: 'string', format: 'uuid' },
-            order_id: { type: 'string', format: 'uuid' },
-            item_name: { type: 'string' },
-            quantity: { type: 'integer', minimum: 1 },
-            weight_per_item_kg: { type: 'number', minimum: 0.1 },
-            dimensions_length_cm: { type: 'number', minimum: 1 },
-            dimensions_width_cm: { type: 'number', minimum: 1 },
-            dimensions_height_cm: { type: 'number', minimum: 1 },
-            fragile: { type: 'boolean', default: false },
-            temperature_sensitive: { type: 'boolean', default: false },
-            special_handling: { type: 'string' }
-          }
-        },
-        
-        TrackingData: {
-          type: 'object',
-          properties: {
-            order_id: { type: 'string', format: 'uuid' },
-            driver_id: { type: 'string', format: 'uuid' },
             locations: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  latitude: { type: 'number' },
-                  longitude: { type: 'number' },
-                  timestamp: { type: 'string', format: 'date-time' },
-                  speed: { type: 'number' },
-                  bearing: { type: 'number' }
+              type: 'object',
+              properties: {
+                pickup: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' },
+                    coordinates: {
+                      type: 'object',
+                      properties: {
+                        lat: { type: 'number' },
+                        lng: { type: 'number' }
+                      }
+                    }
+                  }
+                },
+                delivery: {
+                  type: 'object',
+                  properties: {
+                    address: { type: 'string' },
+                    coordinates: {
+                      type: 'object',
+                      properties: {
+                        lat: { type: 'number' },
+                        lng: { type: 'number' }
+                      }
+                    }
+                  }
+                },
+                distance: {
+                  type: 'object',
+                  properties: {
+                    km: { type: 'number' }
+                  }
                 }
               }
             },
-            summary: {
+            packageDetails: {
               type: 'object',
               properties: {
-                totalDistance: { type: 'number' },
-                totalDuration: { type: 'number' },
-                averageSpeed: { type: 'number' },
-                startTime: { type: 'string', format: 'date-time' }
-              }
-            }
-          }
-        },
-        
-        Error: {
-          type: 'object',
-          properties: {
-            success: { type: 'boolean', default: false },
-            error: { type: 'string' },
-            message: { type: 'string' },
-            details: { type: 'array', items: { type: 'string' } },
-            timestamp: { type: 'string', format: 'date-time' }
-          }
-        },
-        
-        PaginatedResponse: {
-          type: 'object',
-          properties: {
-            data: {
-              type: 'array',
-              items: {
-                $ref: '#/components/schemas/Order'
+                category: { type: 'string' },
+                weight: {
+                  type: 'object',
+                  properties: {
+                    value: { type: 'number' },
+                    unit: { type: 'string' }
+                  }
+                },
+                volume: {
+                  type: 'object',
+                  properties: {
+                    value: { type: 'number' },
+                    unit: { type: 'string' }
+                  }
+                },
+                urgency: { type: 'string' }
               }
             },
-            pagination: {
+            vehicleInfo: {
               type: 'object',
               properties: {
-                page: { type: 'integer' },
-                limit: { type: 'integer' },
-                total: { type: 'integer' },
-                totalPages: { type: 'integer' },
-                hasNext: { type: 'boolean' },
-                hasPrev: { type: 'boolean' }
+                type: { type: 'string' },
+                capacity: {
+                  type: 'object',
+                  properties: {
+                    maxWeight: { type: 'number' },
+                    maxVolume: { type: 'number' }
+                  }
+                }
               }
-            }
-          }
-        }
-      },
-      responses: {
-        Unauthorized: {
-          description: 'Access token is missing or invalid',
-          content: {
-            'application/json': {
-              schema: {
-                $ref: '#/components/schemas/Error'
+            },
+            pricing: {
+              type: 'object',
+              properties: {
+                estimatedPrice: {
+                  type: 'object',
+                  properties: {
+                    usd: { type: 'number' }
+                  }
+                }
               }
-            }
-          }
-        },
-        NotFound: {
-          description: 'The specified resource was not found',
-          content: {
-            'application/json': {
-              schema: {
-                $ref: '#/components/schemas/Error'
-              }
-            }
-          }
-        },
-        ValidationError: {
-          description: 'Validation failed for the request',
-          content: {
-            'application/json': {
-              schema: {
-                $ref: '#/components/schemas/Error'
-              }
-            }
-          }
-        },
-        BadRequest: {
-          description: 'Bad request',
-          content: {
-            'application/json': {
-              schema: {
-                $ref: '#/components/schemas/Error'
+            },
+            timing: {
+              type: 'object',
+              properties: {
+                estimatedDuration: {
+                  type: 'object',
+                  properties: {
+                    minutes: { type: 'number' }
+                  }
+                }
               }
             }
           }
         }
       }
-    },
-    tags: [
-      { name: 'Orders', description: 'Order management endpoints' },
-      { name: 'Tracking', description: 'Real-time order tracking' },
-      { name: 'Driver', description: 'Driver-specific operations' },
-      { name: 'Customer', description: 'Customer-specific operations' },
-      { name: 'Bulk', description: 'Bulk order operations' },
-      { name: 'Messages', description: 'Order messaging operations' }
-    ]
+    }
   },
   apis: [
-    path.join(swaggerDirname, 'dist', 'routes', '*.js'),
-    path.join(swaggerDirname, 'dist', 'controllers', '*.js'),
-    path.join(swaggerDirname, 'dist', 'types', '*.js')
+    path.join(swaggerDirname, 'src', 'routes', '*.ts'),
+    path.join(swaggerDirname, 'src', 'controllers', '*.ts')
   ]
 };
 
-console.log('Swagger scanning APIs from:', swaggerOptions.apis);
-
-const swaggerSpec = swaggerJSDoc(swaggerOptions) as Record<string, any>;
-
-// Log Swagger spec generation
-console.log(`Swagger spec generated with ${Object.keys(swaggerSpec.paths || {}).length} paths`);
+const swaggerSpec = swaggerJSDoc(swaggerOptions);
 
 // Security middleware
 app.use(helmet({
@@ -381,9 +226,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
     persistAuthorization: true,
     docExpansion: 'list',
     filter: true,
-    deepLinking: true,
-    defaultModelsExpandDepth: 2,
-    defaultModelExpandDepth: 2
+    deepLinking: true
   }
 }));
 

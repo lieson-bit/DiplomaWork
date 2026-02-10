@@ -143,7 +143,7 @@ export interface CreateOrderData {
   // Route Optimization
   route_polyline?: string | null;
   route_order_index?: number;
-  
+  status?: Order['status'];
   // Payment
   amount_paid?: number;
   payment_status?: 'pending' | 'processing' | 'completed' | 'refunded';
