@@ -113,27 +113,31 @@ export interface CreateOrderData {
   order_number?: string;
   customer_id: string;
   driver_id?: string;
+  
+  // Location info
   pickup_address: string;
   pickup_latitude: number;
   pickup_longitude: number;
-  pickup_contact_name: string;
-  pickup_contact_phone: string;
+  pickup_contact_name?: string;
+  pickup_contact_phone?: string;
   pickup_instructions?: string;
   
   delivery_address: string;
   delivery_latitude: number;
   delivery_longitude: number;
-  delivery_contact_name: string;
-  delivery_contact_phone: string;
-  delivery_instructions?: string | null;
+  delivery_contact_name?: string;
+  delivery_contact_phone?: string;
+  delivery_instructions?: string;
   
+  // Package info
   total_weight_kg: number;
   total_volume_m3: number;
   package_description?: string;
   fragile_items?: boolean;
   temperature_controlled?: boolean;
   
-  base_price: number;
+  // Pricing (all optional with defaults)
+  base_price?: number;
   distance_fee?: number;
   weight_fee?: number;
   volume_fee?: number;
@@ -141,40 +145,26 @@ export interface CreateOrderData {
   fuel_surcharge?: number;
   tip_amount?: number;
   tax_amount?: number;
-  
   platform_fee?: number;
   platform_fee_percent?: number;
+  subtotal_price?: number;
+  total_price?: number;
+  driver_earnings?: number;
   
-  subtotal_price: number;
-  total_price: number;
-  
-  estimated_distance_km: number;
-  estimated_duration_minutes: number;
+  // Route info
+  estimated_distance_km?: number;
+  estimated_duration_minutes?: number;
   route_polyline?: string;
   
+  // Status
   priority?: 'low' | 'normal' | 'high' | 'urgent';
   
+  // Additional info
+  customer_notes?: string;
   is_bulk_order?: boolean;
   bulk_order_id?: string;
-  route_order_index?: number;
-  unread_customer_messages?: number;
-  unread_driver_messages?: number;
-  customer_notes?: string;
-  driver_earnings?: number;
-  driver_enroute_at?: Date;
-  pickup_started_at?: Date;
-  in_transit_at?: Date;
-  delivered_at?: Date;
-  completed_at?: Date;
-  cancelled_at?: Date;
-  driver_current_lat?: number;
-  driver_current_lng?: number;
-  driver_last_updated?: Date;
-  customer_balance_updated?: boolean;
-  driver_balance_updated?: boolean;
-  balance_update_attempts?: number;
-  driver_notes?: string;
   internal_notes?: string;
+  driver_notes?: string;
 }
 
 export interface UpdateOrderData {
@@ -236,11 +226,11 @@ export class OrderRepository {
   }
 
   async create(data: CreateOrderData): Promise<Order> {
-    try {
-      // 👇 Generate order number if not provided
-      const orderNumber = data.order_number || this.generateOrderNumber();
+  try {
+    const orderNumber = data.order_number || this.generateOrderNumber();
 
-      const sql = `
+    // EXACT column list from your database (66 columns)
+    const sql = `
       INSERT INTO orders (
         id,
         order_number,
@@ -285,14 +275,12 @@ export class OrderRepository {
         actual_distance_km,
         actual_duration_minutes,
         route_polyline,
-        route_order_index,
         status,
         priority,
         created_at,
         scheduled_pickup_at,
         matched_at,
         accepted_at,
-        driver_enroute_at,
         pickup_started_at,
         in_transit_at,
         delivered_at,
@@ -304,133 +292,171 @@ export class OrderRepository {
         customer_balance_updated,
         driver_balance_updated,
         balance_update_attempts,
-        unread_customer_messages,
-        unread_driver_messages,
         is_bulk_order,
         bulk_order_id,
         internal_notes,
         customer_notes,
         driver_notes,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-      const totalPrice = data.total_price || (data as any).pricing?.estimatedPrice?.usd || 0;
-      const driverEarnings = data.driver_earnings || totalPrice * 0.8;
+    // Calculate values from JSON
+    const totalPrice = data.total_price || 0;
+    const driverEarnings = data.driver_earnings || totalPrice * 0.8;
 
-       const params = [
-      // Basic order info
+    // EXACT parameter list (66 values) matching the columns above
+    const params = [
+      // id (1)
       uuidv4(),
+      // order_number (2)
       orderNumber,
+      // customer_id (3)
       data.customer_id,
+      // driver_id (4)
       data.driver_id || null,
-      
-      // Pickup info
+      // pickup_address (5)
       data.pickup_address,
+      // pickup_latitude (6)
       data.pickup_latitude,
+      // pickup_longitude (7)
       data.pickup_longitude,
-      data.pickup_contact_name || (data as any).customerInfo?.name || 'Unknown',
-      data.pickup_contact_phone || (data as any).customerInfo?.phone || '',
+      // pickup_contact_name (8)
+      data.pickup_contact_name || 'Unknown',
+      // pickup_contact_phone (9)
+      data.pickup_contact_phone || '',
+      // pickup_instructions (10)
       data.pickup_instructions || null,
-      
-      // Delivery info
+      // delivery_address (11)
       data.delivery_address,
+      // delivery_latitude (12)
       data.delivery_latitude,
+      // delivery_longitude (13)
       data.delivery_longitude,
-      data.delivery_contact_name || (data as any).customerInfo?.name || 'Unknown',
-      data.delivery_contact_phone || (data as any).customerInfo?.phone || '',
+      // delivery_contact_name (14)
+      data.delivery_contact_name || 'Unknown',
+      // delivery_contact_phone (15)
+      data.delivery_contact_phone || '',
+      // delivery_instructions (16)
       data.delivery_instructions || null,
-      
-      // Package info
-      data.total_weight_kg || (data as any).packageDetails?.weight?.value || 0,
-      data.total_volume_m3 || (data as any).packageDetails?.volume?.value || 0,
-      data.package_description || 
-        `${(data as any).packageDetails?.categoryLabel || 'Package'} - ${(data as any).packageDetails?.weight?.value || 0}kg, ${(data as any).packageDetails?.volume?.value || 0}m³`,
-      data.fragile_items || (data as any).specialRequirements?.fragile || false,
-      data.temperature_controlled || (data as any).specialRequirements?.refrigerated || false,
-      
-      // Pricing - calculate from JSON if not provided
-      data.base_price || (totalPrice * 0.3), // 30% base
-      data.distance_fee || (totalPrice * 0.5), // 50% distance
-      data.weight_fee || (totalPrice * 0.1), // 10% weight
-      data.volume_fee || (totalPrice * 0.1), // 10% volume
+      // total_weight_kg (17)
+      data.total_weight_kg || 0,
+      // total_volume_m3 (18)
+      data.total_volume_m3 || 0,
+      // package_description (19)
+      data.package_description || 'Package',
+      // fragile_items (20)
+      data.fragile_items || false,
+      // temperature_controlled (21)
+      data.temperature_controlled || false,
+      // base_price (22)
+      data.base_price || (totalPrice * 0.3),
+      // distance_fee (23)
+      data.distance_fee || (totalPrice * 0.5),
+      // weight_fee (24)
+      data.weight_fee || (totalPrice * 0.1),
+      // volume_fee (25)
+      data.volume_fee || (totalPrice * 0.1),
+      // rush_fee (26)
       data.rush_fee || 0,
+      // fuel_surcharge (27)
       data.fuel_surcharge || 0,
+      // tip_amount (28)
       data.tip_amount || 0,
+      // tax_amount (29)
       data.tax_amount || 0,
+      // platform_fee (30)
       data.platform_fee || (totalPrice * 0.15),
+      // platform_fee_percent (31)
       data.platform_fee_percent || 15.00,
+      // subtotal_price (32)
       data.subtotal_price || totalPrice,
+      // total_price (33)
       totalPrice,
-      
-      // Driver earnings (80% of total)
+      // driver_earnings (34)
       driverEarnings,
-      
-      // Payment info
-      'pending', // payment_status
-      null, // payment_method
-      null, // payment_transaction_id
-      null, // payment_processed_at
-      
-      // Route info - extract from JSON
-      data.estimated_distance_km || (data as any).locations?.distance?.km || 0,
-      data.estimated_duration_minutes || (data as any).timing?.estimatedDuration?.minutes || 0,
-      0, // actual_distance_km
-      0, // actual_duration_minutes
+      // payment_status (35)
+      'pending',
+      // payment_method (36)
+      null,
+      // payment_transaction_id (37)
+      null,
+      // payment_processed_at (38)
+      null,
+      // estimated_distance_km (39)
+      data.estimated_distance_km || 0,
+      // estimated_duration_minutes (40)
+      data.estimated_duration_minutes || 0,
+      // actual_distance_km (41)
+      0,
+      // actual_duration_minutes (42)
+      0,
+      // route_polyline (43)
       data.route_polyline || null,
-      0, // route_order_index
-      
-      // Status
-      'pending', // status
-      data.priority || (data as any).packageDetails?.urgency || 'normal',
-      
-      // Timestamps
-      new Date(), // created_at (now)
-      null, // scheduled_pickup_at
-      new Date(), // matched_at (now, since driver is already assigned)
-      null, // accepted_at
-      null, // driver_enroute_at
-      null, // pickup_started_at
-      null, // in_transit_at
-      null, // delivered_at
-      null, // completed_at
-      null, // cancelled_at
-      
-      // Driver location tracking
-      null, // driver_current_lat
-      null, // driver_current_lng
-      null, // driver_last_updated
-      
-      // Balance updates
-      false, // customer_balance_updated
-      false, // driver_balance_updated
-      0, // balance_update_attempts
-      
-      // Communication
-      0, // unread_customer_messages
-      0, // unread_driver_messages
-      
-      // Bulk order info
+      // status (44)
+      'pending',
+      // priority (45)
+      data.priority || 'normal',
+      // created_at (46)
+      new Date(),
+      // scheduled_pickup_at (47)
+      null,
+      // matched_at (48)
+      new Date(),
+      // accepted_at (49)
+      null,
+      // pickup_started_at (50)
+      null,
+      // in_transit_at (51)
+      null,
+      // delivered_at (52)
+      null,
+      // completed_at (53)
+      null,
+      // cancelled_at (54)
+      null,
+      // driver_current_lat (55)
+      null,
+      // driver_current_lng (56)
+      null,
+      // driver_last_updated (57)
+      null,
+      // customer_balance_updated (58)
+      false,
+      // driver_balance_updated (59)
+      false,
+      // balance_update_attempts (60)
+      0,
+      // is_bulk_order (61)
       data.is_bulk_order || false,
+      // bulk_order_id (62)
       data.bulk_order_id || null,
-      
-      // Notes
+      // internal_notes (63)
       data.internal_notes || null,
-      data.customer_notes || (data as any).customerNotes || null,
+      // customer_notes (64)
+      data.customer_notes || null,
+      // driver_notes (65)
       data.driver_notes || null,
-      
-      // Updated timestamp
-      new Date() // updated_at
+      // updated_at (66)
+      new Date()
     ];
 
-      await db.execute(sql, params);
-      return await this.findByOrderNumber(orderNumber) as Order;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to create order:', errorMessage);
-      throw new Error(`Order creation failed: ${errorMessage}`);
+    // Verify count
+    this.logger.debug(`Column count: 66, Param count: ${params.length}`);
+    
+    if (params.length !== 66) {
+      throw new Error(`Parameter count mismatch: expected 66, got ${params.length}`);
     }
+
+    await db.execute(sql, params);
+    return await this.findByOrderNumber(orderNumber) as Order;
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to create order:', errorMessage);
+    this.logger.error('SQL:', { sql: (error as any)?.sql });
+    throw new Error(`Order creation failed: ${errorMessage}`);
   }
+}
 
   async findById(id: string): Promise<Order | null> {
     try {

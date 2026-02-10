@@ -181,6 +181,8 @@ export class OrderService {
   }
 
   private transformOrderData(jsonData: any): CreateOrderData {
+  const totalPrice = jsonData.pricing?.estimatedPrice?.usd || 0;
+  
   return {
     order_number: jsonData.orderId,
     customer_id: jsonData.customerInfo.id,
@@ -200,7 +202,6 @@ export class OrderService {
     delivery_longitude: jsonData.locations.delivery.coordinates.lng,
     delivery_contact_name: jsonData.customerInfo.name,
     delivery_contact_phone: jsonData.customerInfo.phone,
-    delivery_instructions: null,
     
     // Package info
     total_weight_kg: jsonData.packageDetails.weight.value,
@@ -209,8 +210,16 @@ export class OrderService {
     fragile_items: jsonData.specialRequirements.fragile,
     temperature_controlled: jsonData.specialRequirements.refrigerated,
     
-    // Pricing
-    total_price: jsonData.pricing.estimatedPrice.usd,
+    // Pricing - all calculated from total
+    total_price: totalPrice,
+    subtotal_price: totalPrice,
+    base_price: totalPrice * 0.3,
+    distance_fee: totalPrice * 0.5,
+    weight_fee: totalPrice * 0.1,
+    volume_fee: totalPrice * 0.1,
+    platform_fee: totalPrice * 0.15,
+    platform_fee_percent: 15.00,
+    driver_earnings: totalPrice * 0.8,
     
     // Route info
     estimated_distance_km: jsonData.locations.distance.km,
@@ -221,17 +230,7 @@ export class OrderService {
     
     // Additional info
     customer_notes: `Urgency: ${jsonData.packageDetails.urgencyLabel}, Category: ${jsonData.packageDetails.categoryLabel}`,
-    
-    // Set default values for other required fields
-    base_price: jsonData.pricing.estimatedPrice.usd * 0.3,
-    subtotal_price: jsonData.pricing.estimatedPrice.usd,
-    
-    // Communication fields
-    unread_customer_messages: 0,
-    unread_driver_messages: 0,
-    
-    // Route optimization
-    route_order_index: 0
+    is_bulk_order: false
   };
 }
   
