@@ -1,5 +1,8 @@
 import { Logger } from '../utils/logger';
 import { db } from '../config/database';
+import { DriverVehiclesResponse } from '@/types';
+import { HttpClient } from '@/utils/httpClient';
+
 
 export interface VehicleCapacity {
   maxWeight: number; // kg
@@ -260,73 +263,124 @@ export class CapacityOptimizationService {
     }
   }
 
-  // Get driver's vehicle capacity
-  private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
+  private async getDriverActiveOrders(driverId: string): Promise<any[]> {
     try {
-      // Query database for driver's vehicle capacity
       const query = `
-        SELECT 
-          vehicle_max_weight,
-          vehicle_max_volume,
-          (SELECT COUNT(*) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_orders,
-          (SELECT COALESCE(SUM(total_weight_kg), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_weight,
-          (SELECT COALESCE(SUM(total_volume_m3), 0) FROM orders WHERE driver_id = ? AND status IN ('pending', 'matched', 'driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')) as current_volume
+        SELECT total_weight_kg, total_volume_m3 
         FROM orders 
-        WHERE driver_id = ?
-        LIMIT 1
+        WHERE driver_id = ? 
+          AND status IN ('driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')
       `;
       
-      const result = await db.queryOne<any>(query, [driverId, driverId, driverId, driverId]);
-      
-      if (!result) {
-        // Return default capacity if not found
-        return {
-          maxWeight: 100, // 100kg default
-          maxVolume: 10,  // 10m³ default
-          maxOrders: 10,  // 10 orders default
-          currentWeight: 0,
-          currentVolume: 0,
-          currentOrders: 0,
-          remainingWeight: 100,
-          remainingVolume: 10,
-          remainingOrders: 10,
+      const result = await db.query<any>(query, [driverId]);
+      return result || [];
+    } catch (error) {
+      this.logger.error('Failed to get driver active orders:', error);
+      return [];
+    }
+  }
+
+  private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
+    try {
+      let vehicleCapacity: VehicleCapacity | null = null;
+
+      try {
+        // Call driver service API to get vehicle capacity
+        const driverServiceUrl = process.env.DRIVER_SERVICE_URL || 'http://localhost:3002';
+
+        // Use the existing HttpClient from your utils
+        const httpClient = new HttpClient();
+        const response = await httpClient.get(
+          `${driverServiceUrl}/api/drivers/${driverId}/vehicles-picture`
+        );
+
+        const data = response.data as DriverVehiclesResponse;
+
+        if (data.success && data.data?.vehicles?.length > 0) {
+          const vehicle = data.data.vehicles[0];
+
+          // Get driver's active orders from our database to calculate current usage
+          const activeOrders = await this.getDriverActiveOrders(driverId);
+
+          const currentWeight = activeOrders.reduce((sum: number, order: any) => 
+            sum + (order.total_weight_kg || 0), 0);
+          const currentVolume = activeOrders.reduce((sum: number, order: any) => 
+            sum + (order.total_volume_m3 || 0), 0);
+          const currentOrders = activeOrders.length;
+
+          const maxWeight = vehicle.maxWeight || 100;
+          const maxVolume = vehicle.maxVolume || 10;
+          const maxOrders = 10;
+
+          vehicleCapacity = {
+            maxWeight,
+            maxVolume,
+            maxOrders,
+            currentWeight,
+            currentVolume,
+            currentOrders,
+            remainingWeight: Math.max(0, maxWeight - currentWeight),
+            remainingVolume: Math.max(0, maxVolume - currentVolume),
+            remainingOrders: Math.max(0, maxOrders - currentOrders),
+            utilization: {
+              weight: maxWeight > 0 ? (currentWeight / maxWeight) * 100 : 0,
+              volume: maxVolume > 0 ? (currentVolume / maxVolume) * 100 : 0,
+              orders: (currentOrders / maxOrders) * 100
+            }
+          };
+
+          this.logger.info(`Vehicle capacity for driver ${driverId}: ${maxWeight}kg, ${maxVolume}m³`);
+        }
+      } catch (error: any) {
+        this.logger.warn('Failed to fetch vehicle capacity from driver service:', {
+          error: error.message,
+          url: `${process.env.DRIVER_SERVICE_URL}/api/drivers/${driverId}/vehicles-picture`
+        });
+      }
+
+      // If we couldn't get from driver service, use default values
+      if (!vehicleCapacity) {
+        this.logger.info(`Using default capacity for driver ${driverId}`);
+
+        const activeOrders = await this.getDriverActiveOrders(driverId);
+
+        const currentWeight = activeOrders.reduce((sum: number, order: any) => 
+          sum + (order.total_weight_kg || 0), 0);
+        const currentVolume = activeOrders.reduce((sum: number, order: any) => 
+          sum + (order.total_volume_m3 || 0), 0);
+        const currentOrders = activeOrders.length;
+
+        const defaultMaxWeight = 100;
+        const defaultMaxVolume = 10;
+        const defaultMaxOrders = 10;
+
+        vehicleCapacity = {
+          maxWeight: defaultMaxWeight,
+          maxVolume: defaultMaxVolume,
+          maxOrders: defaultMaxOrders,
+          currentWeight,
+          currentVolume,
+          currentOrders,
+          remainingWeight: Math.max(0, defaultMaxWeight - currentWeight),
+          remainingVolume: Math.max(0, defaultMaxVolume - currentVolume),
+          remainingOrders: Math.max(0, defaultMaxOrders - currentOrders),
           utilization: {
-            weight: 0,
-            volume: 0,
-            orders: 0
+            weight: defaultMaxWeight > 0 ? (currentWeight / defaultMaxWeight) * 100 : 0,
+            volume: defaultMaxVolume > 0 ? (currentVolume / defaultMaxVolume) * 100 : 0,
+            orders: (currentOrders / defaultMaxOrders) * 100
           }
         };
       }
-      
-      const maxWeight = result.vehicle_max_weight || 100;
-      const maxVolume = result.vehicle_max_volume || 10;
-      const maxOrders = 10; // Default max orders
-      const currentWeight = result.current_weight || 0;
-      const currentVolume = result.current_volume || 0;
-      const currentOrders = result.current_orders || 0;
-      
-      return {
-        maxWeight,
-        maxVolume,
-        maxOrders,
-        currentWeight,
-        currentVolume,
-        currentOrders,
-        remainingWeight: maxWeight - currentWeight,
-        remainingVolume: maxVolume - currentVolume,
-        remainingOrders: maxOrders - currentOrders,
-        utilization: {
-          weight: (currentWeight / maxWeight) * 100,
-          volume: (currentVolume / maxVolume) * 100,
-          orders: (currentOrders / maxOrders) * 100
-        }
-      };
-      
+
+      return vehicleCapacity;
+
     } catch (error: unknown) {
-      this.logger.error('Failed to get vehicle capacity:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to get vehicle capacity:', errorMessage);
       return null;
     }
   }
+
   
   // Update the getDriverCapacityDashboard method (replace lines 318-348):
   async getDriverCapacityDashboard(driverId: string): Promise<{
