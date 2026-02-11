@@ -206,7 +206,7 @@ services:
       - "3310:3306"
     volumes:
       - order-mysql-data:/var/lib/mysql
-      - order-init:/docker-entrypoint-initdb.d
+      - order-schema-volume:/docker-entrypoint-initdb.d
     networks:
       - app-network
     healthcheck:
@@ -288,8 +288,8 @@ volumes:
   customer-logs:
   customer-uploads:
   customer-init:
+  order-schema-volume:
   order-mysql-data:
-  order-init:
   order-logs:
   order-uploads:
 
