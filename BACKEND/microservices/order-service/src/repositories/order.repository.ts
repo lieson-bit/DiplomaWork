@@ -1,8 +1,7 @@
-// repositories/order.repository.ts
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../config/database';
 import { Logger } from '../utils/logger';
-import { OrderReceiveRequest } from '../types/order.types';
+import { OrderReceiveRequest } from '../types/index';
 
 export interface Order {
   id: string;

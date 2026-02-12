@@ -1,11 +1,11 @@
 import express from 'express';
-import { authenticate, authorizeCustomer, authorizeDriver, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
+import { authenticate, authorizeDriver, authorizeCustomer, authorizeDriverOrCustomer, verifyServiceSecret } from '../middleware/auth.middleware';
 import { OrderController } from '../controllers/order.controller';
 import { OrderService } from '../services/order.service';
 import { OrderRepository } from '../repositories/order.repository';
 import { TrackingRepository } from '../repositories/tracking.repository';
 import { validateOrderReceive } from '../middleware/validation.middleware';
-import { wss } from '../index'; // Import wss from index
+import { wss } from '../index';
 
 const router = express.Router();
 const orderRepository = new OrderRepository();
@@ -18,8 +18,8 @@ const orderController = new OrderController(orderService);
  * @swagger
  * /orders/receive:
  *   post:
- *     summary: Receive order from external service
- *     description: External service sends complete order with driver assigned
+ *     summary: Receive order from customer booking form
+ *     description: Accepts complete order with all details from customer booking form
  *     tags: [Orders]
  *     security:
  *       - ServiceSecret: []
@@ -29,46 +29,22 @@ const orderController = new OrderController(orderService);
  *         application/json:
  *           schema:
  *             type: object
- *             required:
- *               - orderId
- *               - customerInfo
- *               - driverInfo
  *             properties:
- *               orderId:
+ *               status:
  *                 type: string
- *                 example: "ORD-1770553176518-8cpawr9wa"
+ *               createdAt:
+ *                 type: string
+ *               lastUpdated:
+ *                 type: string
  *               customerInfo:
  *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                   name:
- *                     type: string
- *                   email:
- *                     type: string
- *                   phone:
- *                     type: string
- *                   userType:
- *                     type: string
- *                     enum: [customer]
- *               driverInfo:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                   name:
- *                     type: string
- *                   email:
- *                     type: string
- *                   phone:
- *                     type: string
- *                   rating:
- *                     type: number
- *                   matchScore:
- *                     type: number
  *               locations:
  *                 type: object
  *               packageDetails:
+ *                 type: object
+ *               specialRequirements:
+ *                 type: object
+ *               driverInfo:
  *                 type: object
  *               vehicleInfo:
  *                 type: object
@@ -76,24 +52,17 @@ const orderController = new OrderController(orderService);
  *                 type: object
  *               timing:
  *                 type: object
+ *               systemInfo:
+ *                 type: object
+ *               metadata:
+ *                 type: object
  *     responses:
  *       202:
  *         description: Order received and processing started
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                 order:
- *                   type: object
- *                 message:
- *                   type: string
  *       400:
- *         $ref: '#/components/responses/BadRequest'
+ *         description: Validation failed or capacity exceeded
  *       403:
- *         $ref: '#/components/responses/Unauthorized'
+ *         description: Unauthorized - invalid service secret
  */
 router.post('/orders/receive',
   verifyServiceSecret,
@@ -135,12 +104,12 @@ router.post('/orders/receive',
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.post('/orders/:id/accept',
   authenticate,
   authorizeDriver,
   orderController.acceptOrder.bind(orderController)
-);
+);*/
 
 /**
  * @swagger
@@ -175,7 +144,7 @@ router.post('/orders/:id/accept',
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.post('/orders/:id/reject',
   authenticate,
   authorizeDriver,
@@ -226,7 +195,7 @@ router.post('/orders/:id/reject',
  *         $ref: '#/components/responses/Forbidden'
  *       404:
  *         $ref: '#/components/responses/NotFound'
- */
+ *//*
 router.get('/orders/:id/progress',
   authenticate,
   authorizeDriverOrCustomer,
@@ -278,7 +247,7 @@ router.get('/orders/:id/progress',
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.patch('/orders/:id/status',
   authenticate,
   authorizeDriver,
@@ -323,7 +292,7 @@ router.patch('/orders/:id/status',
  *                       type: array
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.get('/driver/route/optimized',
   authenticate,
   authorizeDriver,
@@ -378,7 +347,7 @@ router.get('/driver/route/optimized',
  *         $ref: '#/components/responses/Unauthorized'
  *       403:
  *         $ref: '#/components/responses/Forbidden'
- */
+ *//*
 router.get('/orders/:id/tracking',
   authenticate,
   authorizeDriverOrCustomer,
@@ -431,7 +400,7 @@ router.get('/orders/:id/tracking',
  *                   type: object
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.get('/customer/orders',
   authenticate,
   authorizeCustomer,
@@ -486,7 +455,7 @@ router.get('/customer/orders',
  *                   type: object
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.get('/driver/orders',
   authenticate,
   authorizeDriver,
@@ -535,7 +504,7 @@ router.get('/driver/orders',
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.post('/orders/:id/messages',
   authenticate,
   authorizeDriverOrCustomer,
@@ -592,7 +561,7 @@ router.post('/orders/:id/messages',
  *         $ref: '#/components/responses/Unauthorized'
  *       403:
  *         $ref: '#/components/responses/Forbidden'
- */
+ *//*
 router.get('/orders/:id/messages',
   authenticate,
   authorizeDriverOrCustomer,
@@ -650,7 +619,7 @@ router.get('/orders/:id/messages',
  *         $ref: '#/components/responses/BadRequest'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.post('/orders/:id/rate',
   authenticate,
   authorizeCustomer,
@@ -701,7 +670,7 @@ router.post('/orders/:id/rate',
  *                   type: array
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.get('/balance',
   authenticate,
   orderController.getBalance.bind(orderController)
@@ -730,7 +699,7 @@ router.get('/balance',
  *                   type: string
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.post('/driver/route/optimize',
   authenticate,
   authorizeDriver,
@@ -785,7 +754,7 @@ router.post('/driver/route/optimize',
  *                   type: object
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.get('/driver/orders/optimized',
   authenticate,
   authorizeDriver,
@@ -838,11 +807,11 @@ router.get('/driver/orders/optimized',
  *                   type: object
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
- */
+ *//*
 router.get('/customer/orders/with-tracking',
   authenticate,
   authorizeCustomer,
   orderController.getCustomerOrders.bind(orderController)
-);
+);*/
 
 export default router;

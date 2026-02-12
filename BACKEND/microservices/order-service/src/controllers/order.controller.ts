@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service';
 import { ResponseUtil } from '../utils/response.util';
 import { Logger } from '../utils/logger';
+import { OrderReceiveRequest } from '../types/index';
 import { trackingRepository } from '../repositories/tracking.repository';
 import { LocationTracking } from '../repositories/tracking.repository';
 
@@ -14,7 +15,61 @@ export class OrderController {
     this.orderService = orderService;
   }
   
-  // Receive order from external service
+  async receiveOrder(req: Request, res: Response) {
+    try {
+      this.logger.info('=== ORDER RECEIVE REQUEST ===');
+      this.logger.info('Received order from external service:');
+      this.logger.info(`Customer: ${req.body.customerInfo?.name} (${req.body.customerInfo?.id})`);
+      this.logger.info(`Driver: ${req.body.driverInfo?.name} (${req.body.driverInfo?.id})`);
+      this.logger.info(`Package: ${req.body.packageDetails?.weight?.value}kg, ${req.body.packageDetails?.volume?.value}m³`);
+      
+      // Cast to our interface
+      const orderRequest = req.body as OrderReceiveRequest;
+      
+      // Process the order
+      const result = await this.orderService.createOrderFromExternalRequest(orderRequest);
+      
+      if (!result.success) {
+        this.logger.error('Order creation failed:', {
+          reason: result.reason,
+          recommendations: result.recommendations
+        });
+        
+        return ResponseUtil.error(res, result.message, 400, {
+          reason: result.reason,
+          recommendations: result.recommendations,
+          capacityDetails: result.capacityDetails,
+          timestamp: result.timestamp
+        });
+      }
+      
+      this.logger.info('=== ORDER RECEIVE SUCCESS ===');
+      this.logger.info(`Order created: ${result.order.order_number} (${result.order.id})`);
+      
+      return ResponseUtil.success(
+        res,
+        result.order,
+        result.message || 'Order received and processing started',
+        202
+      );
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
+      this.logger.error('=== ORDER RECEIVE ERROR ===', {
+        message: errorMessage,
+        stack: errorStack
+      });
+      
+      return ResponseUtil.error(res, 'Failed to process order', 500, {
+        message: errorMessage,
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  /* Receive order from external service
   async receiveOrder(req: Request, res: Response) {
   try {
     this.logger.info('Receiving order from external service:', req.body);
@@ -411,5 +466,5 @@ export class OrderController {
       this.logger.error('Optimize route error:', errorMessage);
       return ResponseUtil.error(res, 'Failed to optimize route', 500, errorMessage);
     }
-  }
+  }*/
 }
