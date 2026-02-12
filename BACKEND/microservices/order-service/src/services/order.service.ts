@@ -1,6 +1,7 @@
 import { Logger } from '../utils/logger';
-import { Order, CreateOrderData, OrderRepository } from '../repositories/order.repository';
-import { TrackingRepository } from '../repositories/tracking.repository';
+import { Order, CreateOrderData, UpdateOrderData } from '../repositories/order.repository';
+import { orderRepository, OrderRepository } from '../repositories/order.repository';
+import { trackingRepository, TrackingRepository } from '../repositories/tracking.repository';
 import { NotificationService } from './notification.service';
 import { MessagingService } from './messaging.service';
 import { BalanceService } from './balance.service';
