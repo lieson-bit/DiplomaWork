@@ -328,31 +328,31 @@ export class OrderService {
           }
         };
       }
-
-      // Get driver's active orders from database
+    
+      // FIXED: Use the repository method with correct column names
       const activeOrders = await this.orderRepository.getDriverActiveOrders(driverId, excludeOrderId);
       
       const currentWeight = activeOrders.reduce((sum, order) => sum + (parseFloat(order.weight_kg) || 0), 0);
       const currentVolume = activeOrders.reduce((sum, order) => sum + (parseFloat(order.volume_m3) || 0), 0);
       const currentOrders = activeOrders.length;
-
+    
       const orderWeight = parseFloat(orderData.weight_kg.toString()) || 0;
       const orderVolume = parseFloat(orderData.volume_m3.toString()) || 0;
-
+    
       const totalWeight = currentWeight + orderWeight;
       const totalVolume = currentVolume + orderVolume;
       const totalOrders = currentOrders + 1;
-
+    
       const maxWeight = vehicleCapacity.maxWeight;
       const maxVolume = vehicleCapacity.maxVolume;
-      const maxOrders = 10; // Default max orders per driver
-
+      const maxOrders = 10;
+    
       const weightPasses = totalWeight <= maxWeight;
       const volumePasses = totalVolume <= maxVolume;
       const ordersPasses = totalOrders <= maxOrders;
-
+    
       const canAccept = weightPasses && volumePasses && ordersPasses;
-
+    
       const recommendations: string[] = [];
       if (!canAccept) {
         if (!weightPasses) {
@@ -365,7 +365,7 @@ export class OrderService {
           recommendations.push(`Complete existing orders before accepting new ones (max ${maxOrders} orders)`);
         }
       }
-
+    
       const capacityResult = {
         canAccept,
         reason: canAccept ? undefined : 'Exceeds vehicle capacity limits',
@@ -396,18 +396,18 @@ export class OrderService {
           }
         },
         estimatedUtilization: {
-          weight: (totalWeight / maxWeight) * 100,
-          volume: (totalVolume / maxVolume) * 100,
+          weight: maxWeight > 0 ? (totalWeight / maxWeight) * 100 : 0,
+          volume: maxVolume > 0 ? (totalVolume / maxVolume) * 100 : 0,
           orders: (totalOrders / maxOrders) * 100
         },
         recommendations
       };
-
+    
       return {
         passed: canAccept,
         capacityResult
       };
-
+    
     } catch (error) {
       this.logger.error('Capacity check failed:', error);
       return {

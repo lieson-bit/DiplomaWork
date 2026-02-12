@@ -213,67 +213,70 @@ export class OrderRepository {
       
       const now = new Date();
       
+      // COUNT THE PARAMETERS - should be 66 total
       const params = [
-        uuidv4(), // id
-        orderNumber, // order_number
-        data.customer_id, // customer_id
-        data.driver_id || null, // driver_id
-        'pending', // status (default)
-        data.customer_name, // customer_name
-        data.customer_email, // customer_email
-        data.customer_phone, // customer_phone
-        data.pickup_address, // pickup_address
-        data.pickup_latitude, // pickup_latitude
-        data.pickup_longitude, // pickup_longitude
-        data.delivery_address, // delivery_address
-        data.delivery_latitude, // delivery_latitude
-        data.delivery_longitude, // delivery_longitude
-        data.distance_km, // distance_km
-        data.package_category, // package_category
-        data.weight_kg, // weight_kg
-        data.volume_m3, // volume_m3
-        data.urgency || 'normal', // urgency
-        data.fragile || false, // fragile
-        data.refrigerated || false, // refrigerated
-        data.oversized || false, // oversized
-        data.hazardous || false, // hazardous
-        data.driver_name || null, // driver_name
-        data.driver_phone || null, // driver_phone
-        data.driver_email || null, // driver_email
-        data.driver_rating || null, // driver_rating
-        data.driver_match_score || null, // driver_match_score
-        data.vehicle_type || null, // vehicle_type
-        data.vehicle_make || null, // vehicle_make
-        data.vehicle_model || null, // vehicle_model
-        data.vehicle_license_plate || null, // vehicle_license_plate
-        data.vehicle_image_url || null, // vehicle_image_url
-        data.vehicle_max_weight || null, // vehicle_max_weight
-        data.vehicle_max_volume || null, // vehicle_max_volume
-        data.estimated_price_usd, // estimated_price_usd
-        data.estimated_price_local, // estimated_price_local
-        data.currency || 'USD', // currency
-        data.base_currency || 'RUB', // base_currency
-        data.estimated_duration_minutes, // estimated_duration_minutes
-        data.pickup_time_estimated || null, // pickup_time_estimated
-        data.delivery_time_estimated || null, // delivery_time_estimated
-        data.route_polyline || null, // route_polyline
-        data.route_order_index || 0, // route_order_index
-        data.amount_paid || 0.00, // amount_paid
-        data.payment_status || 'pending', // payment_status
-        data.driver_accepted || false, // driver_accepted
-        null, // driver_accepted_at
-        null, // delivery_started_at
-        null, // delivery_completed_at
-        null, // customer_rating
-        null, // customer_review
-        null, // rating_given_at
-        data.unread_customer_messages || 0, // unread_customer_messages
-        data.unread_driver_messages || 0, // unread_driver_messages
-        data.capacity_check_passed !== undefined ? data.capacity_check_passed : 1, // capacity_check_passed
-        data.capacity_check_data ? JSON.stringify(data.capacity_check_data) : null, // capacity_check_data
-        now, // created_at
-        now // updated_at
+        uuidv4(), // 1. id
+        orderNumber, // 2. order_number
+        data.customer_id, // 3. customer_id
+        data.driver_id || null, // 4. driver_id
+        'pending', // 5. status
+        data.customer_name, // 6. customer_name
+        data.customer_email, // 7. customer_email
+        data.customer_phone, // 8. customer_phone
+        data.pickup_address, // 9. pickup_address
+        data.pickup_latitude, // 10. pickup_latitude
+        data.pickup_longitude, // 11. pickup_longitude
+        data.delivery_address, // 12. delivery_address
+        data.delivery_latitude, // 13. delivery_latitude
+        data.delivery_longitude, // 14. delivery_longitude
+        data.distance_km, // 15. distance_km
+        data.package_category, // 16. package_category
+        data.weight_kg, // 17. weight_kg
+        data.volume_m3, // 18. volume_m3
+        data.urgency || 'normal', // 19. urgency
+        data.fragile ? 1 : 0, // 20. fragile
+        data.refrigerated ? 1 : 0, // 21. refrigerated
+        data.oversized ? 1 : 0, // 22. oversized
+        data.hazardous ? 1 : 0, // 23. hazardous
+        data.driver_name || null, // 24. driver_name
+        data.driver_phone || null, // 25. driver_phone
+        data.driver_email || null, // 26. driver_email
+        data.driver_rating || null, // 27. driver_rating
+        data.driver_match_score || null, // 28. driver_match_score
+        data.vehicle_type || null, // 29. vehicle_type
+        data.vehicle_make || null, // 30. vehicle_make
+        data.vehicle_model || null, // 31. vehicle_model
+        data.vehicle_license_plate || null, // 32. vehicle_license_plate
+        data.vehicle_image_url || null, // 33. vehicle_image_url
+        data.vehicle_max_weight || null, // 34. vehicle_max_weight
+        data.vehicle_max_volume || null, // 35. vehicle_max_volume
+        data.estimated_price_usd, // 36. estimated_price_usd
+        data.estimated_price_local, // 37. estimated_price_local
+        data.currency || 'USD', // 38. currency
+        data.base_currency || 'RUB', // 39. base_currency
+        data.estimated_duration_minutes, // 40. estimated_duration_minutes
+        data.pickup_time_estimated || null, // 41. pickup_time_estimated
+        data.delivery_time_estimated || null, // 42. delivery_time_estimated
+        data.route_polyline || null, // 43. route_polyline
+        data.route_order_index || 0, // 44. route_order_index
+        data.amount_paid || 0.00, // 45. amount_paid
+        data.payment_status || 'pending', // 46. payment_status
+        data.driver_accepted ? 1 : 0, // 47. driver_accepted
+        null, // 48. driver_accepted_at
+        null, // 49. delivery_started_at
+        null, // 50. delivery_completed_at
+        null, // 51. customer_rating
+        null, // 52. customer_review
+        null, // 53. rating_given_at
+        data.unread_customer_messages || 0, // 54. unread_customer_messages
+        data.unread_driver_messages || 0, // 55. unread_driver_messages
+        data.capacity_check_passed !== undefined ? (data.capacity_check_passed ? 1 : 0) : 1, // 56. capacity_check_passed
+        data.capacity_check_data ? JSON.stringify(data.capacity_check_data) : null, // 57. capacity_check_data
+        now, // 58. created_at
+        now // 59. updated_at
       ];
+      
+      this.logger.debug(`Column count: ${sql.split('?').length - 1}, Param count: ${params.length}`);
       
       await db.execute(sql, params);
       const order = await this.findByOrderNumber(orderNumber);
