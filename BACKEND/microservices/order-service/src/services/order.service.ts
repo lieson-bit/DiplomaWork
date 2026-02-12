@@ -35,6 +35,24 @@ export class OrderService {
     this.trackingRepository = customTrackingRepository || trackingRepository;
   }
 
+  private async notifyBookingFailure(
+  customerId: string,
+  orderId: string,
+  reason: string,
+  recommendations: string[]
+): Promise<void> {
+  try {
+    await this.notificationService.sendBookingFailedNotification(
+      customerId,
+      orderId,
+      reason,
+      recommendations
+    );
+  } catch (error) {
+    this.logger.warn('Failed to send booking failure notification:', error);
+  }
+}
+
 async createOrderFromExternalRequest(externalData: any): Promise<any> {
   try {
     this.logger.info(`Creating order from external request: ${JSON.stringify({
@@ -51,6 +69,16 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
         message: 'Customer ID is required',
         reason: 'MISSING_CUSTOMER_ID',
         recommendations: ['Provide valid customer ID']
+      };
+    }
+
+    if (!externalData.driverInfo?.driverId) {
+      this.logger.error('Missing driver ID');
+      return {
+        success: false,
+        message: 'Driver ID is required',
+        reason: 'MISSING_DRIVER_ID',
+        recommendations: ['Provide valid driver ID']
       };
     }
 
@@ -143,13 +171,53 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
       
       // Communication
       unread_customer_messages: 0,
-      unread_driver_messages: 0,
-      
-      // Capacity check
-      capacity_check_passed: true
+      unread_driver_messages: 0
     };
 
-    this.logger.info('Transformed order data:', JSON.stringify(dbOrderData, null, 2));
+    // PERFORM CAPACITY CHECK
+    if (dbOrderData.driver_id) {
+      const capacityCheck = await this.performCapacityCheck(
+        dbOrderData.driver_id,
+        dbOrderData
+      );
+      
+      // Add capacity check data to the order
+      (dbOrderData as any).capacity_check_passed = capacityCheck.passed;
+      (dbOrderData as any).capacity_check_data = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        orderWeight: dbOrderData.weight_kg,
+        orderVolume: dbOrderData.volume_m3,
+        ...capacityCheck.capacityResult
+      });
+
+      if (!capacityCheck.passed) {
+        this.logger.warn(`Order would exceed driver capacity:`, capacityCheck.capacityResult);
+        
+        // Notify customer about booking failure
+        await this.notifyBookingFailure(
+          dbOrderData.customer_id,
+          externalData.orderId || 'unknown',
+          'Driver at maximum capacity',
+          capacityCheck.capacityResult.recommendations || []
+        );
+        
+        return {
+          success: false,
+          message: 'Driver is at maximum capacity',
+          reason: 'CAPACITY_EXCEEDED',
+          recommendations: capacityCheck.capacityResult.recommendations || [
+            'Try again later',
+            'Select a different driver'
+          ],
+          capacityDetails: capacityCheck.capacityResult.capacityCheck
+        };
+      }
+    }
+
+    this.logger.info('Transformed order data:', JSON.stringify({
+      ...dbOrderData,
+      capacity_check_passed: (dbOrderData as any).capacity_check_passed
+    }, null, 2));
 
     // Create order in database
     let order;
@@ -172,10 +240,16 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
       };
     }
     
+    // Notify driver about new order
+    if (order.driver_id) {
+      await this.notifyDriverAssignment(order);
+    }
+    
     return {
       success: true,
       order: this.formatOrderResponse(order),
-      message: 'Order created successfully'
+      message: 'Order created successfully',
+      capacityCheck: (dbOrderData as any).capacity_check_passed ? 'passed' : 'not_checked'
     };
     
   } catch (error: unknown) {
@@ -196,6 +270,55 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
   }
 }
 
+
+private async performCapacityCheck(
+  driverId: string,
+  orderData: CreateOrderData,
+  orderId?: string
+): Promise<{
+  passed: boolean;
+  capacityResult: any;
+}> {
+  try {
+    const orderCapacity = {
+      orderId: orderId || 'temp',
+      weight: orderData.weight_kg,
+      volume: orderData.volume_m3,
+      priority: this.mapUrgency(orderData.urgency || 'normal'),
+      pickupLocation: {
+        lat: orderData.pickup_latitude,
+        lng: orderData.pickup_longitude
+      },
+      deliveryLocation: {
+        lat: orderData.delivery_latitude,
+        lng: orderData.delivery_longitude
+      }
+    };
+    
+    const capacityResult = await this.capacityOptimizationService.canDriverAcceptOrder(
+      driverId,
+      orderCapacity,
+      orderId // Exclude current order if updating
+    );
+    
+    return {
+      passed: capacityResult.canAccept,
+      capacityResult
+    };
+    
+  } catch (error) {
+    this.logger.warn('Capacity check failed:', error);
+    // Default to allow on error
+    return {
+      passed: true,
+      capacityResult: {
+        canAccept: true,
+        reason: 'Capacity check unavailable',
+        recommendations: []
+      }
+    };
+  }
+}
   // Check driver capacity
   private async checkDriverCapacity(driverId: string, orderData: CreateOrderData): Promise<any> {
     try {
