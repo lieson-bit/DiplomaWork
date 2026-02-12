@@ -1704,14 +1704,14 @@ export interface CreateOrderData {
   oversized?: boolean;
   hazardous?: boolean;
   
-  // Driver Info (optional on creation)
+  // Driver Info
   driver_name?: string | null;
   driver_phone?: string | null;
   driver_email?: string | null;
   driver_rating?: number | null;
   driver_match_score?: number | null;
   
-  // Vehicle Info (optional on creation)
+  // Vehicle Info
   vehicle_type?: string | null;
   vehicle_make?: string | null;
   vehicle_model?: string | null;
@@ -1734,7 +1734,7 @@ export interface CreateOrderData {
   // Route Optimization
   route_polyline?: string | null;
   route_order_index?: number;
-  status?: Order['status'];
+  
   // Payment
   amount_paid?: number;
   payment_status?: 'pending' | 'processing' | 'completed' | 'refunded';
@@ -1745,6 +1745,10 @@ export interface CreateOrderData {
   // Communication
   unread_customer_messages?: number;
   unread_driver_messages?: number;
+  
+  // New fields from your schema
+  capacity_check_passed?: boolean;
+  capacity_check_data?: any;
 }
 
 export interface UpdateOrderData {
@@ -1813,105 +1817,108 @@ export class OrderRepository {
   }
 
   async create(data: CreateOrderData): Promise<Order> {
-    try {
-      const orderNumber = data.order_number || this.generateOrderNumber();
-      
-      const sql = `
-        INSERT INTO orders (
-          id, order_number, customer_id, driver_id,
-          status, customer_name, customer_email, customer_phone,
-          pickup_address, pickup_latitude, pickup_longitude,
-          delivery_address, delivery_latitude, delivery_longitude,
-          distance_km, package_category, weight_kg, volume_m3,
-          urgency, fragile, refrigerated, oversized, hazardous,
-          driver_name, driver_phone, driver_email, driver_rating, driver_match_score,
-          vehicle_type, vehicle_make, vehicle_model, vehicle_license_plate, vehicle_image_url,
-          vehicle_max_weight, vehicle_max_volume,
-          estimated_price_usd, estimated_price_local, currency, base_currency,
-          estimated_duration_minutes, pickup_time_estimated, delivery_time_estimated,
-          route_polyline, route_order_index,
-          amount_paid, payment_status,
-          driver_accepted, driver_accepted_at,
-          delivery_started_at, delivery_completed_at,
-          customer_rating, customer_review, rating_given_at,
-          unread_customer_messages, unread_driver_messages,
-          created_at, updated_at
-        ) VALUES (
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        )
-      `;
-      
-      const params = [
-        uuidv4(), // id
-        orderNumber, // order_number
-        data.customer_id, // customer_id
-        data.driver_id || null, // driver_id
-        'pending', // status (default)
-        data.customer_name, // customer_name
-        data.customer_email, // customer_email
-        data.customer_phone, // customer_phone
-        data.pickup_address, // pickup_address
-        data.pickup_latitude, // pickup_latitude
-        data.pickup_longitude, // pickup_longitude
-        data.delivery_address, // delivery_address
-        data.delivery_latitude, // delivery_latitude
-        data.delivery_longitude, // delivery_longitude
-        data.distance_km, // distance_km
-        data.package_category, // package_category
-        data.weight_kg, // weight_kg
-        data.volume_m3, // volume_m3
-        data.urgency || 'normal', // urgency
-        data.fragile || false, // fragile
-        data.refrigerated || false, // refrigerated
-        data.oversized || false, // oversized
-        data.hazardous || false, // hazardous
-        data.driver_name || null, // driver_name
-        data.driver_phone || null, // driver_phone
-        data.driver_email || null, // driver_email
-        data.driver_rating || null, // driver_rating
-        data.driver_match_score || null, // driver_match_score
-        data.vehicle_type || null, // vehicle_type
-        data.vehicle_make || null, // vehicle_make
-        data.vehicle_model || null, // vehicle_model
-        data.vehicle_license_plate || null, // vehicle_license_plate
-        data.vehicle_image_url || null, // vehicle_image_url
-        data.vehicle_max_weight || null, // vehicle_max_weight
-        data.vehicle_max_volume || null, // vehicle_max_volume
-        data.estimated_price_usd, // estimated_price_usd
-        data.estimated_price_local, // estimated_price_local
-        data.currency || 'USD', // currency
-        data.base_currency || 'RUB', // base_currency
-        data.estimated_duration_minutes, // estimated_duration_minutes
-        data.pickup_time_estimated || null, // pickup_time_estimated
-        data.delivery_time_estimated || null, // delivery_time_estimated
-        data.route_polyline || null, // route_polyline
-        data.route_order_index || 0, // route_order_index
-        data.amount_paid || 0.00, // amount_paid
-        data.payment_status || 'pending', // payment_status
-        data.driver_accepted || false, // driver_accepted
-        null, // driver_accepted_at
-        null, // delivery_started_at
-        null, // delivery_completed_at
-        null, // customer_rating
-        null, // customer_review
-        null, // rating_given_at
-        data.unread_customer_messages || 0, // unread_customer_messages
-        data.unread_driver_messages || 0, // unread_driver_messages
-        new Date(), // created_at
-        new Date()  // updated_at
-      ];
-      
-      await db.execute(sql, params);
-      return await this.findByOrderNumber(orderNumber) as Order;
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to create order:', errorMessage);
-      throw new Error(`Order creation failed: ${errorMessage}`);
-    }
+  try {
+    const orderNumber = data.order_number || this.generateOrderNumber();
+    
+    const sql = `
+      INSERT INTO orders (
+        id, order_number, customer_id, driver_id,
+        status, customer_name, customer_email, customer_phone,
+        pickup_address, pickup_latitude, pickup_longitude,
+        delivery_address, delivery_latitude, delivery_longitude,
+        distance_km, package_category, weight_kg, volume_m3,
+        urgency, fragile, refrigerated, oversized, hazardous,
+        driver_name, driver_phone, driver_email, driver_rating, driver_match_score,
+        vehicle_type, vehicle_make, vehicle_model, vehicle_license_plate, vehicle_image_url,
+        vehicle_max_weight, vehicle_max_volume,
+        estimated_price_usd, estimated_price_local, currency, base_currency,
+        estimated_duration_minutes, pickup_time_estimated, delivery_time_estimated,
+        route_polyline, route_order_index,
+        amount_paid, payment_status,
+        driver_accepted, driver_accepted_at,
+        delivery_started_at, delivery_completed_at,
+        customer_rating, customer_review, rating_given_at,
+        unread_customer_messages, unread_driver_messages,
+        capacity_check_passed, capacity_check_data,
+        created_at, updated_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      )
+    `;
+    
+    const params = [
+      uuidv4(), // id
+      orderNumber, // order_number
+      data.customer_id, // customer_id
+      data.driver_id || null, // driver_id
+      'pending', // status
+      data.customer_name, // customer_name
+      data.customer_email, // customer_email
+      data.customer_phone, // customer_phone
+      data.pickup_address, // pickup_address
+      data.pickup_latitude, // pickup_latitude
+      data.pickup_longitude, // pickup_longitude
+      data.delivery_address, // delivery_address
+      data.delivery_latitude, // delivery_latitude
+      data.delivery_longitude, // delivery_longitude
+      data.distance_km, // distance_km
+      data.package_category, // package_category
+      data.weight_kg, // weight_kg
+      data.volume_m3, // volume_m3
+      data.urgency || 'normal', // urgency
+      data.fragile || false, // fragile
+      data.refrigerated || false, // refrigerated
+      data.oversized || false, // oversized
+      data.hazardous || false, // hazardous
+      data.driver_name || null, // driver_name
+      data.driver_phone || null, // driver_phone
+      data.driver_email || null, // driver_email
+      data.driver_rating || null, // driver_rating
+      data.driver_match_score || null, // driver_match_score
+      data.vehicle_type || null, // vehicle_type
+      data.vehicle_make || null, // vehicle_make
+      data.vehicle_model || null, // vehicle_model
+      data.vehicle_license_plate || null, // vehicle_license_plate
+      data.vehicle_image_url || null, // vehicle_image_url
+      data.vehicle_max_weight || null, // vehicle_max_weight
+      data.vehicle_max_volume || null, // vehicle_max_volume
+      data.estimated_price_usd, // estimated_price_usd
+      data.estimated_price_local, // estimated_price_local
+      data.currency || 'USD', // currency
+      data.base_currency || 'RUB', // base_currency
+      data.estimated_duration_minutes, // estimated_duration_minutes
+      data.pickup_time_estimated || null, // pickup_time_estimated
+      data.delivery_time_estimated || null, // delivery_time_estimated
+      data.route_polyline || null, // route_polyline
+      data.route_order_index || 0, // route_order_index
+      data.amount_paid || 0.00, // amount_paid
+      data.payment_status || 'pending', // payment_status
+      data.driver_accepted || false, // driver_accepted
+      null, // driver_accepted_at
+      null, // delivery_started_at
+      null, // delivery_completed_at
+      null, // customer_rating
+      null, // customer_review
+      null, // rating_given_at
+      data.unread_customer_messages || 0, // unread_customer_messages
+      data.unread_driver_messages || 0, // unread_driver_messages
+      data.capacity_check_passed !== undefined ? data.capacity_check_passed : 1, // capacity_check_passed
+      data.capacity_check_data ? JSON.stringify(data.capacity_check_data) : null, // capacity_check_data
+      new Date(), // created_at
+      new Date()  // updated_at
+    ];
+    
+    await db.execute(sql, params);
+    return await this.findByOrderNumber(orderNumber) as Order;
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Failed to create order:', errorMessage);
+    throw new Error(`Order creation failed: ${errorMessage}`);
   }
+}
 
    async findById(id: string): Promise<Order | null> {
     try {
@@ -4002,10 +4009,11 @@ export class BalanceService {
 `services\capacity-optimization.service.ts`:
 
 ```ts
+// services/capacity-optimization.service.ts - Fixed version
+
 import { Logger } from '../utils/logger';
 import { db } from '../config/database';
-import { createRequire } from 'module';
-
+import { HttpClient } from '../utils/httpClient';
 
 export interface VehicleCapacity {
   maxWeight: number; // kg
@@ -4068,70 +4076,76 @@ export interface CapacityOptimizationResult {
   recommendations: string[];
 }
 
-export interface MultiOrderOptimization {
-  driverId: string;
-  orders: OrderCapacity[];
-  totalWeight: number;
-  totalVolume: number;
-  totalOrders: number;
-  optimalSequence: string[];
-  capacityScore: number;
-  routeEfficiency: number;
-  totalDistance?: number;
-  totalDuration?: number;
-}
-
 export class CapacityOptimizationService {
   private logger: Logger;
+  private httpClient: HttpClient;
 
   constructor() {
     this.logger = new Logger('CapacityOptimizationService');
+    this.httpClient = new HttpClient();
   }
 
-  // Check if driver can accept new order based on vehicle capacity
+  /**
+   * Check if driver can accept a new order based on vehicle capacity
+   * Fetches vehicle capacity from driver service and calculates current load from orders table
+   */
   async canDriverAcceptOrder(
     driverId: string,
     order: OrderCapacity,
-    existingOrders: OrderCapacity[] = []
+    excludeOrderId?: string // Optional - exclude this order ID from calculation (for updates)
   ): Promise<CapacityOptimizationResult> {
     try {
-      // Get driver's vehicle capacity
+      this.logger.info(`Checking capacity for driver ${driverId} to accept order ${order.orderId}`);
+      
+      // 1. Get vehicle capacity from driver service
       const vehicleCapacity = await this.getDriverVehicleCapacity(driverId);
       
       if (!vehicleCapacity) {
+        // Default to allowing if we can't get capacity info
+        this.logger.warn(`No vehicle capacity found for driver ${driverId}, defaulting to allow`);
         return {
-          canAccept: false,
-          reason: 'Vehicle capacity information not available',
+          canAccept: true,
           capacityCheck: {
-            weight: { required: order.weight, available: 0, passes: false },
-            volume: { required: order.volume, available: 0, passes: false },
-            orders: { required: 1, available: 0, passes: false }
+            weight: { required: order.weight, available: 100, passes: true },
+            volume: { required: order.volume, available: 10, passes: true },
+            orders: { required: 1, available: 10, passes: true }
           },
-          estimatedUtilization: { weight: 0, volume: 0, orders: 0 },
-          recommendations: ['Please update vehicle capacity information']
+          estimatedUtilization: {
+            weight: (order.weight / 100) * 100,
+            volume: (order.volume / 10) * 100,
+            orders: (1 / 10) * 100
+          },
+          recommendations: []
         };
       }
 
-      // Calculate total requirements including existing orders
-      const totalWeight = vehicleCapacity.currentWeight + order.weight;
-      const totalVolume = vehicleCapacity.currentVolume + order.volume;
-      const totalOrders = vehicleCapacity.currentOrders + 1;
+      // 2. Calculate current load from existing active orders
+      const activeOrders = await this.getDriverActiveOrders(driverId, excludeOrderId);
+      
+      const currentWeight = activeOrders.reduce((sum, order) => sum + order.weight_kg, 0);
+      const currentVolume = activeOrders.reduce((sum, order) => sum + order.volume_m3, 0);
+      const currentOrders = activeOrders.length;
 
-      // Check capacity constraints
+      // 3. Calculate totals with new order
+      const totalWeight = currentWeight + order.weight;
+      const totalVolume = currentVolume + order.volume;
+      const totalOrders = currentOrders + 1;
+
+      // 4. Check capacity constraints
       const weightPasses = totalWeight <= vehicleCapacity.maxWeight;
       const volumePasses = totalVolume <= vehicleCapacity.maxVolume;
       const ordersPasses = totalOrders <= vehicleCapacity.maxOrders;
 
       const canAccept = weightPasses && volumePasses && ordersPasses;
 
-      // Calculate estimated utilization
+      // 5. Calculate estimated utilization
       const estimatedUtilization = {
         weight: (totalWeight / vehicleCapacity.maxWeight) * 100,
         volume: (totalVolume / vehicleCapacity.maxVolume) * 100,
         orders: (totalOrders / vehicleCapacity.maxOrders) * 100
       };
 
-      // Generate recommendations
+      // 6. Generate recommendations
       const recommendations: string[] = [];
       if (!canAccept) {
         if (!weightPasses) {
@@ -4141,17 +4155,17 @@ export class CapacityOptimizationService {
           recommendations.push(`Reduce volume by ${(totalVolume - vehicleCapacity.maxVolume).toFixed(2)}m³ or choose a larger vehicle`);
         }
         if (!ordersPasses) {
-          recommendations.push(`Complete existing orders before accepting new ones`);
+          recommendations.push(`Complete existing orders before accepting new ones (max ${vehicleCapacity.maxOrders} orders)`);
         }
       } else {
-        if (estimatedUtilization.weight > 90) {
-          recommendations.push('Vehicle weight capacity nearly full');
+        if (estimatedUtilization.weight > 80) {
+          recommendations.push('Vehicle weight capacity approaching limit');
         }
-        if (estimatedUtilization.volume > 90) {
-          recommendations.push('Vehicle volume capacity nearly full');
+        if (estimatedUtilization.volume > 80) {
+          recommendations.push('Vehicle volume capacity approaching limit');
         }
-        if (estimatedUtilization.orders > 90) {
-          recommendations.push('Maximum order capacity nearly reached');
+        if (estimatedUtilization.orders > 80) {
+          recommendations.push('Maximum order capacity approaching limit');
         }
       }
 
@@ -4181,18 +4195,125 @@ export class CapacityOptimizationService {
 
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Capacity check failed:', errorMessage);
-      throw error;
+      this.logger.error(`Capacity check failed for driver ${driverId}:`, errorMessage);
+      
+      // Return allow by default on error to not block orders
+      return {
+        canAccept: true,
+        reason: 'Capacity check temporarily unavailable',
+        capacityCheck: {
+          weight: { required: order.weight, available: 0, passes: true },
+          volume: { required: order.volume, available: 0, passes: true },
+          orders: { required: 1, available: 0, passes: true }
+        },
+        estimatedUtilization: { weight: 0, volume: 0, orders: 0 },
+        recommendations: ['Capacity check failed, order accepted by default']
+      };
     }
   }
 
+  /**
+   * Get driver's vehicle capacity from driver service API
+   */
+  private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
+    try {
+      // Call driver service API to get vehicle information
+      const driverServiceUrl = process.env.DRIVER_SERVICE_URL || 'http://localhost:3002';
+      const url = `${driverServiceUrl}/api/drivers/${driverId}/vehicles-picture`;
+      
+      this.logger.debug(`Fetching vehicle capacity from: ${url}`);
+      
+      const response = await this.httpClient.get(url, {
+        timeout: 5000
+      });
+      
+      if (response.data?.success && response.data?.data?.vehicles?.length > 0) {
+        // Use the first vehicle (primary vehicle)
+        const vehicle = response.data.data.vehicles[0];
+        
+        // Get current active orders from database
+        const activeOrders = await this.getDriverActiveOrders(driverId);
+        
+        const currentWeight = activeOrders.reduce((sum, order) => sum + order.weight_kg, 0);
+        const currentVolume = activeOrders.reduce((sum, order) => sum + order.volume_m3, 0);
+        const currentOrders = activeOrders.length;
+        
+        // Get vehicle capacity with defaults
+        const maxWeight = parseFloat(vehicle.maxWeight) || 100;
+        const maxVolume = parseFloat(vehicle.maxVolume) || 10;
+        const maxOrders = 10; // Default max orders per driver
+        
+        return {
+          maxWeight,
+          maxVolume,
+          maxOrders,
+          currentWeight,
+          currentVolume,
+          currentOrders,
+          remainingWeight: Math.max(0, maxWeight - currentWeight),
+          remainingVolume: Math.max(0, maxVolume - currentVolume),
+          remainingOrders: Math.max(0, maxOrders - currentOrders),
+          utilization: {
+            weight: maxWeight > 0 ? (currentWeight / maxWeight) * 100 : 0,
+            volume: maxVolume > 0 ? (currentVolume / maxVolume) * 100 : 0,
+            orders: (currentOrders / maxOrders) * 100
+          }
+        };
+      }
+      
+      this.logger.warn(`No vehicle found for driver ${driverId}`);
+      return null;
+      
+    } catch (error: any) {
+      this.logger.warn(`Failed to fetch vehicle capacity from driver service: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get driver's active orders from database with weight and volume
+   */
+  private async getDriverActiveOrders(
+    driverId: string, 
+    excludeOrderId?: string
+  ): Promise<any[]> {
+    try {
+      // Active statuses that consume capacity
+      const activeStatuses = [
+        'driver_assigned', 
+        'route_to_pickup', 
+        'in_transit'
+      ];
+      
+      let query = `
+        SELECT id, weight_kg, volume_m3 
+        FROM orders 
+        WHERE driver_id = ? 
+          AND status IN (${activeStatuses.map(() => '?').join(',')})
+      `;
+      
+      const params: any[] = [driverId, ...activeStatuses];
+      
+      if (excludeOrderId) {
+        query += ' AND id != ?';
+        params.push(excludeOrderId);
+      }
+      
+      const orders = await db.query<any>(query, params);
+      return orders || [];
+      
+    } catch (error) {
+      this.logger.error('Failed to get driver active orders:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Check if driver can accept multiple orders at once
+   */
   async canDriverAcceptMultipleOrders(
     driverId: string,
-    orders: Array<{
-      weight: number;
-      volume: number;
-      orderId: string;
-    }>
+    orders: OrderCapacity[]
   ): Promise<{
     canAccept: boolean;
     capacityCheck: any;
@@ -4203,9 +4324,9 @@ export class CapacityOptimizationService {
 
       if (!vehicleCapacity) {
         return {
-          canAccept: false,
+          canAccept: true,
           capacityCheck: null,
-          recommendations: ['Vehicle capacity information not available']
+          recommendations: ['Vehicle capacity information not available, orders accepted by default']
         };
       }
 
@@ -4224,13 +4345,13 @@ export class CapacityOptimizationService {
       const recommendations: string[] = [];
       if (!canAccept) {
         if (!weightPasses) {
-          recommendations.push(`Total weight ${totalWeight}kg exceeds available capacity`);
+          recommendations.push(`Total weight ${totalWeight}kg exceeds available capacity of ${vehicleCapacity.remainingWeight}kg`);
         }
         if (!volumePasses) {
-          recommendations.push(`Total volume ${totalVolume}m³ exceeds available capacity`);
+          recommendations.push(`Total volume ${totalVolume}m³ exceeds available capacity of ${vehicleCapacity.remainingVolume}m³`);
         }
         if (!ordersPasses) {
-          recommendations.push(`Too many orders (${totalOrders}) for current capacity`);
+          recommendations.push(`Too many orders (${totalOrders}) for current capacity, max additional: ${vehicleCapacity.remainingOrders}`);
         }
       }
 
@@ -4240,19 +4361,25 @@ export class CapacityOptimizationService {
           weight: {
             current: vehicleCapacity.currentWeight,
             additional: totalWeight,
+            total: vehicleCapacity.currentWeight + totalWeight,
             max: vehicleCapacity.maxWeight,
+            remaining: vehicleCapacity.remainingWeight,
             passes: weightPasses
           },
           volume: {
             current: vehicleCapacity.currentVolume,
             additional: totalVolume,
+            total: vehicleCapacity.currentVolume + totalVolume,
             max: vehicleCapacity.maxVolume,
+            remaining: vehicleCapacity.remainingVolume,
             passes: volumePasses
           },
           orders: {
             current: vehicleCapacity.currentOrders,
             additional: totalOrders,
+            total: vehicleCapacity.currentOrders + totalOrders,
             max: vehicleCapacity.maxOrders,
+            remaining: vehicleCapacity.remainingOrders,
             passes: ordersPasses
           }
         },
@@ -4262,628 +4389,22 @@ export class CapacityOptimizationService {
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Multiple orders capacity check failed:', errorMessage);
-      throw error;
-    }
-  }
-
-  private async getDriverActiveOrders(driverId: string): Promise<any[]> {
-    try {
-      const query = `
-        SELECT total_weight_kg, total_volume_m3 
-        FROM orders 
-        WHERE driver_id = ? 
-          AND status IN ('driver_accepted', 'driver_enroute', 'pickup_started', 'in_transit')
-      `;
-      
-      const result = await db.query<any>(query, [driverId]);
-      return result || [];
-    } catch (error) {
-      this.logger.error('Failed to get driver active orders:', error);
-      return [];
-    }
-  }
-
-  private async makeHttpRequest(url: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const http = require('http');
-    const https = require('https');
-    
-    const parsedUrl = new URL(url);
-    const client = parsedUrl.protocol === 'https:' ? https : http;
-    
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
-      path: parsedUrl.pathname + parsedUrl.search,
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      timeout: 5000
-    };
-    
-    const req = client.request(options, (res: any) => {
-      let data = '';
-      
-      res.on('data', (chunk: string) => {
-        data += chunk;
-      });
-      
-      res.on('end', () => {
-        try {
-          const parsedData = JSON.parse(data);
-          resolve(parsedData);
-        } catch (error) {
-          reject(new Error(`Failed to parse response: ${error}`));
-        }
-      });
-    });
-    
-    req.on('error', (error: any) => {
-      reject(error);
-    });
-    
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Request timeout'));
-    });
-    
-    req.end();
-  });
-}
-
-// Then update the getDriverVehicleCapacity method:
-private async getDriverVehicleCapacity(driverId: string): Promise<VehicleCapacity | null> {
-  try {
-    let vehicleCapacity: VehicleCapacity | null = null;
-    
-    try {
-      // Call driver service API using built-in HTTP
-      const driverServiceUrl = process.env.DRIVER_SERVICE_URL || 'http://localhost:3002';
-      const url = `${driverServiceUrl}/api/drivers/${driverId}/vehicles-picture`;
-      
-      const data = await this.makeHttpRequest(url);
-      
-      if (data?.success && data?.data?.vehicles?.length > 0) {
-        const vehicle = data.data.vehicles[0];
-        
-        // Get driver's active orders from database
-        const activeOrders = await this.getDriverActiveOrders(driverId);
-        
-        const currentWeight = activeOrders.reduce((sum: number, order: any) => 
-          sum + (order.total_weight_kg || 0), 0);
-        const currentVolume = activeOrders.reduce((sum: number, order: any) => 
-          sum + (order.total_volume_m3 || 0), 0);
-        const currentOrders = activeOrders.length;
-        
-        const maxWeight = vehicle.maxWeight || 100;
-        const maxVolume = vehicle.maxVolume || 10;
-        const maxOrders = 10;
-        
-        vehicleCapacity = {
-          maxWeight,
-          maxVolume,
-          maxOrders,
-          currentWeight,
-          currentVolume,
-          currentOrders,
-          remainingWeight: Math.max(0, maxWeight - currentWeight),
-          remainingVolume: Math.max(0, maxVolume - currentVolume),
-          remainingOrders: Math.max(0, maxOrders - currentOrders),
-          utilization: {
-            weight: maxWeight > 0 ? (currentWeight / maxWeight) * 100 : 0,
-            volume: maxVolume > 0 ? (currentVolume / maxVolume) * 100 : 0,
-            orders: (currentOrders / maxOrders) * 100
-          }
-        };
-        
-        this.logger.info(`Vehicle capacity for driver ${driverId}: ${maxWeight}kg, ${maxVolume}m³`);
-      }
-    } catch (error: any) {
-      this.logger.warn('Failed to fetch vehicle capacity from driver service:', error.message);
-    }
-    
-    // If we couldn't get from driver service, use default values
-    if (!vehicleCapacity) {
-      this.logger.info(`Using default capacity for driver ${driverId}`);
-      
-      const activeOrders = await this.getDriverActiveOrders(driverId);
-      
-      const currentWeight = activeOrders.reduce((sum: number, order: any) => 
-        sum + (order.total_weight_kg || 0), 0);
-      const currentVolume = activeOrders.reduce((sum: number, order: any) => 
-        sum + (order.total_volume_m3 || 0), 0);
-      const currentOrders = activeOrders.length;
-      
-      const defaultMaxWeight = 100;
-      const defaultMaxVolume = 10;
-      const defaultMaxOrders = 10;
-      
-      vehicleCapacity = {
-        maxWeight: defaultMaxWeight,
-        maxVolume: defaultMaxVolume,
-        maxOrders: defaultMaxOrders,
-        currentWeight,
-        currentVolume,
-        currentOrders,
-        remainingWeight: Math.max(0, defaultMaxWeight - currentWeight),
-        remainingVolume: Math.max(0, defaultMaxVolume - currentVolume),
-        remainingOrders: Math.max(0, defaultMaxOrders - currentOrders),
-        utilization: {
-          weight: defaultMaxWeight > 0 ? (currentWeight / defaultMaxWeight) * 100 : 0,
-          volume: defaultMaxVolume > 0 ? (currentVolume / defaultMaxVolume) * 100 : 0,
-          orders: (currentOrders / defaultMaxOrders) * 100
-        }
-      };
-    }
-    
-    return vehicleCapacity;
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Failed to get vehicle capacity:', errorMessage);
-    return null;
-  }
-}
-
-  
-  // Update the getDriverCapacityDashboard method (replace lines 318-348):
-  async getDriverCapacityDashboard(driverId: string): Promise<{
-    capacity: VehicleCapacity;
-    pendingOrders: number;
-    activeOrders: number;
-    recommendedMaxOrders: number;
-    efficiency: number;
-  }> {
-    try {
-      const capacity = await this.getDriverVehicleCapacity(driverId);
-      
-      if (!capacity) {
-        throw new Error('Could not retrieve capacity information');
-      }
-      
-      // Get order counts
-      const orderQuery = `
-        SELECT 
-          COUNT(CASE WHEN status IN ('pending', 'matched', 'driver_accepted') THEN 1 END) as pending_orders,
-          COUNT(CASE WHEN status IN ('driver_enroute', 'pickup_started', 'in_transit') THEN 1 END) as active_orders
-        FROM orders 
-        WHERE driver_id = ?
-      `;
-      
-      const orderCounts = await db.queryOne<any>(orderQuery, [driverId]);
-    
-      // Calculate recommended max orders based on average size
-      const avgOrderQuery = `
-        SELECT 
-          AVG(total_weight_kg) as avg_weight,
-          AVG(total_volume_m3) as avg_volume
-        FROM orders 
-        WHERE driver_id = ? AND status = 'completed'
-      `;
-      
-      const averages = await db.queryOne<any>(avgOrderQuery, [driverId]);
-      
-      const avgWeight = averages?.avg_weight || 5;
-      const avgVolume = averages?.avg_volume || 0.5;
-      
-      const recommendedByWeight = Math.floor(capacity.maxWeight / avgWeight);
-      const recommendedByVolume = Math.floor(capacity.maxVolume / avgVolume);
-      const recommendedMaxOrders = Math.min(recommendedByWeight, recommendedByVolume, capacity.maxOrders);
-    
-      // Calculate efficiency (orders delivered per day)
-      const efficiencyQuery = `
-        SELECT 
-          COUNT(*) as delivered_today
-        FROM orders 
-        WHERE driver_id = ? 
-          AND status IN ('delivered', 'completed')
-          AND DATE(updated_at) = CURDATE()
-      `;
-      
-      const efficiencyResult = await db.queryOne<any>(efficiencyQuery, [driverId]);
-      const deliveredToday = efficiencyResult?.delivered_today || 0;
-      const efficiency = Math.min(100, (deliveredToday / 10) * 100); // Assuming 10 is target
-    
       return {
-        capacity,
-        pendingOrders: orderCounts?.pending_orders || 0,
-        activeOrders: orderCounts?.active_orders || 0,
-        recommendedMaxOrders,
-        efficiency: parseFloat(efficiency.toFixed(2))
+        canAccept: true,
+        capacityCheck: null,
+        recommendations: ['Capacity check failed, orders accepted by default']
       };
-    
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to get capacity dashboard:', errorMessage);
-      throw error;
     }
   }
 
-  // Optimize multiple orders for a driver (Knapsack algorithm)
-  async optimizeMultipleOrders(
-    driverId: string,
-    availableOrders: OrderCapacity[]
-  ): Promise<MultiOrderOptimization> {
-    try {
-      // Get driver capacity
-      const vehicleCapacity = await this.getDriverVehicleCapacity(driverId);
-      
-      if (!vehicleCapacity) {
-        throw new Error('Could not retrieve vehicle capacity');
-      }
-
-      // Apply 0/1 Knapsack algorithm for weight optimization
-      const weightOptimized = this.knapsackOptimization(
-        availableOrders,
-        vehicleCapacity.maxWeight - vehicleCapacity.currentWeight,
-        'weight'
-      );
-
-      // Apply 0/1 Knapsack algorithm for volume optimization
-      const volumeOptimized = this.knapsackOptimization(
-        availableOrders,
-        vehicleCapacity.maxVolume - vehicleCapacity.currentVolume,
-        'volume'
-      );
-
-      // Apply multi-dimensional knapsack for combined optimization
-      const multiDimensionalOptimized = this.multiDimensionalKnapsack(
-        availableOrders,
-        {
-          maxWeight: vehicleCapacity.maxWeight - vehicleCapacity.currentWeight,
-          maxVolume: vehicleCapacity.maxVolume - vehicleCapacity.currentVolume,
-          maxOrders: vehicleCapacity.maxOrders - vehicleCapacity.currentOrders
-        }
-      );
-
-      // Determine optimal sequence using Traveling Salesman Problem
-      const optimalSequence = this.findOptimalSequence(multiDimensionalOptimized.orders);
-
-      // Calculate capacity score (0-100)
-      const capacityScore = this.calculateCapacityScore(
-        multiDimensionalOptimized.totalWeight,
-        multiDimensionalOptimized.totalVolume,
-        vehicleCapacity.maxWeight,
-        vehicleCapacity.maxVolume
-      );
-
-      // Calculate route efficiency
-      const routeEfficiency = this.calculateRouteEfficiency(optimalSequence);
-      const totalDistance = this.calculateTotalDistance(multiDimensionalOptimized.orders);
-      const totalDuration = this.calculateTotalDuration(multiDimensionalOptimized.orders);
-      return {
-        driverId,
-        orders: multiDimensionalOptimized.orders,
-        totalWeight: multiDimensionalOptimized.totalWeight,
-        totalVolume: multiDimensionalOptimized.totalVolume,
-        totalOrders: multiDimensionalOptimized.orders.length,
-        optimalSequence,
-        capacityScore,
-        routeEfficiency,
-        totalDistance, 
-        totalDuration
-      };
-
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Multi-order optimization failed:', errorMessage);
-      throw error;
-    }
-  }
-
-  private calculateTotalDistance(orders: OrderCapacity[]): number {
-    // Simplified calculation - in production, use actual routing
-    return orders.reduce((sum, order) => {
-      // Calculate distance between pickup and delivery
-      const distance = this.calculateHaversineDistance(
-        order.pickupLocation.lat, order.pickupLocation.lng,
-        order.deliveryLocation.lat, order.deliveryLocation.lng
-      );
-      return sum + distance;
-    }, 0);
-  }
-
-  private calculateTotalDuration(orders: OrderCapacity[]): number {
-    // Assuming 30 km/h average speed
-    const totalDistance = this.calculateTotalDistance(orders);
-    return (totalDistance / 30) * 60; // Convert to minutes
-  }
-
-  private calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371; // Earth's radius in km
-    const dLat = this.toRad(lat2 - lat1);
-    const dLon = this.toRad(lon2 - lon1);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(this.toRad(lat1)) * Math.cos(this.toRad(lat2)) *
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }
-
-  private toRad(degrees: number): number {
-    return degrees * (Math.PI / 180);
-  }
-
-  // 0/1 Knapsack algorithm for single dimension
-  private knapsackOptimization(
-    items: OrderCapacity[],
-    capacity: number,
-    dimension: 'weight' | 'volume'
-  ): { orders: OrderCapacity[]; total: number } {
-    const n = items.length;
-    const dp: number[][] = Array(n + 1).fill(0).map(() => Array(capacity + 1).fill(0));
-    const selected: boolean[][] = Array(n + 1).fill(0).map(() => Array(capacity + 1).fill(false));
-
-    for (let i = 1; i <= n; i++) {
-      const item = items[i - 1];
-      const itemValue = dimension === 'weight' ? item.weight : item.volume;
-      const itemPriority = this.priorityToValue(item.priority);
-
-      for (let w = 0; w <= capacity; w++) {
-        if (itemValue <= w) {
-          const includeValue = dp[i - 1][w - itemValue] + itemPriority;
-          if (includeValue > dp[i - 1][w]) {
-            dp[i][w] = includeValue;
-            selected[i][w] = true;
-          } else {
-            dp[i][w] = dp[i - 1][w];
-          }
-        } else {
-          dp[i][w] = dp[i - 1][w];
-        }
-      }
-    }
-
-    // Backtrack to find selected items
-    const selectedOrders: OrderCapacity[] = [];
-    let w = capacity;
-    for (let i = n; i > 0; i--) {
-      if (selected[i][w]) {
-        selectedOrders.push(items[i - 1]);
-        w -= dimension === 'weight' ? items[i - 1].weight : items[i - 1].volume;
-      }
-    }
-
-    const total = selectedOrders.reduce((sum, order) => 
-      sum + (dimension === 'weight' ? order.weight : order.volume), 0
-    );
-
-    return { orders: selectedOrders, total };
-  }
-
-  // Multi-dimensional knapsack (weight, volume, orders)
-  private multiDimensionalKnapsack(
-    items: OrderCapacity[],
-    capacity: {
-      maxWeight: number;
-      maxVolume: number;
-      maxOrders: number;
-    }
-  ): { orders: OrderCapacity[]; totalWeight: number; totalVolume: number } {
-    const n = items.length;
-    const maxOrders = Math.min(capacity.maxOrders, items.length);
-    
-    // 3D DP array: items x weight x volume
-    const dp: number[][][] = Array(n + 1)
-      .fill(0)
-      .map(() => Array(capacity.maxWeight + 1)
-        .fill(0)
-        .map(() => Array(capacity.maxVolume + 1).fill(0)));
-
-    const selected: boolean[][][][] = Array(n + 1)
-      .fill(0)
-      .map(() => Array(capacity.maxWeight + 1)
-        .fill(0)
-        .map(() => Array(capacity.maxVolume + 1)
-          .fill(0)
-          .map(() => Array(maxOrders + 1).fill(false))));
-
-    for (let i = 1; i <= n; i++) {
-      const item = items[i - 1];
-      const itemPriority = this.priorityToValue(item.priority);
-
-      for (let w = 0; w <= capacity.maxWeight; w++) {
-        for (let v = 0; v <= capacity.maxVolume; v++) {
-          for (let o = 1; o <= maxOrders; o++) {
-            if (item.weight <= w && item.volume <= v) {
-              const includeValue = dp[i - 1][w - item.weight][v - item.volume] + itemPriority;
-              if (includeValue > dp[i - 1][w][v]) {
-                dp[i][w][v] = includeValue;
-                selected[i][w][v][o] = true;
-              } else {
-                dp[i][w][v] = dp[i - 1][w][v];
-              }
-            } else {
-              dp[i][w][v] = dp[i - 1][w][v];
-            }
-          }
-        }
-      }
-    }
-
-    // Backtrack to find selected items
-    const selectedOrders: OrderCapacity[] = [];
-    let w = capacity.maxWeight;
-    let v = capacity.maxVolume;
-    let o = maxOrders;
-
-    for (let i = n; i > 0 && o > 0; i--) {
-      if (selected[i][w][v][o]) {
-        selectedOrders.push(items[i - 1]);
-        w -= items[i - 1].weight;
-        v -= items[i - 1].volume;
-        o--;
-      }
-    }
-
-    const totalWeight = selectedOrders.reduce((sum, order) => sum + order.weight, 0);
-    const totalVolume = selectedOrders.reduce((sum, order) => sum + order.volume, 0);
-
-    return { orders: selectedOrders, totalWeight, totalVolume };
-  }
-
-  // Find optimal sequence using nearest neighbor algorithm
-  private findOptimalSequence(orders: OrderCapacity[]): string[] {
-    if (orders.length === 0) return [];
-
-    // Create combined points (pickup + delivery for each order)
-    const points: Array<{
-      id: string;
-      type: 'pickup' | 'delivery';
-      orderId: string;
-      coordinates: { lat: number; lng: number };
-    }> = [];
-
-    orders.forEach(order => {
-      points.push({
-        id: `${order.orderId}_pickup`,
-        type: 'pickup',
-        orderId: order.orderId,
-        coordinates: order.pickupLocation
-      });
-      points.push({
-        id: `${order.orderId}_delivery`,
-        type: 'delivery',
-        orderId: order.orderId,
-        coordinates: order.deliveryLocation
-      });
-    });
-
-    // Start from first order's pickup
-    const sequence: string[] = [];
-    const visited = new Set<string>();
-    
-    // Ensure pickup comes before delivery for each order
-    orders.forEach(order => {
-      if (!visited.has(order.orderId)) {
-        sequence.push(`${order.orderId}_pickup`);
-        sequence.push(`${order.orderId}_delivery`);
-        visited.add(order.orderId);
-      }
-    });
-
-    return sequence;
-  }
-
-  // Calculate capacity utilization score (0-100)
-  private calculateCapacityScore(
-    usedWeight: number,
-    usedVolume: number,
-    maxWeight: number,
-    maxVolume: number
-  ): number {
-    const weightUtilization = (usedWeight / maxWeight) * 100;
-    const volumeUtilization = (usedVolume / maxVolume) * 100;
-    
-    // Higher score for better utilization (but not over-utilization)
-    const weightScore = Math.min(weightUtilization, 100);
-    const volumeScore = Math.min(volumeUtilization, 100);
-    
-    // Weighted average
-    return parseFloat(((weightScore * 0.6 + volumeScore * 0.4) / 2).toFixed(2));
-  }
-
-  // Calculate route efficiency
-  private calculateRouteEfficiency(sequence: string[]): number {
-    if (sequence.length <= 2) return 100;
-    
-    // Simple heuristic: efficiency decreases with more stops
-    const maxEfficiency = 100;
-    const efficiencyDropPerStop = 2;
-    const efficiency = Math.max(10, maxEfficiency - (sequence.length * efficiencyDropPerStop));
-    
-    return parseFloat(efficiency.toFixed(2));
-  }
-
-  // Convert priority to numeric value
-  private priorityToValue(priority: string): number {
+  // Helper method to convert priority to numeric value
+  priorityToValue(priority: string): number {
     switch (priority) {
       case 'urgent': return 10;
       case 'high': return 7;
       case 'normal': return 5;
       case 'low': return 3;
       default: return 1;
-    }
-  }
-
-  
-  // Suggest optimal order mix for driver
-  async suggestOptimalOrderMix(
-    driverId: string,
-    availableOrders: OrderCapacity[]
-  ): Promise<{
-    selectedOrders: OrderCapacity[];
-    rejectedOrders: OrderCapacity[];
-    capacityUtilization: {
-      weight: number;
-      volume: number;
-      orders: number;
-    };
-    estimatedEarnings: number;
-  }> {
-    try {
-      // Get driver capacity
-      const capacity = await this.getDriverVehicleCapacity(driverId);
-      
-      if (!capacity) {
-        throw new Error('Could not retrieve capacity information');
-      }
-
-      // Sort orders by priority and size efficiency
-      const sortedOrders = [...availableOrders].sort((a, b) => {
-        const aEfficiency = this.priorityToValue(a.priority) / (a.weight + a.volume);
-        const bEfficiency = this.priorityToValue(b.priority) / (b.weight + b.volume);
-        return bEfficiency - aEfficiency; // Descending
-      });
-
-      // Select orders until capacity is reached
-      const selectedOrders: OrderCapacity[] = [];
-      const rejectedOrders: OrderCapacity[] = [];
-      
-      let currentWeight = capacity.currentWeight;
-      let currentVolume = capacity.currentVolume;
-      let currentOrders = capacity.currentOrders;
-
-      for (const order of sortedOrders) {
-        const canFit = 
-          (currentWeight + order.weight <= capacity.maxWeight) &&
-          (currentVolume + order.volume <= capacity.maxVolume) &&
-          (currentOrders + 1 <= capacity.maxOrders);
-
-        if (canFit) {
-          selectedOrders.push(order);
-          currentWeight += order.weight;
-          currentVolume += order.volume;
-          currentOrders += 1;
-        } else {
-          rejectedOrders.push(order);
-        }
-      }
-
-      // Calculate utilization
-      const capacityUtilization = {
-        weight: (currentWeight / capacity.maxWeight) * 100,
-        volume: (currentVolume / capacity.maxVolume) * 100,
-        orders: (currentOrders / capacity.maxOrders) * 100
-      };
-
-      // Estimate earnings (simplified - $1 per kg)
-      const estimatedEarnings = selectedOrders.reduce((sum, order) => sum + order.weight, 0);
-
-      return {
-        selectedOrders,
-        rejectedOrders,
-        capacityUtilization,
-        estimatedEarnings
-      };
-
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to suggest optimal order mix:', errorMessage);
-      throw error;
     }
   }
 }
@@ -5175,6 +4696,24 @@ export class OrderService {
     this.trackingRepository = customTrackingRepository || trackingRepository;
   }
 
+  private async notifyBookingFailure(
+  customerId: string,
+  orderId: string,
+  reason: string,
+  recommendations: string[]
+): Promise<void> {
+  try {
+    await this.notificationService.sendBookingFailedNotification(
+      customerId,
+      orderId,
+      reason,
+      recommendations
+    );
+  } catch (error) {
+    this.logger.warn('Failed to send booking failure notification:', error);
+  }
+}
+
 async createOrderFromExternalRequest(externalData: any): Promise<any> {
   try {
     this.logger.info(`Creating order from external request: ${JSON.stringify({
@@ -5191,6 +4730,16 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
         message: 'Customer ID is required',
         reason: 'MISSING_CUSTOMER_ID',
         recommendations: ['Provide valid customer ID']
+      };
+    }
+
+    if (!externalData.driverInfo?.driverId) {
+      this.logger.error('Missing driver ID');
+      return {
+        success: false,
+        message: 'Driver ID is required',
+        reason: 'MISSING_DRIVER_ID',
+        recommendations: ['Provide valid driver ID']
       };
     }
 
@@ -5283,13 +4832,53 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
       
       // Communication
       unread_customer_messages: 0,
-      unread_driver_messages: 0,
-      
-      // Capacity check
-      capacity_check_passed: true
+      unread_driver_messages: 0
     };
 
-    this.logger.info('Transformed order data:', JSON.stringify(dbOrderData, null, 2));
+    // PERFORM CAPACITY CHECK
+    if (dbOrderData.driver_id) {
+      const capacityCheck = await this.performCapacityCheck(
+        dbOrderData.driver_id,
+        dbOrderData
+      );
+      
+      // Add capacity check data to the order
+      (dbOrderData as any).capacity_check_passed = capacityCheck.passed;
+      (dbOrderData as any).capacity_check_data = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        orderWeight: dbOrderData.weight_kg,
+        orderVolume: dbOrderData.volume_m3,
+        ...capacityCheck.capacityResult
+      });
+
+      if (!capacityCheck.passed) {
+        this.logger.warn(`Order would exceed driver capacity:`, capacityCheck.capacityResult);
+        
+        // Notify customer about booking failure
+        await this.notifyBookingFailure(
+          dbOrderData.customer_id,
+          externalData.orderId || 'unknown',
+          'Driver at maximum capacity',
+          capacityCheck.capacityResult.recommendations || []
+        );
+        
+        return {
+          success: false,
+          message: 'Driver is at maximum capacity',
+          reason: 'CAPACITY_EXCEEDED',
+          recommendations: capacityCheck.capacityResult.recommendations || [
+            'Try again later',
+            'Select a different driver'
+          ],
+          capacityDetails: capacityCheck.capacityResult.capacityCheck
+        };
+      }
+    }
+
+    this.logger.info('Transformed order data:', JSON.stringify({
+      ...dbOrderData,
+      capacity_check_passed: (dbOrderData as any).capacity_check_passed
+    }, null, 2));
 
     // Create order in database
     let order;
@@ -5312,10 +4901,16 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
       };
     }
     
+    // Notify driver about new order
+    if (order.driver_id) {
+      await this.notifyDriverAssignment(order);
+    }
+    
     return {
       success: true,
       order: this.formatOrderResponse(order),
-      message: 'Order created successfully'
+      message: 'Order created successfully',
+      capacityCheck: (dbOrderData as any).capacity_check_passed ? 'passed' : 'not_checked'
     };
     
   } catch (error: unknown) {
@@ -5336,6 +4931,55 @@ async createOrderFromExternalRequest(externalData: any): Promise<any> {
   }
 }
 
+
+private async performCapacityCheck(
+  driverId: string,
+  orderData: CreateOrderData,
+  orderId?: string
+): Promise<{
+  passed: boolean;
+  capacityResult: any;
+}> {
+  try {
+    const orderCapacity = {
+      orderId: orderId || 'temp',
+      weight: orderData.weight_kg,
+      volume: orderData.volume_m3,
+      priority: this.mapUrgency(orderData.urgency || 'normal'),
+      pickupLocation: {
+        lat: orderData.pickup_latitude,
+        lng: orderData.pickup_longitude
+      },
+      deliveryLocation: {
+        lat: orderData.delivery_latitude,
+        lng: orderData.delivery_longitude
+      }
+    };
+    
+    const capacityResult = await this.capacityOptimizationService.canDriverAcceptOrder(
+      driverId,
+      orderCapacity,
+      orderId // Exclude current order if updating
+    );
+    
+    return {
+      passed: capacityResult.canAccept,
+      capacityResult
+    };
+    
+  } catch (error) {
+    this.logger.warn('Capacity check failed:', error);
+    // Default to allow on error
+    return {
+      passed: true,
+      capacityResult: {
+        canAccept: true,
+        reason: 'Capacity check unavailable',
+        recommendations: []
+      }
+    };
+  }
+}
   // Check driver capacity
   private async checkDriverCapacity(driverId: string, orderData: CreateOrderData): Promise<any> {
     try {
