@@ -4,8 +4,8 @@ import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import { db } from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
-import { OrderRepository } from './repositories/order.repository';
-import { TrackingRepository } from './repositories/tracking.repository';
+import { orderRepository } from './repositories/order.repository';
+import { trackingRepository } from './repositories/tracking.repository';
 
 const logger = new Logger('Server');
 
@@ -16,24 +16,42 @@ const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
 const server = createServer(app);
 
 // Initialize WebSocket server WITH the HTTP server
-const wss = new WebSocketUtil(server);
-const trackingRepository = new TrackingRepository();
-const orderRepository = new OrderRepository();
+export const wss = new WebSocketUtil(server);
 
 // Test database connection on startup
-async function testDatabaseConnection() {
+async function testDatabaseConnection(): Promise<boolean> {
   try {
-    // Use the Database implementation's testConnection method instead of getConnection
-    await db.testConnection();
-    logger.info('✅ Database connection established successfully');
+    const isConnected = await db.testConnection();
+    if (isConnected) {
+      logger.info('✅ Database connection established successfully');
+      return true;
+    } else {
+      logger.error('❌ Database connection test failed');
+      return false;
+    }
   } catch (error) {
     logger.error('❌ Failed to connect to database:', error);
-    process.exit(1);
+    return false;
+  }
+}
+
+// Initialize database schema if needed
+async function initializeDatabase(): Promise<void> {
+  try {
+    // Only initialize schema in development mode
+    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
+      logger.info('Initializing database schema...');
+      await db.initializeSchema();
+      logger.info('✅ Database schema initialized');
+    }
+  } catch (error) {
+    logger.error('❌ Failed to initialize database schema:', error);
+    // Don't exit, just log error - tables might already exist
   }
 }
 
 // Test external service connections
-async function testServiceConnections() {
+async function testServiceConnections(): Promise<void> {
   const services = [
     { name: 'User Service', url: process.env.USER_SERVICE_URL },
     { name: 'Driver Service', url: process.env.DRIVER_SERVICE_URL },
@@ -41,76 +59,88 @@ async function testServiceConnections() {
   ];
 
   for (const service of services) {
-    try {
-      // We'll test connections later in the route handlers
+    if (service.url) {
       logger.info(`✅ ${service.name} configured at ${service.url}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`⚠️  ${service.name} may not be available: ${message}`);
+    } else {
+      logger.warn(`⚠️  ${service.name} URL not configured`);
     }
   }
 }
 
 // Graceful shutdown
-function setupGracefulShutdown() {
-  const shutdown = async (signal: string) => {
+function setupGracefulShutdown(): void {
+  const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}. Starting graceful shutdown...`);
     
-    // Close WebSocket connections
-    if (wss && typeof (wss as any).close === 'function') {
-      (wss as any).close();
-      logger.info('WebSocket server closed');
-    }
-    
-    // Close database connections
-    if (typeof (db as any)?.end === 'function') {
-      await (db as any).end();
-      logger.info('Database connections closed');
-    } else if (typeof (db as any)?.close === 'function') {
-      await (db as any).close();
-      logger.info('Database connections closed');
-    } else if (typeof (db as any)?.destroy === 'function') {
-      await (db as any).destroy();
-      logger.info('Database connections destroyed');
-    } else {
-      logger.info('No database close method found on pool; skipping close');
-    }
-    
-    // Close HTTP server
-    server.close(() => {
-      logger.info('HTTP server closed');
-      process.exit(0);
-    });
-    
-    // Force shutdown after 10 seconds
-    setTimeout(() => {
+    // Set a timeout for forced shutdown
+    const forceShutdownTimer = setTimeout(() => {
       logger.error('Could not close connections in time, forcefully shutting down');
       process.exit(1);
     }, 10000);
+    
+    try {
+      // Close WebSocket server
+      if (wss && typeof wss.close === 'function') {
+        await wss.close();
+        logger.info('✅ WebSocket server closed');
+      }
+      
+      // Close database connections
+      if (db && typeof db.close === 'function') {
+        await db.close();
+        logger.info('✅ Database connections closed');
+      }
+      
+      // Close HTTP server
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          logger.info('✅ HTTP server closed');
+          resolve();
+        });
+      });
+      
+      clearTimeout(forceShutdownTimer);
+      logger.info('✅ Graceful shutdown completed');
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during graceful shutdown:', error);
+      process.exit(1);
+    }
   };
   
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGQUIT', () => shutdown('SIGQUIT'));
+  
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    logger.error('❌ Uncaught Exception:', error);
+    shutdown('UNCAUGHT_EXCEPTION');
+  });
+  
+  // Handle unhandled promise rejections
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('❌ Unhandled Rejection at:', { promise, reason });
+    shutdown('UNHANDLED_REJECTION');
+  });
 }
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'healthy',
-    service: 'order-service',
-    timestamp: new Date().toISOString(),
-    version: process.env.npm_package_version || '1.0.0',
-    environment: process.env.NODE_ENV,
-    database: 'connected',
-    websocket: 'running'
-  });
-});
-
 // Start server
-async function startServer() {
+async function startServer(): Promise<void> {
   try {
     // Test database connection
-    await testDatabaseConnection();
+    const isDbConnected = await testDatabaseConnection();
+    if (!isDbConnected) {
+      if (process.env.NODE_ENV === 'production') {
+        logger.error('❌ Cannot start server without database connection');
+        process.exit(1);
+      } else {
+        logger.warn('⚠️  Starting server without database connection (development mode)');
+      }
+    }
+    
+    // Initialize database schema (development only)
+    await initializeDatabase();
     
     // Test service connections
     await testServiceConnections();
@@ -120,27 +150,29 @@ async function startServer() {
     
     // Start HTTP server
     server.listen(PORT, () => {
-      logger.info(`🚀 Order Service is running on port ${PORT}`);
-      logger.info(`🔗 HTTP: http://localhost:${PORT}`);
-      logger.info(`🔌 WebSocket: ws://localhost:${WEBSOCKET_PORT}`);
+      logger.info(`🚀 Order Service is running`);
+      logger.info(`📡 HTTP: http://localhost:${PORT}`);
+      logger.info(`🔌 WebSocket: ws://localhost:${PORT}/ws (via HTTP server)`);
       logger.info(`📊 Health check: http://localhost:${PORT}/health`);
+      logger.info(`📚 API Docs: http://localhost:${PORT}/api-docs`);
       logger.info(`📁 Upload path: ${process.env.UPLOAD_PATH || '/app/uploads'}`);
       logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`🔄 WebSocket server is running on the same port`);
     });
     
     // Handle server errors
     server.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
-        logger.error(`Port ${PORT} is already in use`);
+        logger.error(`❌ Port ${PORT} is already in use`);
         process.exit(1);
       } else {
-        logger.error('Server error:', error);
+        logger.error('❌ Server error:', error);
         process.exit(1);
       }
     });
     
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    logger.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 }
@@ -148,17 +180,5 @@ async function startServer() {
 // Start the server
 startServer();
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at', { promise, reason });
-  process.exit(1);
-});
-
-// Export only what's needed
-export { server, wss };
+// Export the server instance for testing
+export { server };

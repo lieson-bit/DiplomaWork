@@ -743,3 +743,6 @@ export class OrderRepository {
     }
   }
 }
+
+export const orderRepository = new OrderRepository();
+export default orderRepository;

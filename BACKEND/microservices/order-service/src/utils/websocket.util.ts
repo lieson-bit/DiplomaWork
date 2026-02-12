@@ -182,6 +182,37 @@ export class WebSocketUtil {
     }
   }
 
+  async close(): Promise<void> {
+  return new Promise((resolve) => {
+    this.logger.info('Closing WebSocket server...');
+    
+    // Close all connections
+    for (const [connectionId, ws] of this.connections.entries()) {
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close(1000, 'Server shutting down');
+        }
+      } catch (error) {
+        this.logger.error(`Error closing connection ${connectionId}:`, error);
+      }
+    }
+    
+    // Clear all maps
+    this.connections.clear();
+    this.userConnections.clear();
+    
+    // Close the WebSocket server
+    this.wss.close((err) => {
+      if (err) {
+        this.logger.error('Error closing WebSocket server:', err);
+      } else {
+        this.logger.info('WebSocket server closed successfully');
+      }
+      resolve();
+    });
+  });
+}
+
   // Send message to specific connection
   async sendToConnection(connectionId: string, type: string, data: any): Promise<void> {
     const ws = this.connections.get(connectionId);
@@ -248,6 +279,7 @@ export class WebSocketUtil {
     return `conn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 }
+
 
 // FIXED: Remove the singleton export or make it conditional
 // Don't automatically create an instance

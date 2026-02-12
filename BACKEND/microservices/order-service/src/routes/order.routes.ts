@@ -9,7 +9,7 @@ import { wss } from '../index'; // Import wss from index
 const router = express.Router();
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
-const orderService = new OrderService(wss);
+const orderService = new OrderService(wss, undefined, orderRepository, trackingRepository);
 const orderController = new OrderController(orderService);
 
 

@@ -18,15 +18,20 @@ export class OrderService {
   private orderRepository: OrderRepository;
   private trackingRepository: TrackingRepository;
 
-  constructor(websocketUtil: WebSocketUtil, notificationService?: NotificationService) {
+  constructor(
+    websocketUtil: WebSocketUtil, 
+    notificationService?: NotificationService,
+    customOrderRepository?: OrderRepository,
+    customTrackingRepository?: TrackingRepository
+  ) {
     this.logger = new Logger('OrderService');
     this.websocketUtil = websocketUtil;
     this.notificationService = notificationService || new NotificationService(websocketUtil);
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
     this.capacityOptimizationService = new CapacityOptimizationService();
-    this.orderRepository = new OrderRepository();
-    this.trackingRepository = new TrackingRepository();
+    this.orderRepository = customOrderRepository || orderRepository;
+    this.trackingRepository = customTrackingRepository || trackingRepository;
   }
 
   // Transform external order data to match your database schema
