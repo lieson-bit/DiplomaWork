@@ -13,9 +13,152 @@ Since am submitting an order with a driver already, immediately the order is rec
 - Now the customer can accept several orders from different customers or even the same customer
 - since the driver has can have many orders with different addresses, I want you to build a Route Optimization algorithm that delivers all these different orders in a shortest distance and shortest time. That optimization should show on the ui the map the path that the driver will take with labeled order of movement
 
-Basically I want::Database Schema: Updated to match your order structure with support for:
+my order structure::{
+  "orderId": "ORD-1770553176518-8cpawr9wa",
+  "status": "pending",
+  "createdAt": "2026-02-08T12:19:36.518Z",
+  "lastUpdated": "2026-02-08T12:19:36.518Z",
+  "customerInfo": {
+    "id": "1d25b961-0870-4f92-991d-6f966f595658",
+    "name": "Makolas Jones",
+    "email": "mwale22@gmail.com",
+    "phone": "0963884441",
+    "userType": "customer"
+  },
+  "locations": {
+    "pickup": {
+      "address": "Zagorodnyi prospekt, 24, Sankt-Peterburg, Russia, 191002",
+      "coordinates": {
+        "lat": 59.925209,
+        "lng": 30.34174539999999
+      },
+      "geocoded": true,
+      "geocodingMethod": "DistanceMatrix.ai",
+      "accuracy": "high"
+    },
+    "delivery": {
+      "address": "ulitsa Esenina, 3 корпус 1, Sankt-Peterburg, Russia, 194354",
+      "coordinates": {
+        "lat": 60.0333503,
+        "lng": 30.329644199999997
+      },
+      "geocoded": true,
+      "geocodingMethod": "DistanceMatrix.ai",
+      "accuracy": "high"
+    },
+    "distance": {
+      "km": 8.264,
+      "miles": 5.135009943999999
+    }
+  },
+  "packageDetails": {
+    "category": "furniture",
+    "categoryLabel": "Мебель и бытовая техника",
+    "weight": {
+      "value": 5,
+      "unit": "kg"
+    },
+    "volume": {
+      "value": 2,
+      "unit": "m³"
+    },
+    "urgency": "normal",
+    "urgencyLabel": "normal"
+  },
+  "specialRequirements": {
+    "fragile": false,
+    "refrigerated": false,
+    "oversized": false,
+    "hazardous": false,
+    "requirementsList": []
+  },
+  "driverInfo": {
+    "id": "1358764d-1e0b-44bd-a735-ca0fc71732f1",
+    "driverId": "1358764d-1e0b-44bd-a735-ca0fc71732f1",
+    "userId": "7383849d-c318-4fd7-8c62-6e9981beadc5",
+    "name": "Lieson Mwale",
+    "phone": "0963884441",
+    "email": "lieson22@gmail.com",
+    "rating": 4.800000190734863,
+    "matchScore": 73,
+    "suitability": "good",
+    "estimatedArrival": "12 mins"
+  },
+  "vehicleInfo": {
+    "type": "small_van",
+    "typeFormatted": "Small Van",
+    "make": "Ford",
+    "model": "Transit",
+    "licensePlate": "ABD-25",
+    "capacity": {
+      "maxWeight": 100,
+      "maxVolume": 10,
+      "unit": {
+        "weight": "kg",
+        "volume": "m³"
+      }
+    },
+    "imageUrl": "http://localhost:3002/uploads/vehicles/7383849d-c318-4fd7-8c62-6e9981beadc5/a2b128a2-abeb-438c-8f42-f4d925089f3c_1769541668103.jpg",
+    "imageError": false
+  },
+  "pricing": {
+    "estimatedPrice": {
+      "usd": 4.278034350925021,
+      "rub": 385.0230915832519,
+      "formatted": {
+        "usd": "$4.28",
+        "rub": "₽385.02"
+      }
+    },
+    "confidenceInterval": {
+      "low": 327.26962784576415,
+      "high": 442.7765553207397,
+      "formatted": "$3.64 - $4.92"
+    },
+    "currency": "USD",
+    "baseCurrency": "RUB"
+  },
+  "timing": {
+    "estimatedDuration": {
+      "minutes": 12.383333333333333,
+      "text": "12 mins",
+      "formatted": "12 mins"
+    },
+    "pickupTime": {
+      "estimated": "2026-02-08T12:19:36.519Z",
+      "driverArrival": "12 mins минут"
+    },
+    "deliveryTime": {
+      "estimated": "2026-02-08T12:31:59.519Z",
+      "scheduled": "2026-02-08T12:31:59.519Z"
+    },
+    "urgencyLevel": "normal",
+    "serviceHours": "24/7"
+  },
+  "systemInfo": {
+    "geocodingStatus": {
+      "pickup": "success",
+      "delivery": "success"
+    },
+    "calculationTimestamp": "2026-02-08T15:17:14.305826",
+    "apiVersion": "1.0",
+    "source": "customer-booking-form"
+  },
+  "metadata": {
+    "geocodingAttempts": 1,
+    "driverSelectionTime": "2026-02-08T12:19:36.519Z",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+    "platform": "web"
+  }
+}
 
-Order progress tracking
+Basically I want:: Updated to match your order structure with support for:
+Receive orders with my exact structure
+Check driver capacity
+Notify customer if booking fails
+Send notifications to driver
+Driver accepts the order if fail send notification
+Order progress tracking updated by driver
 
 Driver route optimization
 
@@ -35,7 +178,7 @@ Driver acceptance and status updates
 
 Route optimization for multiple orders
 
-Real-time communication
+messaging communication
 
 Balance management (deduct from customer, add to driver)
 
@@ -49,7 +192,7 @@ MessagingService: Simple in-app messaging system
 
 Controller & Routes: Updated with new endpoints for:
 
-Creating orders from your structure
+Creating orders from your structure by accepting from ui
 
 Driver accepting/updating orders
 
@@ -114,78 +257,24 @@ Calculates estimated savings vs non-optimized route
 
 This solution provides a complete order management system tailored to your specific requirements. The system is ready to receive orders in your format and provide all the UI features you requested.
 
-Driver Capacity Management:
-
-Real-time capacity checks before accepting orders
-
-Shows remaining weight/volume capacity
-
-Prevents overloading
-
-Dashboard showing utilization percentages
-
-Knapsack Optimization:
-
-Multi-dimensional knapsack (weight, volume, orders)
-
-Priority-based optimization
-
-Optimal order selection algorithm
-
-Route sequencing
-
-Driver Dashboard:
-
-Available capacity display
-
-Utilization percentages
-
-Efficiency score
-
-Recommendations for optimal loading
-
-Capacity Tracking:
-
-Daily capacity tracking
-
-Historical utilization data
-
-Performance metrics
-
-Automated recommendations
-
-How It Works:
-Before accepting an order: System checks if driver has capacity
-
-Capacity Display: Driver sees real-time capacity info on UI
-
-Optimization: System suggests optimal order mix
-
-Prevention: Stops driver from accepting orders that exceed capacity
-
-Tracking: Monitors capacity utilization over time
-Recommendations for optimal loading
-
-Capacity Tracking:
-
-Daily capacity tracking
-
-Historical utilization data
-
-Performance metrics
-
-Automated recommendations
-
-How It Works:
-Before accepting an order: System checks if driver has capacity
-
-Capacity Display: Driver sees real-time capacity info on UI
-
-Optimization: System suggests optimal order mix
-
-Prevention: Stops driver from accepting orders that exceed capacity
-
-Tracking: Monitors capacity utilization over time
 
 
-Okay these are my current codes, check them through and where you think needs to be rewritten give the the codes specifying the file
+
+
+
+
+
+
+
+
+Wait starting with the Database Schema Issue, you must first know that checking for maximum capacity of the vehicle should be checked on the driver-service database and then from those values subtract the capacities of the orders already booked saved in the order-service. And now from the remaining capacity, check if the new order can fit in. How do I ensure that my s ystem is implemented this way# Stop the service
+docker compose stop order-service
+
+# Rebuild with clean build
+docker compose build --no-cache order-service
+
+# Start again
+docker compose up -d order-service
+
+# Check logs
+docker compose logs -f order-service

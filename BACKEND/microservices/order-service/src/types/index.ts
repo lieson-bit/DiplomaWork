@@ -1,3 +1,192 @@
+export interface OrderReceiveRequest {
+  orderId?: string;
+  status: string;
+  createdAt: string;
+  lastUpdated: string;
+  customerInfo: CustomerInfo;
+  locations: Locations;
+  packageDetails: PackageDetails;
+  specialRequirements: SpecialRequirements;
+  driverInfo: DriverInfo;
+  vehicleInfo: VehicleInfo;
+  pricing: Pricing;
+  timing: Timing;
+  systemInfo: SystemInfo;
+  metadata: Metadata;
+}
+
+// Make sure all these interfaces are also exported:
+export interface CustomerInfo {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  userType: string;
+}
+
+export interface Locations {
+  pickup: LocationPoint;
+  delivery: LocationPoint;
+  distance: Distance;
+}
+
+export interface LocationPoint {
+  address: string;
+  coordinates: Coordinates;
+  geocoded?: boolean;
+  geocodingMethod?: string;
+  accuracy?: string;
+}
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+export interface Distance {
+  km: number;
+  miles?: number;
+}
+
+export interface PackageDetails {
+  category: string;
+  categoryLabel?: string;
+  weight: Weight;
+  volume: Volume;
+  urgency: string;
+  urgencyLabel?: string;
+}
+
+export interface Weight {
+  value: number;
+  unit: string;
+}
+
+export interface Volume {
+  value: number;
+  unit: string;
+}
+
+export interface SpecialRequirements {
+  fragile: boolean;
+  refrigerated: boolean;
+  oversized: boolean;
+  hazardous: boolean;
+  requirementsList?: string[];
+}
+
+export interface DriverInfo {
+  id: string;
+  driverId: string;
+  userId?: string;
+  name: string;
+  phone: string;
+  email: string;
+  rating: number;
+  matchScore: number;
+  suitability?: string;
+  estimatedArrival?: string;
+}
+
+export interface VehicleInfo {
+  type: string;
+  typeFormatted?: string;
+  make: string;
+  model: string;
+  licensePlate: string;
+  capacity: VehicleCapacity;
+  imageUrl?: string;
+  imageError?: boolean;
+}
+
+export interface VehicleCapacity {
+  maxWeight: number;
+  maxVolume: number;
+  unit?: {
+    weight: string;
+    volume: string;
+  };
+}
+
+export interface Pricing {
+  estimatedPrice: EstimatedPrice;
+  confidenceInterval?: ConfidenceInterval;
+  currency: string;
+  baseCurrency: string;
+}
+
+export interface EstimatedPrice {
+  usd: number;
+  rub: number;
+  formatted?: {
+    usd: string;
+    rub: string;
+  };
+}
+
+export interface ConfidenceInterval {
+  low: number;
+  high: number;
+  formatted?: string;
+}
+
+export interface Timing {
+  estimatedDuration: EstimatedDuration;
+  pickupTime: PickupTime;
+  deliveryTime: DeliveryTime;
+  urgencyLevel?: string;
+  serviceHours?: string;
+}
+
+export interface EstimatedDuration {
+  minutes: number;
+  text?: string;
+  formatted?: string;
+}
+
+export interface PickupTime {
+  estimated: string;
+  driverArrival?: string;
+}
+
+export interface DeliveryTime {
+  estimated: string;
+  scheduled?: string;
+}
+
+export interface SystemInfo {
+  geocodingStatus: {
+    pickup: string;
+    delivery: string;
+  };
+  calculationTimestamp: string;
+  apiVersion: string;
+  source: string;
+}
+
+export interface Metadata {
+  geocodingAttempts: number;
+  driverSelectionTime: string;
+  userAgent: string;
+  platform: string;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export interface Order {
   id: string;
   order_number: string;
