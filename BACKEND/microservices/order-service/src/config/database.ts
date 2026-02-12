@@ -141,7 +141,7 @@ class Database {
   async initializeSchema(): Promise<void> {
     try {
       // Read schema file
-      const schemaPath = path.join(__dirname, '../sql/schema.sql');
+      const schemaPath = path.join(__dirname, '../../sql/schema.sql');
       const schemaContent = await fs.readFile(schemaPath, 'utf-8');
       
       // Split into individual statements

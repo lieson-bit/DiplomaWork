@@ -1,0 +1,16 @@
+# Copy your schema file to the container
+docker cp E:\DiplomaWork\BACKEND\microservices\order-service\sql\schema.sql order-db:/docker-entrypoint-initdb.d/
+
+# Verify it was copied
+docker exec -it order-db ls -la /docker-entrypoint-initdb.d/
+
+# Now load the schema
+docker exec -it order-db mysql -u root -ppassword123 -e "SOURCE /docker-entrypoint-initdb.d/schema.sql;" order_service_db
+
+Or connect to MySQL and load it:
+docker exec -it order-db mysql -u root -ppassword123 order_service_db
+
+Then inside MySQL:
+SOURCE /docker-entrypoint-initdb.d/schema.sql;
+SHOW TABLES;
+DESCRIBE orders;
