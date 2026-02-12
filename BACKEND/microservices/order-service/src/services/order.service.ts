@@ -35,121 +35,166 @@ export class OrderService {
     this.trackingRepository = customTrackingRepository || trackingRepository;
   }
 
-  // Transform external order data to match your database schema
-  async createOrderFromExternalRequest(externalData: any): Promise<any> {
-    try {
-      this.logger.info(`Creating order from external request: ${externalData.orderId}`);
+async createOrderFromExternalRequest(externalData: any): Promise<any> {
+  try {
+    this.logger.info(`Creating order from external request: ${JSON.stringify({
+      orderId: externalData.orderId,
+      customerId: externalData.customerInfo?.id,
+      driverId: externalData.driverInfo?.driverId
+    })}`);
 
-      // Transform to your database schema
-      const dbOrderData: CreateOrderData = {
-        order_number: externalData.orderId || undefined, // Use provided orderId or generate
-        customer_id: externalData.customerInfo?.id,
-        customer_name: externalData.customerInfo?.name,
-        customer_email: externalData.customerInfo?.email,
-        customer_phone: externalData.customerInfo?.phone,
-        
-        // Pickup location
-        pickup_address: externalData.locations?.pickup?.address,
-        pickup_latitude: externalData.locations?.pickup?.coordinates?.lat,
-        pickup_longitude: externalData.locations?.pickup?.coordinates?.lng,
-        
-        // Delivery location
-        delivery_address: externalData.locations?.delivery?.address,
-        delivery_latitude: externalData.locations?.delivery?.coordinates?.lat,
-        delivery_longitude: externalData.locations?.delivery?.coordinates?.lng,
-        distance_km: externalData.locations?.distance?.km,
-        
-        // Package details
-        package_category: externalData.packageDetails?.categoryLabel || 'General',
-        weight_kg: externalData.packageDetails?.weight?.value,
-        volume_m3: externalData.packageDetails?.volume?.value,
-        urgency: this.mapUrgency(externalData.packageDetails?.urgency),
-        
-        // Special requirements
-        fragile: externalData.specialRequirements?.fragile || false,
-        refrigerated: externalData.specialRequirements?.refrigerated || false,
-        oversized: externalData.specialRequirements?.oversized || false,
-        hazardous: externalData.specialRequirements?.hazardous || false,
-        
-        // Driver info (if provided)
-        driver_id: externalData.driverInfo?.driverId,
-        driver_name: externalData.driverInfo?.name,
-        driver_phone: externalData.driverInfo?.phone,
-        driver_email: externalData.driverInfo?.email,
-        driver_rating: externalData.driverInfo?.rating,
-        driver_match_score: externalData.driverInfo?.matchScore,
-        
-        // Vehicle info (if provided)
-        vehicle_type: externalData.vehicleInfo?.typeFormatted,
-        vehicle_make: externalData.vehicleInfo?.make,
-        vehicle_model: externalData.vehicleInfo?.model,
-        vehicle_license_plate: externalData.vehicleInfo?.licensePlate,
-        vehicle_image_url: externalData.vehicleInfo?.imageUrl,
-        vehicle_max_weight: externalData.vehicleInfo?.capacity?.maxWeight,
-        vehicle_max_volume: externalData.vehicleInfo?.capacity?.maxVolume,
-        
-        // Pricing
-        estimated_price_usd: externalData.pricing?.estimatedPrice?.usd || 0,
-        estimated_price_local: externalData.pricing?.estimatedPrice?.rub || 0,
-        currency: 'USD',
-        base_currency: 'RUB',
-        
-        // Timing
-        estimated_duration_minutes: externalData.timing?.estimatedDuration?.minutes,
-        pickup_time_estimated: externalData.timing?.pickupTime?.estimated 
-          ? new Date(externalData.timing.pickupTime.estimated) 
-          : null,
-        delivery_time_estimated: externalData.timing?.deliveryTime?.estimated 
-          ? new Date(externalData.timing.deliveryTime.estimated) 
-          : null,
-        
-        // Status - always start as pending
-        status: 'pending' as any
+    // VALIDATION: Check required fields
+    if (!externalData.customerInfo?.id) {
+      this.logger.error('Missing customer ID');
+      return {
+        success: false,
+        message: 'Customer ID is required',
+        reason: 'MISSING_CUSTOMER_ID',
+        recommendations: ['Provide valid customer ID']
       };
+    }
 
-      // Check driver capacity if driver is assigned
-      if (externalData.driverInfo?.driverId) {
-        const capacityCheck = await this.checkDriverCapacity(
-          externalData.driverInfo.driverId,
-          dbOrderData
-        );
-        
-        if (!capacityCheck.canAccept) {
-          return {
-            success: false,
-            message: 'Driver capacity exceeded',
-            reason: capacityCheck.reason,
-            recommendations: capacityCheck.recommendations
-          };
-        }
-      }
+    if (!externalData.locations?.pickup?.address || !externalData.locations?.delivery?.address) {
+      this.logger.error('Missing pickup or delivery address');
+      return {
+        success: false,
+        message: 'Pickup and delivery addresses are required',
+        reason: 'MISSING_ADDRESS',
+        recommendations: ['Provide both pickup and delivery addresses']
+      };
+    }
 
-      // Create order in database
-      const order = await this.orderRepository.create(dbOrderData);
+    // Transform to your database schema
+    const dbOrderData: CreateOrderData = {
+      // Core fields
+      order_number: externalData.orderId || undefined,
+      customer_id: externalData.customerInfo.id,
+      driver_id: externalData.driverInfo?.driverId || null,
       
-      // If driver is assigned, notify them
-      if (order.driver_id) {
-        await this.notifyDriverAssignment(order);
-      }
+      // Customer Info
+      customer_name: externalData.customerInfo.name || 'Unknown Customer',
+      customer_email: externalData.customerInfo.email || `${externalData.customerInfo.id}@example.com`,
+      customer_phone: externalData.customerInfo.phone || '0000000000',
       
-      // Notify customer
-      await this.notifyCustomerOrderCreated(order);
+      // Pickup location
+      pickup_address: externalData.locations.pickup.address,
+      pickup_latitude: externalData.locations.pickup.coordinates?.lat || 0,
+      pickup_longitude: externalData.locations.pickup.coordinates?.lng || 0,
       
-      // Send WebSocket updates
-      await this.sendOrderCreationUpdates(order, externalData.customerInfo?.id);
+      // Delivery location
+      delivery_address: externalData.locations.delivery.address,
+      delivery_latitude: externalData.locations.delivery.coordinates?.lat || 0,
+      delivery_longitude: externalData.locations.delivery.coordinates?.lng || 0,
+      distance_km: externalData.locations.distance?.km || 0,
+      
+      // Package details
+      package_category: externalData.packageDetails?.category || 'General',
+      weight_kg: externalData.packageDetails?.weight?.value || 1,
+      volume_m3: externalData.packageDetails?.volume?.value || 0.1,
+      urgency: this.mapUrgency(externalData.packageDetails?.urgency),
+      
+      // Special requirements
+      fragile: externalData.specialRequirements?.fragile || false,
+      refrigerated: externalData.specialRequirements?.refrigerated || false,
+      oversized: externalData.specialRequirements?.oversized || false,
+      hazardous: externalData.specialRequirements?.hazardous || false,
+      
+      // Driver info
+      driver_name: externalData.driverInfo?.name || null,
+      driver_phone: externalData.driverInfo?.phone || null,
+      driver_email: externalData.driverInfo?.email || null,
+      driver_rating: externalData.driverInfo?.rating || null,
+      driver_match_score: externalData.driverInfo?.matchScore || null,
+      
+      // Vehicle info
+      vehicle_type: externalData.vehicleInfo?.type || null,
+      vehicle_make: externalData.vehicleInfo?.make || null,
+      vehicle_model: externalData.vehicleInfo?.model || null,
+      vehicle_license_plate: externalData.vehicleInfo?.licensePlate || null,
+      vehicle_image_url: externalData.vehicleInfo?.imageUrl || null,
+      vehicle_max_weight: externalData.vehicleInfo?.capacity?.maxWeight || null,
+      vehicle_max_volume: externalData.vehicleInfo?.capacity?.maxVolume || null,
+      
+      // Pricing
+      estimated_price_usd: externalData.pricing?.estimatedPrice?.usd || 0,
+      estimated_price_local: externalData.pricing?.estimatedPrice?.rub || 0,
+      currency: externalData.pricing?.currency || 'USD',
+      base_currency: externalData.pricing?.baseCurrency || 'RUB',
+      
+      // Timing
+      estimated_duration_minutes: externalData.timing?.estimatedDuration?.minutes || 30,
+      pickup_time_estimated: externalData.timing?.pickupTime?.estimated 
+        ? new Date(externalData.timing.pickupTime.estimated) 
+        : null,
+      delivery_time_estimated: externalData.timing?.deliveryTime?.estimated 
+        ? new Date(externalData.timing.deliveryTime.estimated) 
+        : null,
+      
+      // Route
+      route_polyline: null,
+      route_order_index: 0,
+      
+      // Payment
+      amount_paid: 0,
+      payment_status: 'pending',
+      
+      // Driver acceptance
+      driver_accepted: false,
+      
+      // Communication
+      unread_customer_messages: 0,
+      unread_driver_messages: 0,
+      
+      // Capacity check
+      capacity_check_passed: true
+    };
+
+    this.logger.info('Transformed order data:', JSON.stringify(dbOrderData, null, 2));
+
+    // Create order in database
+    let order;
+    try {
+      order = await this.orderRepository.create(dbOrderData);
+      this.logger.info(`Order created successfully with ID: ${order.id}, Number: ${order.order_number}`);
+    } catch (dbError: any) {
+      this.logger.error('Database error when creating order:', {
+        message: dbError.message,
+        code: dbError.code,
+        sql: dbError.sql,
+        sqlMessage: dbError.sqlMessage
+      });
       
       return {
-        success: true,
-        order: this.formatOrderResponse(order),
-        message: 'Order created successfully'
+        success: false,
+        message: 'Database error: ' + dbError.message,
+        reason: dbError.code || 'DB_ERROR',
+        recommendations: ['Check database logs for details']
       };
-      
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to create order:', errorMessage);
-      throw new Error(`Order creation failed: ${errorMessage}`);
     }
+    
+    return {
+      success: true,
+      order: this.formatOrderResponse(order),
+      message: 'Order created successfully'
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    
+    this.logger.error('Failed to create order:', {
+      message: errorMessage,
+      stack: errorStack
+    });
+    
+    return {
+      success: false,
+      message: 'Failed to create order: ' + errorMessage,
+      reason: 'INTERNAL_ERROR',
+      recommendations: ['Check server logs for details']
+    };
   }
+}
 
   // Check driver capacity
   private async checkDriverCapacity(driverId: string, orderData: CreateOrderData): Promise<any> {
@@ -714,16 +759,21 @@ export class OrderService {
 
   // Helper methods
   private mapUrgency(urgency: string): 'normal' | 'high' | 'urgent' {
-    switch (urgency?.toLowerCase()) {
-      case 'urgent':
-      case 'express':
-        return 'urgent';
-      case 'high':
-        return 'high';
-      default:
-        return 'normal';
-    }
+  if (!urgency) return 'normal';
+  
+  switch (urgency.toLowerCase()) {
+    case 'urgent':
+    case 'express':
+    case 'emergency':
+      return 'urgent';
+    case 'high':
+      return 'high';
+    case 'normal':
+    case 'low':
+    default:
+      return 'normal';
   }
+}
 
   private async notifyDriverAssignment(order: Order): Promise<void> {
     if (!order.driver_id) return;

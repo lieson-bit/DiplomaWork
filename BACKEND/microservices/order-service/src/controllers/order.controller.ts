@@ -16,31 +16,43 @@ export class OrderController {
   
   // Receive order from external service
   async receiveOrder(req: Request, res: Response) {
-    try {
-      this.logger.info('Receiving order from external service:', req.body);
+  try {
+    this.logger.info('Receiving order from external service:', req.body);
+    
+    // Transform and validate external data
+    const result = await this.orderService.createOrderFromExternalRequest(req.body);
+    
+    if (!result.success) {
+      this.logger.error('Order creation failed:', {
+        reason: result.reason,
+        recommendations: result.recommendations
+      });
       
-      // Transform and validate external data
-      const result = await this.orderService.createOrderFromExternalRequest(req.body);
-      
-      if (!result.success) {
-        return ResponseUtil.error(res, result.message, 400, {
-          reason: result.reason,
-          recommendations: result.recommendations
-        });
-      }
-      
-      return ResponseUtil.success(
-        res,
-        result,
-        'Order received and processing started',
-        202
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Receive order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to process order', 500, errorMessage);
+      return ResponseUtil.error(res, result.message, 400, {
+        reason: result.reason,
+        recommendations: result.recommendations
+      });
     }
+    
+    return ResponseUtil.success(
+      res,
+      result,
+      'Order received and processing started',
+      202
+    );
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    
+    this.logger.error('Receive order error:', {
+      message: errorMessage,
+      stack: errorStack,
+      body: req.body
+    });
+    
+    return ResponseUtil.error(res, 'Failed to process order', 500, errorMessage);
   }
+}
   
   // Driver accepts order
   async acceptOrder(req: Request, res: Response) {

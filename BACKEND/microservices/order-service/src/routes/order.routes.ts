@@ -4,6 +4,7 @@ import { OrderController } from '../controllers/order.controller';
 import { OrderService } from '../services/order.service';
 import { OrderRepository } from '../repositories/order.repository';
 import { TrackingRepository } from '../repositories/tracking.repository';
+import { validateOrderReceive } from '../middleware/validation.middleware';
 import { wss } from '../index'; // Import wss from index
 
 const router = express.Router();
@@ -96,6 +97,7 @@ const orderController = new OrderController(orderService);
  */
 router.post('/orders/receive',
   verifyServiceSecret,
+  validateOrderReceive,
   orderController.receiveOrder.bind(orderController)
 );
 

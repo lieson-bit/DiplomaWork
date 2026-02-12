@@ -1,5 +1,45 @@
 import { Request, Response, NextFunction } from 'express';
 import Joi from 'joi';
+import { ResponseUtil } from '../utils/response.util';
+import { Logger } from '../utils/logger';
+
+const logger = new Logger('ValidationMiddleware');
+
+export const validateOrderReceive = (req: Request, res: Response, next: NextFunction) => {
+  const errors = [];
+  
+  // Check required fields
+  if (!req.body.customerInfo?.id) {
+    errors.push('customerInfo.id is required');
+  }
+  
+  if (!req.body.locations?.pickup?.address) {
+    errors.push('locations.pickup.address is required');
+  }
+  
+  if (!req.body.locations?.delivery?.address) {
+    errors.push('locations.delivery.address is required');
+  }
+  
+  if (!req.body.packageDetails?.weight?.value) {
+    errors.push('packageDetails.weight.value is required');
+  }
+  
+  if (!req.body.packageDetails?.volume?.value) {
+    errors.push('packageDetails.volume.value is required');
+  }
+  
+  if (!req.body.pricing?.estimatedPrice?.usd) {
+    errors.push('pricing.estimatedPrice.usd is required');
+  }
+  
+  if (errors.length > 0) {
+    logger.warn('Validation failed:', errors);
+    return ResponseUtil.error(res, 'Validation failed', 400, errors.join(', '), errors);
+  }
+  
+  next();
+};
 
 export const validationSchemas = {
   // Add to validationSchemas object
