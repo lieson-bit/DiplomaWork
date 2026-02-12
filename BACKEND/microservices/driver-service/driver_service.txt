@@ -370,6 +370,38 @@ export class DriverController {
     }
   }
 
+  // Add this method to the DriverController class
+async getDriverVehiclesWithPicture(req: Request, res: Response, next: NextFunction) {
+  try {
+    const driverId = req.params.driverId;
+    
+    if (!driverId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Driver ID is required' 
+      });
+    }
+
+    logger.info(`Getting vehicles with picture for driver ID: ${driverId}`);
+    
+    const result = await driverService.getDriverVehiclesWithPicture(driverId);
+    
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error: any) {
+    if (error.message === 'No vehicles found for this driver') {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+    
+    logger.error('Get driver vehicles with picture error:', error);
+    next(error);
+  }
+}
   async getVehicles(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = req.user?.userId;
@@ -2318,13 +2350,17 @@ router.post(
   driverController.findMatchingDrivers
 );
 
-// Route for simple discovery (without distance calculations)
+// Route for simple discovery (without distance calculations) 
 router.get(
   '/drivers/available',
   authenticate,
   validate(validationSchemas.discoverDrivers),
   driverController.discoverDrivers
 );
+
+// Get vehicle with driver's profile picture - Public access
+router.get('/drivers/:driverId/vehicles-picture', driverController.getDriverVehiclesWithPicture);
+
 
 // Apply authentication to all routes
 router.use(authenticate);
@@ -3228,6 +3264,50 @@ export class DriverService {
   logger.info(`Uploaded profile picture for driver: ${userId}`);
   return profilePicture;
 }
+
+
+
+ // Add this method to the DriverService class
+  async getDriverVehiclesWithPicture(driverId: string): Promise<any> {
+    try {
+      // Get all vehicles for the driver
+      const vehicles = await this.vehicleRepository.findByDriverId(driverId);
+      
+      if (vehicles.length === 0) {
+        throw new Error('No vehicles found for this driver');
+      }
+    
+      // Get driver's profile picture
+      const profilePicture = await this.profilePictureRepository.findByDriverId(driverId);
+    
+      return {
+        driverId: driverId,
+        profilePicture: profilePicture ? {
+          originalUrl: profilePicture.originalUrl,
+          thumbnailUrl: profilePicture.thumbnailUrl,
+          smallUrl: profilePicture.smallUrl,
+          mediumUrl: profilePicture.mediumUrl
+        } : null,
+        vehicles: vehicles.map(vehicle => ({
+          id: vehicle.id,
+          type: vehicle.type,
+          make: vehicle.make,
+          model: vehicle.model,
+          year: vehicle.year,
+          color: vehicle.color,
+          licensePlate: vehicle.licensePlate,
+          maxWeight: vehicle.maxWeight,
+          maxVolume: vehicle.maxVolume,
+          imageUrl: vehicle.imageUrl,
+          currentStatus: vehicle.currentStatus,
+          createdAt: vehicle.createdAt
+        }))
+      };
+    } catch (error: any) {
+      logger.error(`Error getting driver vehicles with picture for driver ${driverId}:`, error);
+      throw error;
+    }
+  }
 
   async deleteProfilePicture(userId: string): Promise<void> {
     const driver = await this.driverRepository.findByUserId(userId);

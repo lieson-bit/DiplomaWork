@@ -207,7 +207,7 @@ export class OrderRepository {
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `;
       
@@ -429,33 +429,39 @@ export class OrderRepository {
   }
 
   async getDriverActiveOrders(driverId: string, excludeOrderId?: string): Promise<any[]> {
-    try {
-      const activeStatuses = [
-        'driver_assigned',
-        'route_to_pickup',
-        'in_transit'
-      ];
-      
-      let sql = `
-        SELECT id, weight_kg, volume_m3 
-        FROM orders 
-        WHERE driver_id = ? 
-          AND status IN (${activeStatuses.map(() => '?').join(',')})
-      `;
-      
-      const params: any[] = [driverId, ...activeStatuses];
-      
-      if (excludeOrderId) {
-        sql += ' AND id != ?';
-        params.push(excludeOrderId);
-      }
-      
-      return await db.query<any>(sql, params);
-    } catch (error) {
-      this.logger.error('Failed to get driver active orders:', error);
-      return [];
+  try {
+    const activeStatuses = [
+      'driver_assigned',
+      'route_to_pickup',
+      'in_transit'
+    ];
+    
+    this.logger.debug(`Getting active orders for driver ${driverId} with statuses: ${activeStatuses.join(', ')}`);
+    
+    let sql = `
+      SELECT id, weight_kg, volume_m3 
+      FROM orders 
+      WHERE driver_id = ? 
+        AND status IN (${activeStatuses.map(() => '?').join(',')})
+    `;
+    
+    const params: any[] = [driverId, ...activeStatuses];
+    
+    if (excludeOrderId) {
+      sql += ' AND id != ?';
+      params.push(excludeOrderId);
     }
+    
+    this.logger.debug(`Executing query: ${sql} with params: ${JSON.stringify(params)}`);
+    const orders = await db.query<any>(sql, params);
+    this.logger.debug(`Found ${orders.length} active orders for driver ${driverId}`);
+    
+    return orders || [];
+  } catch (error) {
+    this.logger.error(`Failed to get driver active orders for driver ${driverId}:`, error);
+    return [];
   }
+}
 }
 
 export const orderRepository = new OrderRepository();
