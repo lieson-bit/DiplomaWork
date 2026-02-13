@@ -6,11 +6,13 @@ import { OrderRepository } from '../repositories/order.repository';
 import { TrackingRepository } from '../repositories/tracking.repository';
 import { validateOrderReceive } from '../middleware/validation.middleware';
 import { NotificationService } from '../services/notification.service';
-import { wss } from '../index';
+import wss from '../index';
 
 const router = express.Router();
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
+// Log to verify wss is not undefined
+console.log('📡 WebSocket instance in routes:', wss ? '✅ Available' : '❌ Undefined');
 const notificationService = new NotificationService(wss);
 const orderService = new OrderService(wss, notificationService, orderRepository, trackingRepository);
 const orderController = new OrderController(orderService);
@@ -72,6 +74,23 @@ router.post('/orders/receive',
   orderController.receiveOrder.bind(orderController)
 );
 
+
+// In routes/order.routes.ts - Add this test endpoint
+router.get('/test/websocket', (req, res) => {
+  const status = {
+    wssExists: !!wss,
+    wssType: typeof wss,
+    hasSendToUser: wss && typeof wss.sendToUser === 'function',
+    connections: wss ? wss['connections']?.size || 0 : 0,
+    userConnections: wss ? wss['userConnections']?.size || 0 : 0
+  };
+  
+  res.json({
+    success: true,
+    message: 'WebSocket status',
+    data: status
+  });
+});
 /**
  * @swagger
  * /orders/{id}/accept:
