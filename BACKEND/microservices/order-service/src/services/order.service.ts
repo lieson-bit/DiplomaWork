@@ -494,32 +494,36 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
    * Notify driver about new order assignment
    */
   private async notifyDriverAssignment(order: Order): Promise<void> {
-    try {
-      if (!order.driver_id) return;
-      
-      await this.notificationService.sendOrderNotification(
-        order.driver_id,
-        order.order_number,
-        'order_assigned',
-        {
-          orderNumber: order.order_number,
-          orderId: order.id,
-          customerName: order.customer_name,
-          pickupAddress: order.pickup_address,
-          deliveryAddress: order.delivery_address,
-          estimatedPrice: order.estimated_price_usd,
-          packageWeight: order.weight_kg,
-          packageVolume: order.volume_m3,
-          estimatedDuration: order.estimated_duration_minutes,
-          timestamp: new Date().toISOString()
-        }
-      );
-      
-      this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
-    } catch (error) {
-      this.logger.warn('Failed to notify driver:', error);
-    }
+  try {
+    if (!order.driver_id) return;
+    
+    // Prepare order data for driver
+    const driverNotificationData = {
+      orderId: order.id,
+      orderNumber: order.order_number,
+      customerName: order.customer_name,
+      pickupAddress: order.pickup_address,
+      deliveryAddress: order.delivery_address,
+      estimatedPrice: order.estimated_price_usd,
+      packageWeight: order.weight_kg,
+      packageVolume: order.volume_m3,
+      estimatedDuration: order.estimated_duration_minutes,
+      requiresAction: true,
+      actions: ['accept', 'reject'],
+      timestamp: new Date().toISOString()
+    };
+    
+    // Use the dedicated driver notification method
+    await this.notificationService.sendDriverOrderNotification(
+      order.driver_id,
+      driverNotificationData
+    );
+    
+    this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
+  } catch (error) {
+    this.logger.warn('Failed to notify driver:', error);
   }
+}
 
   /**
    * Notify customer about booking failure
