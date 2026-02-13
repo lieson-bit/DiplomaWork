@@ -1453,7 +1453,8 @@ import { Logger } from '../utils/logger';
 
 const logger = new Logger('ValidationMiddleware');
 
-export const validateOrderReceive = (req: Request, res: Response, next: NextFunction) => {
+// middleware/validation.middleware.ts
+export const validateOrderReceive = (req: Request, res: Response, next: NextFunction): void => {
   const errors = [];
   
   // Check required fields from your exact JSON structure
@@ -1499,7 +1500,7 @@ export const validateOrderReceive = (req: Request, res: Response, next: NextFunc
   
   if (errors.length > 0) {
     logger.warn('Validation failed:', errors);
-    return ResponseUtil.error(res, 'Validation failed', 400, errors.join(', '), errors);
+    //return ResponseUtil.error(res, 'Validation failed', 400, errors.join(', '), errors);
   }
   
   next();
@@ -1718,7 +1719,7 @@ export class OrderRepository {
         ) VALUES (
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
           ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
-          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
       `;
       
@@ -1940,33 +1941,39 @@ export class OrderRepository {
   }
 
   async getDriverActiveOrders(driverId: string, excludeOrderId?: string): Promise<any[]> {
-    try {
-      const activeStatuses = [
-        'driver_assigned',
-        'route_to_pickup',
-        'in_transit'
-      ];
-      
-      let sql = `
-        SELECT id, weight_kg, volume_m3 
-        FROM orders 
-        WHERE driver_id = ? 
-          AND status IN (${activeStatuses.map(() => '?').join(',')})
-      `;
-      
-      const params: any[] = [driverId, ...activeStatuses];
-      
-      if (excludeOrderId) {
-        sql += ' AND id != ?';
-        params.push(excludeOrderId);
-      }
-      
-      return await db.query<any>(sql, params);
-    } catch (error) {
-      this.logger.error('Failed to get driver active orders:', error);
-      return [];
+  try {
+    const activeStatuses = [
+      'driver_assigned',
+      'route_to_pickup',
+      'in_transit'
+    ];
+    
+    this.logger.debug(`Getting active orders for driver ${driverId} with statuses: ${activeStatuses.join(', ')}`);
+    
+    let sql = `
+      SELECT id, weight_kg, volume_m3 
+      FROM orders 
+      WHERE driver_id = ? 
+        AND status IN (${activeStatuses.map(() => '?').join(',')})
+    `;
+    
+    const params: any[] = [driverId, ...activeStatuses];
+    
+    if (excludeOrderId) {
+      sql += ' AND id != ?';
+      params.push(excludeOrderId);
     }
+    
+    this.logger.debug(`Executing query: ${sql} with params: ${JSON.stringify(params)}`);
+    const orders = await db.query<any>(sql, params);
+    this.logger.debug(`Found ${orders.length} active orders for driver ${driverId}`);
+    
+    return orders || [];
+  } catch (error) {
+    this.logger.error(`Failed to get driver active orders for driver ${driverId}:`, error);
+    return [];
   }
+}
 }
 
 export const orderRepository = new OrderRepository();
@@ -4319,241 +4326,233 @@ export class OrderService {
    * Step 9: Notify driver about new order assignment
    * Step 10: Return formatted response with order details
    */
-  async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<any> {
-    try {
-      this.logger.info('=== ORDER CREATION PROCESS STARTED ===');
-      this.logger.info(`Customer: ${requestData.customerInfo?.name} (${requestData.customerInfo?.id})`);
-      this.logger.info(`Driver: ${requestData.driverInfo?.name} (${requestData.driverInfo?.id})`);
-      this.logger.info(`Package: ${requestData.packageDetails?.weight?.value}kg, ${requestData.packageDetails?.volume?.value}m³`);
+  // services/order.service.ts
+// Full fixed method:
 
-      // STEP 1: Validate required fields
-      if (!requestData.customerInfo?.id) {
-        this.logger.error('Missing customer ID');
-        return this.createErrorResponse('Customer ID is required', 'MISSING_CUSTOMER_ID');
-      }
+async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<any> {
+  try {
+    this.logger.info('=== ORDER CREATION PROCESS STARTED ===');
+    
+    let order_number: string;
 
-      if (!requestData.driverInfo?.id) {
-        this.logger.error('Missing driver ID');
-        return this.createErrorResponse('Driver ID is required', 'MISSING_DRIVER_ID');
-      }
+    // Check if orderId exists in the request
+    if (requestData && 'orderId' in requestData && requestData.orderId) {
+      order_number = requestData.orderId;
+      this.logger.info(`Using provided order ID: ${order_number}`);
+    } else {
+      order_number = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+      this.logger.info(`Generated new order number: ${order_number}`);
+    }
+    
+    this.logger.info(`Processing order: ${order_number}`);
+    this.logger.info(`Customer: ${requestData.customerInfo?.name} (${requestData.customerInfo?.id})`);
+    this.logger.info(`Driver: ${requestData.driverInfo?.name} (${requestData.driverInfo?.id})`);
+    this.logger.info(`Package: ${requestData.packageDetails?.weight?.value}kg, ${requestData.packageDetails?.volume?.value}m³`);
 
-      if (!requestData.locations?.pickup?.address || !requestData.locations?.delivery?.address) {
-        this.logger.error('Missing pickup or delivery address');
-        return this.createErrorResponse('Pickup and delivery addresses are required', 'MISSING_ADDRESS');
-      }
+    // Validate required fields
+    if (!requestData.customerInfo?.id) {
+      this.logger.error('Missing customer ID');
+      return this.createErrorResponse('Customer ID is required', 'MISSING_CUSTOMER_ID');
+    }
 
-      // STEP 2: Map urgency string to enum
-      const urgency = this.mapUrgency(requestData.packageDetails?.urgency || 'normal');
+    if (!requestData.driverInfo?.id) {
+      this.logger.error('Missing driver ID');
+      return this.createErrorResponse('Driver ID is required', 'MISSING_DRIVER_ID');
+    }
 
-      // STEP 3: Create order data object with all fields mapped
-      const dbOrderData: CreateOrderData = {
-        // Core identifiers
-        order_number: `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`,
-        customer_id: requestData.customerInfo.id,
-        driver_id: requestData.driverInfo.id,
-        
-        // Customer Information
-        customer_name: requestData.customerInfo.name || 'Unknown Customer',
-        customer_email: requestData.customerInfo.email || `${requestData.customerInfo.id}@example.com`,
-        customer_phone: requestData.customerInfo.phone || '0000000000',
-        
-        // Pickup Location
-        pickup_address: requestData.locations.pickup.address,
-        pickup_latitude: requestData.locations.pickup.coordinates?.lat || 0,
-        pickup_longitude: requestData.locations.pickup.coordinates?.lng || 0,
-        
-        // Delivery Location
-        delivery_address: requestData.locations.delivery.address,
-        delivery_latitude: requestData.locations.delivery.coordinates?.lat || 0,
-        delivery_longitude: requestData.locations.delivery.coordinates?.lng || 0,
-        distance_km: requestData.locations.distance?.km || 0,
-        
-        // Package Details
-        package_category: requestData.packageDetails?.category || 'General',
-        weight_kg: requestData.packageDetails?.weight?.value || 1,
-        volume_m3: requestData.packageDetails?.volume?.value || 0.1,
-        urgency: urgency,
-        
-        // Special Requirements
-        fragile: requestData.specialRequirements?.fragile || false,
-        refrigerated: requestData.specialRequirements?.refrigerated || false,
-        oversized: requestData.specialRequirements?.oversized || false,
-        hazardous: requestData.specialRequirements?.hazardous || false,
-        
-        // Driver Information
-        driver_name: requestData.driverInfo?.name || null,
-        driver_phone: requestData.driverInfo?.phone || null,
-        driver_email: requestData.driverInfo?.email || null,
-        driver_rating: requestData.driverInfo?.rating || null,
-        driver_match_score: requestData.driverInfo?.matchScore || null,
-        
-        // Vehicle Information
-        vehicle_type: requestData.vehicleInfo?.type || null,
-        vehicle_make: requestData.vehicleInfo?.make || null,
-        vehicle_model: requestData.vehicleInfo?.model || null,
-        vehicle_license_plate: requestData.vehicleInfo?.licensePlate || null,
-        vehicle_image_url: requestData.vehicleInfo?.imageUrl || null,
-        vehicle_max_weight: requestData.vehicleInfo?.capacity?.maxWeight || null,
-        vehicle_max_volume: requestData.vehicleInfo?.capacity?.maxVolume || null,
-        
-        // Pricing
-        estimated_price_usd: requestData.pricing?.estimatedPrice?.usd || 0,
-        estimated_price_local: requestData.pricing?.estimatedPrice?.rub || 0,
-        currency: requestData.pricing?.currency || 'USD',
-        base_currency: requestData.pricing?.baseCurrency || 'RUB',
-        
-        // Timing
-        estimated_duration_minutes: requestData.timing?.estimatedDuration?.minutes || 30,
-        pickup_time_estimated: requestData.timing?.pickupTime?.estimated 
-          ? new Date(requestData.timing.pickupTime.estimated) 
-          : null,
-        delivery_time_estimated: requestData.timing?.deliveryTime?.estimated 
-          ? new Date(requestData.timing.deliveryTime.estimated) 
-          : null,
-        
-        // Route (default values, will be updated during driver acceptance)
-        route_polyline: null,
-        route_order_index: 0,
-        
-        // Payment
-        amount_paid: 0,
-        payment_status: 'pending',
-        
-        // Driver acceptance
-        driver_accepted: false,
-        
-        // Communication
-        unread_customer_messages: 0,
-        unread_driver_messages: 0
+    if (!requestData.locations?.pickup?.address || !requestData.locations?.delivery?.address) {
+      this.logger.error('Missing pickup or delivery address');
+      return this.createErrorResponse('Pickup and delivery addresses are required', 'MISSING_ADDRESS');
+    }
+
+    // Map urgency
+    const urgency = this.mapUrgency(requestData.packageDetails?.urgency || 'normal');
+
+    // Create order data
+    const dbOrderData: CreateOrderData = {
+      order_number: order_number,
+      customer_id: requestData.customerInfo.id,
+      driver_id: requestData.driverInfo.id,
+      
+      customer_name: requestData.customerInfo.name || 'Unknown Customer',
+      customer_email: requestData.customerInfo.email || `${requestData.customerInfo.id}@example.com`,
+      customer_phone: requestData.customerInfo.phone || '0000000000',
+      
+      pickup_address: requestData.locations.pickup.address,
+      pickup_latitude: requestData.locations.pickup.coordinates?.lat || 0,
+      pickup_longitude: requestData.locations.pickup.coordinates?.lng || 0,
+      
+      delivery_address: requestData.locations.delivery.address,
+      delivery_latitude: requestData.locations.delivery.coordinates?.lat || 0,
+      delivery_longitude: requestData.locations.delivery.coordinates?.lng || 0,
+      distance_km: requestData.locations.distance?.km || 0,
+      
+      package_category: requestData.packageDetails?.category || 'General',
+      weight_kg: requestData.packageDetails?.weight?.value || 1,
+      volume_m3: requestData.packageDetails?.volume?.value || 0.1,
+      urgency: urgency,
+      
+      fragile: requestData.specialRequirements?.fragile || false,
+      refrigerated: requestData.specialRequirements?.refrigerated || false,
+      oversized: requestData.specialRequirements?.oversized || false,
+      hazardous: requestData.specialRequirements?.hazardous || false,
+      
+      driver_name: requestData.driverInfo?.name || null,
+      driver_phone: requestData.driverInfo?.phone || null,
+      driver_email: requestData.driverInfo?.email || null,
+      driver_rating: requestData.driverInfo?.rating || null,
+      driver_match_score: requestData.driverInfo?.matchScore || null,
+      
+      vehicle_type: requestData.vehicleInfo?.type || null,
+      vehicle_make: requestData.vehicleInfo?.make || null,
+      vehicle_model: requestData.vehicleInfo?.model || null,
+      vehicle_license_plate: requestData.vehicleInfo?.licensePlate || null,
+      vehicle_image_url: requestData.vehicleInfo?.imageUrl || null,
+      vehicle_max_weight: requestData.vehicleInfo?.capacity?.maxWeight || null,
+      vehicle_max_volume: requestData.vehicleInfo?.capacity?.maxVolume || null,
+      
+      estimated_price_usd: requestData.pricing?.estimatedPrice?.usd || 0,
+      estimated_price_local: requestData.pricing?.estimatedPrice?.rub || 0,
+      currency: requestData.pricing?.currency || 'USD',
+      base_currency: requestData.pricing?.baseCurrency || 'RUB',
+      
+      estimated_duration_minutes: Math.ceil(requestData.timing?.estimatedDuration?.minutes || 30),
+      pickup_time_estimated: requestData.timing?.pickupTime?.estimated 
+        ? new Date(requestData.timing.pickupTime.estimated) 
+        : null,
+      delivery_time_estimated: requestData.timing?.deliveryTime?.estimated 
+        ? new Date(requestData.timing.deliveryTime.estimated) 
+        : null,
+      
+      route_polyline: null,
+      route_order_index: 0,
+      
+      amount_paid: 0,
+      payment_status: 'pending',
+      
+      driver_accepted: false,
+      
+      unread_customer_messages: 0,
+      unread_driver_messages: 0
+    };
+
+    this.logger.info('Step 1: Basic order data created', {
+      orderNumber: dbOrderData.order_number,
+      customerId: dbOrderData.customer_id,
+      driverId: dbOrderData.driver_id
+    });
+
+    // Perform capacity check
+    if (dbOrderData.driver_id) {
+      this.logger.info('Step 2: Performing capacity check for driver', { driverId: dbOrderData.driver_id });
+      
+      const capacityCheck = await this.performCapacityCheck(
+        dbOrderData.driver_id,
+        dbOrderData
+      );
+
+      (dbOrderData as any).capacity_check_passed = capacityCheck.passed;
+      (dbOrderData as any).capacity_check_data = {
+        timestamp: new Date().toISOString(),
+        orderWeight: dbOrderData.weight_kg,
+        orderVolume: dbOrderData.volume_m3,
+        driverId: dbOrderData.driver_id,
+        ...capacityCheck.capacityResult
       };
 
-      this.logger.info('Step 1: Basic order data created', {
-        orderNumber: dbOrderData.order_number,
-        customerId: dbOrderData.customer_id,
-        driverId: dbOrderData.driver_id
+      this.logger.info('Step 3: Capacity check completed', {
+        passed: capacityCheck.passed,
+        canAccept: capacityCheck.capacityResult?.canAccept
       });
 
-      // STEP 4: Perform capacity check if driver is assigned
-      if (dbOrderData.driver_id) {
-        this.logger.info('Step 2: Performing capacity check for driver', { driverId: dbOrderData.driver_id });
+      if (!capacityCheck.passed) {
+        this.logger.warn('Step 4: Capacity check FAILED - rejecting order');
         
-        const capacityCheck = await this.performCapacityCheck(
-          dbOrderData.driver_id,
-          dbOrderData
+        await this.notifyBookingFailure(
+          dbOrderData.customer_id,
+          requestData.driverInfo?.id || 'unknown',
+          'Driver at maximum capacity',
+          capacityCheck.capacityResult?.recommendations || []
         );
 
-        // Add capacity check results to order data
-        (dbOrderData as any).capacity_check_passed = capacityCheck.passed;
-        (dbOrderData as any).capacity_check_data = {
-          timestamp: new Date().toISOString(),
-          orderWeight: dbOrderData.weight_kg,
-          orderVolume: dbOrderData.volume_m3,
-          driverId: dbOrderData.driver_id,
-          ...capacityCheck.capacityResult
-        };
-
-        this.logger.info('Step 3: Capacity check completed', {
-          passed: capacityCheck.passed,
-          canAccept: capacityCheck.capacityResult?.canAccept,
-          recommendations: capacityCheck.capacityResult?.recommendations
-        });
-
-        // STEP 5: If capacity check fails, reject the order
-        if (!capacityCheck.passed) {
-          this.logger.warn('Step 4: Capacity check FAILED - rejecting order', {
-            reason: capacityCheck.capacityResult?.reason,
-            recommendations: capacityCheck.capacityResult?.recommendations
-          });
-
-          // Notify customer about booking failure
-          await this.notifyBookingFailure(
-            dbOrderData.customer_id,
-            requestData.driverInfo?.id || 'unknown',
-            'Driver at maximum capacity',
-            capacityCheck.capacityResult?.recommendations || []
-          );
-
-          return {
-            success: false,
-            message: 'Driver is at maximum capacity',
-            reason: 'CAPACITY_EXCEEDED',
-            recommendations: capacityCheck.capacityResult?.recommendations || [
-              'Try again later',
-              'Select a different driver'
-            ],
-            capacityDetails: capacityCheck.capacityResult?.capacityCheck || {},
-            timestamp: new Date().toISOString()
-          };
-        }
-
-        this.logger.info('Step 4: Capacity check PASSED - proceeding with order creation');
-      }
-
-      // STEP 6: Insert order into database
-      this.logger.info('Step 5: Inserting order into database');
-      
-      let order;
-      try {
-        order = await this.orderRepository.create(dbOrderData);
-        this.logger.info('Step 6: Order created successfully', {
-          orderId: order.id,
-          orderNumber: order.order_number,
-          status: order.status
-        });
-      } catch (dbError: any) {
-        this.logger.error('Step 5 ERROR: Database insertion failed', {
-          message: dbError.message,
-          code: dbError.code
-        });
-        
         return {
           success: false,
-          message: 'Database error: ' + dbError.message,
-          reason: dbError.code || 'DB_ERROR',
-          recommendations: ['Check database logs for details'],
+          message: 'Driver is at maximum capacity',
+          reason: 'CAPACITY_EXCEEDED',
+          recommendations: capacityCheck.capacityResult?.recommendations || [
+            'Try again later',
+            'Select a different driver'
+          ],
+          capacityDetails: capacityCheck.capacityResult?.capacityCheck || {},
           timestamp: new Date().toISOString()
         };
       }
 
-      // STEP 7: Notify driver about new order
-      if (order.driver_id) {
-        this.logger.info('Step 7: Notifying driver about new order assignment');
-        await this.notifyDriverAssignment(order);
-      }
+      this.logger.info('Step 4: Capacity check PASSED');
+    }
 
-      // STEP 8: Send WebSocket update to customer
-      this.logger.info('Step 8: Sending WebSocket update to customer');
-      await this.sendOrderCreationUpdates(order, order.customer_id);
-
-      this.logger.info('=== ORDER CREATION PROCESS COMPLETED SUCCESSFULLY ===');
-      
-      // STEP 9: Return formatted response
-      return {
-        success: true,
-        order: this.formatOrderResponse(order),
-        message: 'Order created successfully',
-        capacityCheck: (dbOrderData as any).capacity_check_passed ? 'passed' : 'not_checked',
-        timestamp: new Date().toISOString()
-      };
-
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      
-      this.logger.error('=== ORDER CREATION PROCESS FAILED ===', {
-        message: errorMessage,
-        stack: errorStack
+    // Create order in database
+    this.logger.info('Step 5: Inserting order into database');
+    
+    let order;
+    try {
+      order = await this.orderRepository.create(dbOrderData);
+      this.logger.info('Step 6: Order created successfully', {
+        orderId: order.id,
+        orderNumber: order.order_number,
+        status: order.status
+      });
+    } catch (dbError: any) {
+      this.logger.error('Step 5 ERROR: Database insertion failed', {
+        message: dbError.message,
+        code: dbError.code
       });
       
       return {
         success: false,
-        message: 'Failed to create order: ' + errorMessage,
-        reason: 'INTERNAL_ERROR',
-        recommendations: ['Check server logs for details'],
+        message: 'Database error: ' + dbError.message,
+        reason: dbError.code || 'DB_ERROR',
+        recommendations: ['Check database logs for details'],
         timestamp: new Date().toISOString()
       };
     }
+
+    // Notify driver
+    if (order.driver_id) {
+      this.logger.info('Step 7: Notifying driver about new order assignment');
+      await this.notifyDriverAssignment(order);
+    }
+
+    // Send WebSocket update
+    this.logger.info('Step 8: Sending WebSocket update to customer');
+    await this.sendOrderCreationUpdates(order, order.customer_id);
+
+    this.logger.info('=== ORDER CREATION PROCESS COMPLETED SUCCESSFULLY ===');
+    
+    return {
+      success: true,
+      order: this.formatOrderResponse(order),
+      message: 'Order created successfully',
+      capacityCheck: (dbOrderData as any).capacity_check_passed ? 'passed' : 'not_checked',
+      timestamp: new Date().toISOString()
+    };
+
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('=== ORDER CREATION PROCESS FAILED ===', {
+      message: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
+    return {
+      success: false,
+      message: 'Failed to create order: ' + errorMessage,
+      reason: 'INTERNAL_ERROR',
+      recommendations: ['Check server logs for details'],
+      timestamp: new Date().toISOString()
+    };
   }
+}
 
   /**
    * Perform capacity check by:
@@ -4573,7 +4572,7 @@ export class OrderService {
     try {
       // Get driver's vehicle capacity from driver service
       const vehicleCapacity = await this.getDriverVehicleCapacity(driverId);
-      
+
       if (!vehicleCapacity) {
         this.logger.warn(`No vehicle capacity found for driver ${driverId}, defaulting to allow`);
         return {
@@ -4585,31 +4584,44 @@ export class OrderService {
           }
         };
       }
-    
+
       // FIXED: Use the repository method with correct column names
+      this.logger.debug(`Fetching active orders for driver ${driverId} from OrderRepository`);
       const activeOrders = await this.orderRepository.getDriverActiveOrders(driverId, excludeOrderId);
-      
-      const currentWeight = activeOrders.reduce((sum, order) => sum + (parseFloat(order.weight_kg) || 0), 0);
-      const currentVolume = activeOrders.reduce((sum, order) => sum + (parseFloat(order.volume_m3) || 0), 0);
-      const currentOrders = activeOrders.length;
+      this.logger.debug(`Found ${activeOrders.length} active orders for driver ${driverId}`);
+
+      // Calculate current load
+    const currentWeight = activeOrders.reduce((sum, order) => {
+      const weight = parseFloat(order.weight_kg) || 0;
+      this.logger.debug(`Order ${order.id}: weight_kg = ${weight}`);
+      return sum + weight;
+    }, 0);
     
+    const currentVolume = activeOrders.reduce((sum, order) => {
+      const volume = parseFloat(order.volume_m3) || 0;
+      this.logger.debug(`Order ${order.id}: volume_m3 = ${volume}`);
+      return sum + volume;
+    }, 0);
+
+      const currentOrders = activeOrders.length;
+
       const orderWeight = parseFloat(orderData.weight_kg.toString()) || 0;
       const orderVolume = parseFloat(orderData.volume_m3.toString()) || 0;
-    
+
       const totalWeight = currentWeight + orderWeight;
       const totalVolume = currentVolume + orderVolume;
       const totalOrders = currentOrders + 1;
-    
+
       const maxWeight = vehicleCapacity.maxWeight;
       const maxVolume = vehicleCapacity.maxVolume;
       const maxOrders = 10;
-    
+
       const weightPasses = totalWeight <= maxWeight;
       const volumePasses = totalVolume <= maxVolume;
       const ordersPasses = totalOrders <= maxOrders;
-    
+
       const canAccept = weightPasses && volumePasses && ordersPasses;
-    
+
       const recommendations: string[] = [];
       if (!canAccept) {
         if (!weightPasses) {
@@ -4622,7 +4634,7 @@ export class OrderService {
           recommendations.push(`Complete existing orders before accepting new ones (max ${maxOrders} orders)`);
         }
       }
-    
+
       const capacityResult = {
         canAccept,
         reason: canAccept ? undefined : 'Exceeds vehicle capacity limits',
@@ -4659,12 +4671,12 @@ export class OrderService {
         },
         recommendations
       };
-    
+
       return {
         passed: canAccept,
         capacityResult
       };
-    
+
     } catch (error) {
       this.logger.error('Capacity check failed:', error);
       return {
@@ -5870,6 +5882,195 @@ export class TrackingService {
 `types\index.ts`:
 
 ```ts
+export interface OrderReceiveRequest {
+  orderId?: string;
+  status: string;
+  createdAt: string;
+  lastUpdated: string;
+  customerInfo: CustomerInfo;
+  locations: Locations;
+  packageDetails: PackageDetails;
+  specialRequirements: SpecialRequirements;
+  driverInfo: DriverInfo;
+  vehicleInfo: VehicleInfo;
+  pricing: Pricing;
+  timing: Timing;
+  systemInfo: SystemInfo;
+  metadata: Metadata;
+}
+
+// Make sure all these interfaces are also exported:
+export interface CustomerInfo {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  userType: string;
+}
+
+export interface Locations {
+  pickup: LocationPoint;
+  delivery: LocationPoint;
+  distance: Distance;
+}
+
+export interface LocationPoint {
+  address: string;
+  coordinates: Coordinates;
+  geocoded?: boolean;
+  geocodingMethod?: string;
+  accuracy?: string;
+}
+
+export interface Coordinates {
+  lat: number;
+  lng: number;
+}
+
+export interface Distance {
+  km: number;
+  miles?: number;
+}
+
+export interface PackageDetails {
+  category: string;
+  categoryLabel?: string;
+  weight: Weight;
+  volume: Volume;
+  urgency: string;
+  urgencyLabel?: string;
+}
+
+export interface Weight {
+  value: number;
+  unit: string;
+}
+
+export interface Volume {
+  value: number;
+  unit: string;
+}
+
+export interface SpecialRequirements {
+  fragile: boolean;
+  refrigerated: boolean;
+  oversized: boolean;
+  hazardous: boolean;
+  requirementsList?: string[];
+}
+
+export interface DriverInfo {
+  id: string;
+  driverId: string;
+  userId?: string;
+  name: string;
+  phone: string;
+  email: string;
+  rating: number;
+  matchScore: number;
+  suitability?: string;
+  estimatedArrival?: string;
+}
+
+export interface VehicleInfo {
+  type: string;
+  typeFormatted?: string;
+  make: string;
+  model: string;
+  licensePlate: string;
+  capacity: VehicleCapacity;
+  imageUrl?: string;
+  imageError?: boolean;
+}
+
+export interface VehicleCapacity {
+  maxWeight: number;
+  maxVolume: number;
+  unit?: {
+    weight: string;
+    volume: string;
+  };
+}
+
+export interface Pricing {
+  estimatedPrice: EstimatedPrice;
+  confidenceInterval?: ConfidenceInterval;
+  currency: string;
+  baseCurrency: string;
+}
+
+export interface EstimatedPrice {
+  usd: number;
+  rub: number;
+  formatted?: {
+    usd: string;
+    rub: string;
+  };
+}
+
+export interface ConfidenceInterval {
+  low: number;
+  high: number;
+  formatted?: string;
+}
+
+export interface Timing {
+  estimatedDuration: EstimatedDuration;
+  pickupTime: PickupTime;
+  deliveryTime: DeliveryTime;
+  urgencyLevel?: string;
+  serviceHours?: string;
+}
+
+export interface EstimatedDuration {
+  minutes: number;
+  text?: string;
+  formatted?: string;
+}
+
+export interface PickupTime {
+  estimated: string;
+  driverArrival?: string;
+}
+
+export interface DeliveryTime {
+  estimated: string;
+  scheduled?: string;
+}
+
+export interface SystemInfo {
+  geocodingStatus: {
+    pickup: string;
+    delivery: string;
+  };
+  calculationTimestamp: string;
+  apiVersion: string;
+  source: string;
+}
+
+export interface Metadata {
+  geocodingAttempts: number;
+  driverSelectionTime: string;
+  userAgent: string;
+  platform: string;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export interface Order {
   id: string;
   order_number: string;

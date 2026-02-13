@@ -6,7 +6,7 @@ import { Logger } from '../utils/logger';
 const logger = new Logger('ValidationMiddleware');
 
 // middleware/validation.middleware.ts
-export const validateOrderReceive = (req: Request, res: Response, next: NextFunction): void => {
+export const validateOrderReceive = (req: Request, res: Response, next: NextFunction): Response | void => {
   const errors = [];
   
   // Check required fields from your exact JSON structure
@@ -52,7 +52,7 @@ export const validateOrderReceive = (req: Request, res: Response, next: NextFunc
   
   if (errors.length > 0) {
     logger.warn('Validation failed:', errors);
-    //return ResponseUtil.error(res, 'Validation failed', 400, errors.join(', '), errors);
+    return ResponseUtil.error(res, 'Validation failed', 400, errors.join(', '), errors);
   }
   
   next();

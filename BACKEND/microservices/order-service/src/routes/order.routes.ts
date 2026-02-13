@@ -5,12 +5,14 @@ import { OrderService } from '../services/order.service';
 import { OrderRepository } from '../repositories/order.repository';
 import { TrackingRepository } from '../repositories/tracking.repository';
 import { validateOrderReceive } from '../middleware/validation.middleware';
+import { NotificationService } from '../services/notification.service';
 import { wss } from '../index';
 
 const router = express.Router();
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
-const orderService = new OrderService(wss, undefined, orderRepository, trackingRepository);
+const notificationService = new NotificationService(wss);
+const orderService = new OrderService(wss, notificationService, orderRepository, trackingRepository);
 const orderController = new OrderController(orderService);
 
 

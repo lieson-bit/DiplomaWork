@@ -2,15 +2,20 @@ import { Logger } from '../utils/logger';
 import { WebSocketUtil } from '../utils/websocket.util';
 
 export class NotificationService {
-  private logger = new Logger('NotificationService');
+  private logger: Logger;
   private websocketUtil: WebSocketUtil;
   
-  // FIXED: Accept WebSocketUtil as parameter instead of creating new instance
   constructor(websocketUtil: WebSocketUtil) {
+    this.logger = new Logger('NotificationService');
     this.websocketUtil = websocketUtil;
+    
+    // Debug log to verify WebSocketUtil is passed correctly
+    this.logger.info('NotificationService initialized with WebSocketUtil', { 
+      hasWebSocket: !!this.websocketUtil,
+      methods: this.websocketUtil ? Object.getOwnPropertyNames(Object.getPrototypeOf(this.websocketUtil)) : []
+    });
   }
   
-  // Send order notification
   async sendOrderNotification(
     userId: string,
     orderId: string,
@@ -18,6 +23,19 @@ export class NotificationService {
     data: any
   ): Promise<void> {
     try {
+      if (!this.websocketUtil) {
+        this.logger.warn('WebSocketUtil not available, cannot send notification');
+        return;
+      }
+      
+      if (typeof this.websocketUtil.sendToUser !== 'function') {
+        this.logger.error('sendToUser method not available on WebSocketUtil', {
+          type: typeof this.websocketUtil,
+          hasMethod: this.websocketUtil && 'sendToUser' in this.websocketUtil
+        });
+        return;
+      }
+      
       const notification = {
         type,
         orderId,
@@ -26,19 +44,13 @@ export class NotificationService {
         read: false
       };
       
-      // Send via WebSocket
       await this.websocketUtil.sendToUser(userId, 'notification', notification);
-      
-      // Also log to database if needed
-      // await this.saveNotificationToDatabase(userId, type, orderId, data);
-      
       this.logger.debug(`Notification sent to ${userId}: ${type}`);
     } catch (error) {
       this.logger.warn(`Failed to send notification to ${userId}:`, error);
     }
   }
   
-  // Send booking failed notification
   async sendBookingFailedNotification(
     customerId: string,
     orderId: string,
@@ -57,6 +69,3 @@ export class NotificationService {
     );
   }
 }
-
-// FIXED: Don't export a singleton instance - it will be created in index.ts
-// export const notificationService = new NotificationService();

@@ -1,16 +1,14 @@
+// index.ts - FIXED VERSION
 import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import { db } from './config/database';
 import { WebSocketUtil } from './utils/websocket.util';
-import { orderRepository } from './repositories/order.repository';
-import { trackingRepository } from './repositories/tracking.repository';
 
 const logger = new Logger('Server');
 
 const PORT = process.env.PORT || 3004;
-const WEBSOCKET_PORT = parseInt(process.env.WEBSOCKET_PORT || '8080');
 
 // Create HTTP server
 const server = createServer(app);
@@ -32,21 +30,6 @@ async function testDatabaseConnection(): Promise<boolean> {
   } catch (error) {
     logger.error('❌ Failed to connect to database:', error);
     return false;
-  }
-}
-
-// Initialize database schema if needed
-async function initializeDatabase(): Promise<void> {
-  try {
-    // Only initialize schema in development mode
-    if (process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test') {
-      logger.info('Initializing database schema...');
-      await db.initializeSchema();
-      logger.info('✅ Database schema initialized');
-    }
-  } catch (error) {
-    logger.error('❌ Failed to initialize database schema:', error);
-    // Don't exit, just log error - tables might already exist
   }
 }
 
@@ -72,7 +55,6 @@ function setupGracefulShutdown(): void {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info(`Received ${signal}. Starting graceful shutdown...`);
     
-    // Set a timeout for forced shutdown
     const forceShutdownTimer = setTimeout(() => {
       logger.error('Could not close connections in time, forcefully shutting down');
       process.exit(1);
@@ -80,7 +62,7 @@ function setupGracefulShutdown(): void {
     
     try {
       // Close WebSocket server
-      if (wss && typeof wss.close === 'function') {
+      if (wss) {
         await wss.close();
         logger.info('✅ WebSocket server closed');
       }
@@ -112,13 +94,11 @@ function setupGracefulShutdown(): void {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGQUIT', () => shutdown('SIGQUIT'));
   
-  // Handle uncaught exceptions
   process.on('uncaughtException', (error) => {
     logger.error('❌ Uncaught Exception:', error);
     shutdown('UNCAUGHT_EXCEPTION');
   });
   
-  // Handle unhandled promise rejections
   process.on('unhandledRejection', (reason, promise) => {
     logger.error('❌ Unhandled Rejection at:', { promise, reason });
     shutdown('UNHANDLED_REJECTION');
@@ -135,12 +115,19 @@ async function startServer(): Promise<void> {
         logger.error('❌ Cannot start server without database connection');
         process.exit(1);
       } else {
-        logger.warn('⚠️  Starting server without database connection (development mode)');
+        logger.warn('⚠️ Starting server without database connection (development mode)');
       }
     }
     
-    // Initialize database schema (development only)
-    await initializeDatabase();
+    // DON'T call initializeSchema here - you already created tables manually
+    // Just check if tables exist
+    try {
+      await db.query('SELECT 1 FROM orders LIMIT 1');
+      logger.info('✅ Database tables are ready');
+    } catch (error) {
+      logger.warn('⚠️ Database tables may not exist. Please run schema.sql manually.');
+      logger.info('📁 Schema file location: E:\\DiplomaWork\\BACKEND\\microservices\\order-service\\sql\\schema.sql');
+    }
     
     // Test service connections
     await testServiceConnections();
@@ -157,10 +144,8 @@ async function startServer(): Promise<void> {
       logger.info(`📚 API Docs: http://localhost:${PORT}/api-docs`);
       logger.info(`📁 Upload path: ${process.env.UPLOAD_PATH || '/app/uploads'}`);
       logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-      logger.info(`🔄 WebSocket server is running on the same port`);
     });
     
-    // Handle server errors
     server.on('error', (error: NodeJS.ErrnoException) => {
       if (error.code === 'EADDRINUSE') {
         logger.error(`❌ Port ${PORT} is already in use`);
@@ -182,3 +167,4 @@ startServer();
 
 // Export the server instance for testing
 export { server };
+export default wss;  // This is important - export wss as default

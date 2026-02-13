@@ -1,7 +1,8 @@
+// config/database.ts - FIXED VERSION
 import mysql from 'mysql2/promise';
 import fs from 'fs/promises';
 import path from 'path';
-import { Logger } from '../utils/logger';
+import { Logger } from '../utils/logger';  
 
 class Database {
   private pool: mysql.Pool | null = null;
@@ -138,10 +139,21 @@ class Database {
     }
   }
 
+  // KEEP THIS METHOD - but comment out the call in index.ts
   async initializeSchema(): Promise<void> {
     try {
       // Read schema file
       const schemaPath = path.join(__dirname, '../../sql/schema.sql');
+      this.logger.info(`Reading schema from: ${schemaPath}`);
+
+      try {
+        await fs.access(schemaPath);
+      } catch (error) {
+        this.logger.error(`Schema file not found at: ${schemaPath}`);
+        this.logger.info('Skipping schema initialization - file not found');
+        return;
+      }
+      
       const schemaContent = await fs.readFile(schemaPath, 'utf-8');
       
       // Split into individual statements
@@ -159,6 +171,10 @@ class Database {
           if (error.code === 'ER_TABLE_EXISTS_ERROR') {
             this.logger.warn(`Table already exists: ${statement.substring(0, 50)}...`);
           } else {
+            this.logger.error(`Failed to execute statement:`, {
+              error: error.message,
+              statement: statement.substring(0, 100)
+            });
             throw error;
           }
         }
