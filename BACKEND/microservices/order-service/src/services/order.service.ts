@@ -28,8 +28,21 @@ export class OrderService {
     customTrackingRepository?: TrackingRepository
   ) {
     this.logger = new Logger('OrderService');
-    this.websocketUtil = websocketUtil;
-    this.notificationService = notificationService || new NotificationService(websocketUtil);
+  
+    this.logger.info('OrderService constructor', {
+      hasWebSocket: !!websocketUtil,
+      websocketType: typeof websocketUtil
+    });
+
+    this.websocketUtil = websocketUtil as WebSocketUtil; // Cast, but handle null checks later
+
+    if (notificationService) {
+      this.notificationService = notificationService;
+      this.logger.info('Using provided notification service');
+    } else {
+      this.logger.info('Creating new notification service');
+      this.notificationService = new NotificationService(websocketUtil);
+    }
     this.messagingService = new MessagingService();
     this.balanceService = new BalanceService();
     this.capacityOptimizationService = new CapacityOptimizationService();
@@ -537,6 +550,11 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
   private async sendOrderCreationUpdates(order: Order, customerId: string): Promise<void> {
     try {
       if (!customerId) return;
+      
+      if (!this.websocketUtil) {
+        this.logger.warn('WebSocketUtil not available, cannot send order creation update');
+        return;
+      }
       
       await this.websocketUtil.sendToUser(
         customerId,
