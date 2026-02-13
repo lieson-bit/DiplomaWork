@@ -78,12 +78,14 @@ router.post('/orders/receive',
 
 // In routes/order.routes.ts - Add this test endpoint
 router.get('/test/websocket', (req, res) => {
+  const wss = webSocketManager.getWebSocket();
   const status = {
     wssExists: !!wss,
     wssType: typeof wss,
     hasSendToUser: wss && typeof wss.sendToUser === 'function',
-    connections: wss ? wss['connections']?.size || 0 : 0,
-    userConnections: wss ? wss['userConnections']?.size || 0 : 0
+    connections: wss ? (wss as any)['connections']?.size || 0 : 0,
+    userConnections: wss ? (wss as any)['userConnections']?.size || 0 : 0,
+    isInitialized: webSocketManager.isInitialized()
   };
   
   res.json({
