@@ -1,10 +1,10 @@
-// index.ts - FIXED VERSION
+// index.ts
 import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import { db } from './config/database';
-import { WebSocketUtil } from './utils/websocket.util';
+import { webSocketManager } from './utils/websocket.manager';
 
 const logger = new Logger('Server');
 
@@ -13,8 +13,8 @@ const PORT = process.env.PORT || 3004;
 // Create HTTP server
 const server = createServer(app);
 
-// Initialize WebSocket server WITH the HTTP server
-export const wss = new WebSocketUtil(server);
+// Initialize WebSocket server through the manager
+export const wss = webSocketManager.initialize(server);
 
 // Test database connection on startup
 async function testDatabaseConnection(): Promise<boolean> {
@@ -119,14 +119,12 @@ async function startServer(): Promise<void> {
       }
     }
     
-    // DON'T call initializeSchema here - you already created tables manually
-    // Just check if tables exist
+    // Check if tables exist
     try {
       await db.query('SELECT 1 FROM orders LIMIT 1');
       logger.info('✅ Database tables are ready');
     } catch (error) {
       logger.warn('⚠️ Database tables may not exist. Please run schema.sql manually.');
-      logger.info('📁 Schema file location: E:\\DiplomaWork\\BACKEND\\microservices\\order-service\\sql\\schema.sql');
     }
     
     // Test service connections
@@ -142,8 +140,10 @@ async function startServer(): Promise<void> {
       logger.info(`🔌 WebSocket: ws://localhost:${PORT}/ws (via HTTP server)`);
       logger.info(`📊 Health check: http://localhost:${PORT}/health`);
       logger.info(`📚 API Docs: http://localhost:${PORT}/api-docs`);
-      logger.info(`📁 Upload path: ${process.env.UPLOAD_PATH || '/app/uploads'}`);
       logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+      
+      // Log WebSocket status after server is fully started
+      logger.info(`🔌 WebSocket initialized: ${webSocketManager.isInitialized() ? '✅' : '❌'}`);
     });
     
     server.on('error', (error: NodeJS.ErrnoException) => {
@@ -167,4 +167,5 @@ startServer();
 
 // Export the server instance for testing
 export { server };
-export default wss;  // This is important - export wss as default
+// Export the wss instance for use in routes (will be available after initialization)
+export default wss;

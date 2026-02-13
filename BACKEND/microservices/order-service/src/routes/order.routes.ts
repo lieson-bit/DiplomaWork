@@ -6,13 +6,14 @@ import { OrderRepository } from '../repositories/order.repository';
 import { TrackingRepository } from '../repositories/tracking.repository';
 import { validateOrderReceive } from '../middleware/validation.middleware';
 import { NotificationService } from '../services/notification.service';
-import wss from '../index';
+import { webSocketManager } from '../utils/websocket.manager';
 
 const router = express.Router();
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
+const wss = webSocketManager.getWebSocket();
 // Log to verify wss is not undefined
-console.log('📡 WebSocket instance in routes:', wss ? '✅ Available' : '❌ Undefined');
+console.log('📡 WebSocket instance in routes:', wss ? '✅ Available' : '⏳ Will be initialized soon');
 const notificationService = new NotificationService(wss);
 const orderService = new OrderService(wss, notificationService, orderRepository, trackingRepository);
 const orderController = new OrderController(orderService);
