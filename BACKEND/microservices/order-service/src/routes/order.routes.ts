@@ -7,15 +7,27 @@ import { TrackingRepository } from '../repositories/tracking.repository';
 import { validateOrderReceive } from '../middleware/validation.middleware';
 import { NotificationService } from '../services/notification.service';
 import { webSocketManager } from '../utils/websocket.manager';
+import { ServiceLocator } from '../utils/service-locator';
 
 const router = express.Router();
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
-const wss = webSocketManager.getWebSocket();
-// Log to verify wss is not undefined
-console.log('📡 WebSocket instance in routes:', wss ? '✅ Available' : '⏳ Will be initialized soon');
-const notificationService = new NotificationService(wss);
-const orderService = new OrderService(wss, notificationService, orderRepository, trackingRepository);
+// Get services from locator instead of creating directly
+const serviceLocator = ServiceLocator.getInstance();
+const notificationService = serviceLocator.getNotificationService();
+
+// Log WebSocket status
+console.log('📡 WebSocket status in routes:', {
+  hasNotificationService: !!notificationService,
+  webSocketInitialized: webSocketManager.isInitialized()
+});
+
+const orderService = new OrderService(
+  webSocketManager.getWebSocket(), 
+  notificationService, 
+  orderRepository, 
+  trackingRepository
+);
 const orderController = new OrderController(orderService);
 
 

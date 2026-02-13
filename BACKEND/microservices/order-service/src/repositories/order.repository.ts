@@ -93,7 +93,7 @@ export interface CreateOrderData {
   customer_name: string;
   customer_email: string;
   customer_phone: string;
-  
+  notes?: string;
   // Locations
   pickup_address: string;
   pickup_latitude: number;
@@ -102,7 +102,8 @@ export interface CreateOrderData {
   delivery_address: string;
   delivery_latitude: number;
   delivery_longitude: number;
-  
+  status: 'pending' | 'driver_assigned' | 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled' | 'completed';
+  driver_accepted_at: Date | null;
   distance_km: number;
   
   // Package Details
@@ -270,7 +271,7 @@ export class OrderRepository {
         null, // 53. rating_given_at
         data.unread_customer_messages || 0, // 54. unread_customer_messages
         data.unread_driver_messages || 0, // 55. unread_driver_messages
-        data.capacity_check_passed !== undefined ? (data.capacity_check_passed ? 1 : 0) : 1, // 56. capacity_check_passed
+        data.capacity_check_passed !== undefined ? (data.capacity_check_passed === true ? 1 : 0) : 1, // 56. capacity_check_passed
         data.capacity_check_data ? JSON.stringify(data.capacity_check_data) : null, // 57. capacity_check_data
         now, // 58. created_at
         now // 59. updated_at

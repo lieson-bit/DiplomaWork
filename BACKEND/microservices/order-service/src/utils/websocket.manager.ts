@@ -1,4 +1,3 @@
-// utils/websocket.manager.ts
 import { Server } from 'http';
 import { WebSocketUtil } from './websocket.util';
 import { Logger } from './logger';
@@ -8,6 +7,7 @@ class WebSocketManager {
   private _wss: WebSocketUtil | null = null;
   private logger: Logger;
   private server: Server | null = null;
+  private initPromise: Promise<WebSocketUtil> | null = null;
 
   private constructor() {
     this.logger = new Logger('WebSocketManager');
@@ -25,20 +25,56 @@ class WebSocketManager {
       this.server = server;
       this._wss = new WebSocketUtil(server);
       this.logger.info('WebSocketManager: WebSocket server initialized');
+      
+      // Store the WebSocket instance
+      (global as any).__webSocketInstance = this._wss;
     }
     return this._wss;
   }
 
-  public getWebSocket(): WebSocketUtil {
+  public getWebSocket(): WebSocketUtil | null {
     if (!this._wss) {
-      this.logger.warn('WebSocketManager: WebSocket not initialized yet, returning null');
-      return null as any; // This will be caught by the services
+      // Try to get from global
+      if ((global as any).__webSocketInstance) {
+        this._wss = (global as any).__webSocketInstance;
+        this.logger.info('WebSocketManager: Retrieved WebSocket from global');
+      } else {
+        this.logger.warn('WebSocketManager: WebSocket not initialized yet');
+      }
     }
+    return this._wss;
+  }
+
+  public async waitForWebSocket(timeoutMs: number = 10000): Promise<WebSocketUtil> {
+    // If already initialized, return it (with type assertion since we know it's not null)
+    if (this._wss) {
+      return this._wss;
+    }
+
+    const startTime = Date.now();
+    
+    while (!this._wss && Date.now() - startTime < timeoutMs) {
+      // Check global
+      if ((global as any).__webSocketInstance) {
+        this._wss = (global as any).__webSocketInstance;
+        this.logger.info('WebSocketManager: Found WebSocket in global after wait');
+        return this._wss; // TypeScript now knows this is WebSocketUtil
+      }
+      
+      this.logger.debug('WebSocketManager: Waiting for WebSocket initialization...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // If we get here and still no WebSocket, throw error
+    if (!this._wss) {
+      throw new Error(`WebSocket not available after ${timeoutMs}ms`);
+    }
+    
     return this._wss;
   }
 
   public isInitialized(): boolean {
-    return this._wss !== null;
+    return this._wss !== null || (global as any).__webSocketInstance !== undefined;
   }
 }
 
