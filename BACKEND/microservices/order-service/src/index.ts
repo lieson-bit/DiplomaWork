@@ -16,6 +16,21 @@ const server = createServer(app);
 // Initialize WebSocket server through the manager
 export const wss = webSocketManager.initialize(server);
 
+// 3. NOW initialize services that depend on WebSocket
+import { OrderRepository } from './repositories/order.repository';
+import { TrackingRepository } from './repositories/tracking.repository';
+import { NotificationService } from './services/notification.service';
+import { OrderService } from './services/order.service';
+
+const orderRepository = new OrderRepository();
+const trackingRepository = new TrackingRepository();
+const notificationService = new NotificationService(wss);
+const orderService = new OrderService(
+  wss, notificationService, orderRepository, trackingRepository
+);
+
+export { server, orderService };
+
 // Test database connection on startup
 async function testDatabaseConnection(): Promise<boolean> {
   try {
@@ -166,6 +181,6 @@ async function startServer(): Promise<void> {
 startServer();
 
 // Export the server instance for testing
-export { server };
+
 // Export the wss instance for use in routes (will be available after initialization)
 export default wss;
