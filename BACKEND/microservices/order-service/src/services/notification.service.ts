@@ -1,19 +1,27 @@
+// services/notification.service.ts
 import { Logger } from '../utils/logger';
 import { WebSocketUtil } from '../utils/websocket.util';
 
 export class NotificationService {
   private logger: Logger;
-  private websocketUtil: WebSocketUtil;
+  private websocketUtil: WebSocketUtil | null;
   
-  constructor(websocketUtil: WebSocketUtil) {
+  constructor(websocketUtil: WebSocketUtil | null) {
     this.logger = new Logger('NotificationService');
+    
+    // Store the websocketUtil (might be null initially)
     this.websocketUtil = websocketUtil;
     
-    // Debug log to verify WebSocketUtil is passed correctly
-    this.logger.info('NotificationService initialized with WebSocketUtil', { 
+    this.logger.info('NotificationService initialized', {
       hasWebSocket: !!this.websocketUtil,
-      methods: this.websocketUtil ? Object.getOwnPropertyNames(Object.getPrototypeOf(this.websocketUtil)) : []
+      websocketType: typeof this.websocketUtil
     });
+  }
+
+  // Method to update WebSocket instance if it becomes available later
+  public setWebSocket(websocketUtil: WebSocketUtil): void {
+    this.websocketUtil = websocketUtil;
+    this.logger.info('NotificationService: WebSocket instance updated');
   }
   
   async sendOrderNotification(
@@ -23,16 +31,14 @@ export class NotificationService {
     data: any
   ): Promise<void> {
     try {
+      // Check if websocketUtil exists
       if (!this.websocketUtil) {
-        this.logger.warn('WebSocketUtil not available, cannot send notification');
+        this.logger.warn('WebSocketUtil not available yet, cannot send notification');
         return;
       }
       
       if (typeof this.websocketUtil.sendToUser !== 'function') {
-        this.logger.error('sendToUser method not available on WebSocketUtil', {
-          type: typeof this.websocketUtil,
-          hasMethod: this.websocketUtil && 'sendToUser' in this.websocketUtil
-        });
+        this.logger.error('sendToUser method not available on WebSocketUtil');
         return;
       }
       
@@ -44,8 +50,10 @@ export class NotificationService {
         read: false
       };
       
+      this.logger.debug(`Attempting to send ${type} notification to user ${userId}`);
       await this.websocketUtil.sendToUser(userId, 'notification', notification);
-      this.logger.debug(`Notification sent to ${userId}: ${type}`);
+      this.logger.debug(`✅ Notification sent to ${userId}: ${type}`);
+      
     } catch (error) {
       this.logger.warn(`Failed to send notification to ${userId}:`, error);
     }
