@@ -42,10 +42,14 @@ order-service
 │       ├── httpClient.ts
 │       ├── logger.ts
 │       ├── response.util.ts
+│       ├── service-locator.ts
 │       ├── validation.util.ts
 │       ├── websocket.manager.ts
 │       └── websocket.util.ts
-└── tsconfig.json
+├── test-order-flow.js
+├── test-order-flow.ps1
+├── tsconfig.json
+└── websocket-test-client.js
 
 ```
 
@@ -2019,6 +2023,21 @@ const server = createServer(app);
 // Initialize WebSocket server through the manager
 export const wss = webSocketManager.initialize(server);
 
+// 3. NOW initialize services that depend on WebSocket
+import { OrderRepository } from './repositories/order.repository';
+import { TrackingRepository } from './repositories/tracking.repository';
+import { NotificationService } from './services/notification.service';
+import { OrderService } from './services/order.service';
+
+const orderRepository = new OrderRepository();
+const trackingRepository = new TrackingRepository();
+const notificationService = new NotificationService(wss);
+const orderService = new OrderService(
+  wss, notificationService, orderRepository, trackingRepository
+);
+
+export { server, orderService };
+
 // Test database connection on startup
 async function testDatabaseConnection(): Promise<boolean> {
   try {
@@ -2169,7 +2188,7 @@ async function startServer(): Promise<void> {
 startServer();
 
 // Export the server instance for testing
-export { server };
+
 // Export the wss instance for use in routes (will be available after initialization)
 export default wss;
 ```
@@ -2544,7 +2563,7 @@ export interface CreateOrderData {
   customer_name: string;
   customer_email: string;
   customer_phone: string;
-  
+  notes?: string;
   // Locations
   pickup_address: string;
   pickup_latitude: number;
@@ -2553,7 +2572,8 @@ export interface CreateOrderData {
   delivery_address: string;
   delivery_latitude: number;
   delivery_longitude: number;
-  
+  status: 'pending' | 'driver_assigned' | 'route_to_pickup' | 'in_transit' | 'delivered' | 'cancelled' | 'completed';
+  driver_accepted_at: Date | null;
   distance_km: number;
   
   // Package Details
@@ -2721,7 +2741,7 @@ export class OrderRepository {
         null, // 53. rating_given_at
         data.unread_customer_messages || 0, // 54. unread_customer_messages
         data.unread_driver_messages || 0, // 55. unread_driver_messages
-        data.capacity_check_passed !== undefined ? (data.capacity_check_passed ? 1 : 0) : 1, // 56. capacity_check_passed
+        data.capacity_check_passed !== undefined ? (data.capacity_check_passed === true ? 1 : 0) : 1, // 56. capacity_check_passed
         data.capacity_check_data ? JSON.stringify(data.capacity_check_data) : null, // 57. capacity_check_data
         now, // 58. created_at
         now // 59. updated_at
@@ -3351,15 +3371,27 @@ import { TrackingRepository } from '../repositories/tracking.repository';
 import { validateOrderReceive } from '../middleware/validation.middleware';
 import { NotificationService } from '../services/notification.service';
 import { webSocketManager } from '../utils/websocket.manager';
+import { ServiceLocator } from '../utils/service-locator';
 
 const router = express.Router();
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
-const wss = webSocketManager.getWebSocket();
-// Log to verify wss is not undefined
-console.log('📡 WebSocket instance in routes:', wss ? '✅ Available' : '⏳ Will be initialized soon');
-const notificationService = new NotificationService(wss);
-const orderService = new OrderService(wss, notificationService, orderRepository, trackingRepository);
+// Get services from locator instead of creating directly
+const serviceLocator = ServiceLocator.getInstance();
+const notificationService = serviceLocator.getNotificationService();
+
+// Log WebSocket status
+console.log('📡 WebSocket status in routes:', {
+  hasNotificationService: !!notificationService,
+  webSocketInitialized: webSocketManager.isInitialized()
+});
+
+const orderService = new OrderService(
+  webSocketManager.getWebSocket(), 
+  notificationService, 
+  orderRepository, 
+  trackingRepository
+);
 const orderController = new OrderController(orderService);
 
 
@@ -5298,34 +5330,37 @@ export class OrderService {
   private orderRepository: OrderRepository;
   private trackingRepository: TrackingRepository;
 
-  constructor(
-    websocketUtil: WebSocketUtil,
-    notificationService?: NotificationService,
-    customOrderRepository?: OrderRepository,
-    customTrackingRepository?: TrackingRepository
-  ) {
-    this.logger = new Logger('OrderService');
-  
-    this.logger.info('OrderService constructor', {
-      hasWebSocket: !!websocketUtil,
-      websocketType: typeof websocketUtil
-    });
+  // Update the constructor to accept nullable WebSocket
+constructor(
+  websocketUtil: WebSocketUtil | null, // Allow null
+  notificationService?: NotificationService,
+  customOrderRepository?: OrderRepository,
+  customTrackingRepository?: TrackingRepository
+) {
+  this.logger = new Logger('OrderService');
 
-    this.websocketUtil = websocketUtil as WebSocketUtil; // Cast, but handle null checks later
+  this.logger.info('OrderService constructor', {
+    hasWebSocket: !!websocketUtil,
+    websocketType: typeof websocketUtil
+  });
 
-    if (notificationService) {
-      this.notificationService = notificationService;
-      this.logger.info('Using provided notification service');
-    } else {
-      this.logger.info('Creating new notification service');
-      this.notificationService = new NotificationService(websocketUtil);
-    }
-    this.messagingService = new MessagingService();
-    this.balanceService = new BalanceService();
-    this.capacityOptimizationService = new CapacityOptimizationService();
-    this.orderRepository = customOrderRepository || orderRepository;
-    this.trackingRepository = customTrackingRepository || trackingRepository;
+  // Store websocketUtil (may be null)
+  this.websocketUtil = websocketUtil as WebSocketUtil; // We'll handle null checks in methods
+
+  if (notificationService) {
+    this.notificationService = notificationService;
+    this.logger.info('Using provided notification service');
+  } else {
+    this.logger.info('Creating new notification service');
+    this.notificationService = new NotificationService(websocketUtil);
   }
+  
+  this.messagingService = new MessagingService();
+  this.balanceService = new BalanceService();
+  this.capacityOptimizationService = new CapacityOptimizationService();
+  this.orderRepository = customOrderRepository || orderRepository;
+  this.trackingRepository = customTrackingRepository || trackingRepository;
+}
 
   /** 
    * TRANSFORMATION PROCEDURE:
@@ -5399,11 +5434,11 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
       order_number: order_number,
       customer_id: requestData.customerInfo.id,
       driver_id: requestData.driverInfo.id,
-      
+      status: 'pending',
       customer_name: requestData.customerInfo.name || 'Unknown Customer',
       customer_email: requestData.customerInfo.email || `${requestData.customerInfo.id}@example.com`,
       customer_phone: requestData.customerInfo.phone || '0000000000',
-      
+      driver_accepted_at: null,
       pickup_address: requestData.locations.pickup.address,
       pickup_latitude: requestData.locations.pickup.coordinates?.lat || 0,
       pickup_longitude: requestData.locations.pickup.coordinates?.lng || 0,
@@ -5577,6 +5612,159 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
       recommendations: ['Check server logs for details'],
       timestamp: new Date().toISOString()
     };
+  }
+}
+
+  /**
+ * Get order by ID with full details including progress and messages
+ */
+async getOrder(orderId: string): Promise<any> {
+  try {
+    this.logger.info(`Getting order details: ${orderId}`);
+    
+    // Find the order
+    const order = await this.orderRepository.findById(orderId);
+    
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Get order messages
+    let messages: any[] = [];
+    try {
+      messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
+    } catch (error) {
+      this.logger.warn(`Could not fetch messages for order ${orderId}:`, error);
+    }
+    
+    // Get latest tracking location
+    let currentLocation = null;
+    try {
+      const latestLocation = await this.trackingRepository.getLatestLocation(orderId);
+      if (latestLocation) {
+        currentLocation = {
+          latitude: latestLocation.latitude,
+          longitude: latestLocation.longitude,
+          lastUpdated: latestLocation.timestamp,
+          speed: latestLocation.speed,
+          bearing: latestLocation.bearing
+        };
+      }
+    } catch (error) {
+      this.logger.warn(`Could not fetch tracking for order ${orderId}:`, error);
+    }
+    
+    // Calculate progress
+    const progress = this.calculateOrderProgress(order);
+    
+    // Get driver rating if available
+    let driverRating = null;
+    if (order.driver_id && order.status === 'delivered') {
+      try {
+        const ratings = await this.messagingService.getDriverRatings(order.driver_id);
+        if (ratings.length > 0) {
+          const avgRating = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length;
+          driverRating = {
+            average: parseFloat(avgRating.toFixed(2)),
+            count: ratings.length,
+            userRating: order.customer_rating
+          };
+        }
+      } catch (error) {
+        this.logger.warn(`Could not fetch driver ratings:`, error);
+      }
+    }
+    
+    // Format the response
+    const formattedOrder = this.formatOrderResponse(order);
+    
+    return {
+      ...formattedOrder,
+      progress,
+      messages: messages.map(msg => ({
+        id: msg.id,
+        senderId: msg.sender_id,
+        senderType: msg.sender_type,
+        senderName: msg.senderName,
+        content: msg.content,
+        messageType: msg.message_type,
+        readStatus: msg.read_status === 1,
+        createdAt: msg.created_at,
+        metadata: msg.metadata
+      })),
+      currentLocation,
+      driverRating,
+      unreadCount: {
+        customer: order.unread_customer_messages,
+        driver: order.unread_driver_messages
+      }
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error(`Failed to get order ${orderId}:`, errorMessage);
+    throw error;
+  }
+}
+
+/**
+ * Calculate order progress percentage and steps
+ */
+private calculateOrderProgress(order: any): {
+  steps: Array<{ status: string; label: string; completed: boolean; timestamp?: Date }>;
+  currentStatus: string;
+  progressPercentage: number;
+  nextStep?: string;
+} {
+  const statusFlow = [
+    { status: 'pending', label: 'Order Placed' },
+    { status: 'driver_assigned', label: 'Driver Assigned' },
+    { status: 'route_to_pickup', label: 'Route to Pickup' },
+    { status: 'in_transit', label: 'In Transit' },
+    { status: 'delivered', label: 'Delivered' }
+  ];
+  
+  const currentIndex = statusFlow.findIndex(s => s.status === order.status);
+  
+  const steps = statusFlow.map((step, index) => ({
+    ...step,
+    completed: index <= currentIndex,
+    timestamp: this.getStatusTimestamp(order, step.status)
+  }));
+  
+  const progressPercentage = currentIndex >= 0 
+    ? Math.round((currentIndex / (statusFlow.length - 1)) * 100) 
+    : 0;
+  
+  const nextStep = currentIndex >= 0 && currentIndex < statusFlow.length - 1
+    ? statusFlow[currentIndex + 1].status
+    : undefined;
+  
+  return {
+    steps,
+    currentStatus: order.status,
+    progressPercentage,
+    nextStep
+  };
+}
+
+/**
+ * Get timestamp for a specific status from order
+ */
+private getStatusTimestamp(order: any, status: string): Date | undefined {
+  switch (status) {
+    case 'pending':
+      return order.created_at;
+    case 'driver_assigned':
+      return order.driver_accepted_at || undefined;
+    case 'route_to_pickup':
+      return order.delivery_started_at || undefined;
+    case 'in_transit':
+      return order.delivery_started_at || undefined; // You might want a separate field
+    case 'delivered':
+      return order.delivery_completed_at || undefined;
+    default:
+      return undefined;
   }
 }
 
@@ -5771,34 +5959,167 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
    * Notify driver about new order assignment
    */
   private async notifyDriverAssignment(order: Order): Promise<void> {
+    try {
+      if (!order.driver_id) return;
+      
+      await this.notificationService.sendOrderNotification(
+        order.driver_id,
+        order.order_number,
+        'order_assigned',
+        {
+          orderNumber: order.order_number,
+          orderId: order.id,
+          customerName: order.customer_name,
+          pickupAddress: order.pickup_address,
+          deliveryAddress: order.delivery_address,
+          estimatedPrice: order.estimated_price_usd,
+          packageWeight: order.weight_kg,
+          packageVolume: order.volume_m3,
+          estimatedDuration: order.estimated_duration_minutes,
+          timestamp: new Date().toISOString()
+        }
+      );
+      
+      this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
+    } catch (error) {
+      this.logger.warn('Failed to notify driver:', error);
+    }
+  }
+
+  /**
+ * Driver accepts an order
+ */
+async acceptOrder(orderId: string, driverId: string): Promise<any> {
   try {
-    if (!order.driver_id) return;
+    this.logger.info(`Processing order acceptance: ${orderId} by driver ${driverId}`);
     
-    // Prepare order data for driver
-    const driverNotificationData = {
-      orderId: order.id,
-      orderNumber: order.order_number,
-      customerName: order.customer_name,
-      pickupAddress: order.pickup_address,
-      deliveryAddress: order.delivery_address,
-      estimatedPrice: order.estimated_price_usd,
-      packageWeight: order.weight_kg,
-      packageVolume: order.volume_m3,
-      estimatedDuration: order.estimated_duration_minutes,
-      requiresAction: true,
-      actions: ['accept', 'reject'],
-      timestamp: new Date().toISOString()
-    };
+    // Find the order
+    const order = await this.orderRepository.findById(orderId);
     
-    // Use the dedicated driver notification method
-    await this.notificationService.sendDriverOrderNotification(
-      order.driver_id,
-      driverNotificationData
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Verify this driver is assigned to the order
+    if (order.driver_id !== driverId) {
+      throw new Error('This order is not assigned to you');
+    }
+    
+    // Check if already accepted
+    if (order.driver_accepted) {
+      throw new Error('Order already accepted');
+    }
+    
+    // Check if order is still pending
+    if (order.status !== 'pending') {
+      throw new Error(`Cannot accept order with status: ${order.status}`);
+    }
+    
+    // Update the order
+    const updatedOrder = await this.orderRepository.update(orderId, {
+      status: 'driver_assigned',
+      driver_accepted: true,
+      driver_accepted_at: new Date()
+    });
+    
+    // Process payment (deduct from customer, add to driver pending)
+    try {
+      await this.balanceService.processOrderPayment(
+        order.customer_id,
+        driverId,
+        order.estimated_price_usd,
+        orderId
+      );
+      this.logger.info(`Payment processed for order ${orderId}`);
+    } catch (paymentError) {
+      this.logger.error(`Payment processing failed for order ${orderId}:`, paymentError);
+      // Continue anyway - order is accepted
+    }
+    
+    // Notify customer
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      orderId,
+      'order_accepted',
+      {
+        message: 'Driver has accepted your order',
+        driverName: order.driver_name,
+        estimatedArrival: order.estimated_duration_minutes,
+        orderNumber: order.order_number,
+        acceptedAt: new Date().toISOString()
+      }
     );
     
-    this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
-  } catch (error) {
-    this.logger.warn('Failed to notify driver:', error);
+    this.logger.info(`Order ${orderId} accepted successfully by driver ${driverId}`);
+    
+    return {
+      success: true,
+      order: this.formatOrderResponse(updatedOrder!),
+      message: 'Order accepted successfully'
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Accept order failed:', errorMessage);
+    throw error;
+  }
+}
+
+/**
+ * Driver rejects an order
+ */
+async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
+  try {
+    this.logger.info(`Processing order rejection: ${orderId} by driver ${driverId}`);
+    
+    // Find the order
+    const order = await this.orderRepository.findById(orderId);
+    
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Verify this driver is assigned to the order
+    if (order.driver_id !== driverId) {
+      throw new Error('This order is not assigned to you');
+    }
+    
+    // Check if already accepted/rejected
+    if (order.driver_accepted) {
+      throw new Error('Order already accepted - cannot reject');
+    }
+    
+    // Update the order status to cancelled
+    const updatedOrder = await this.orderRepository.update(orderId, {
+      status: 'cancelled',
+      notes: `Rejected by driver: ${reason || 'No reason provided'}`
+    });
+    
+    // Notify customer
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      orderId,
+      'order_rejected',
+      {
+        message: 'Driver could not accept your order',
+        reason: reason || 'Driver unavailable',
+        orderNumber: order.order_number,
+        rejectedAt: new Date().toISOString()
+      }
+    );
+    
+    this.logger.info(`Order ${orderId} rejected by driver ${driverId}: ${reason || 'No reason'}`);
+    
+    return {
+      success: true,
+      order: this.formatOrderResponse(updatedOrder!),
+      message: 'Order rejected successfully'
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Reject order failed:', errorMessage);
+    throw error;
   }
 }
 
@@ -9450,7 +9771,6 @@ export const validationUtil = new ValidationUtil();
 `src\utils\websocket.manager.ts`:
 
 ```ts
-// utils/websocket.manager.ts
 import { Server } from 'http';
 import { WebSocketUtil } from './websocket.util';
 import { Logger } from './logger';
@@ -9460,6 +9780,7 @@ class WebSocketManager {
   private _wss: WebSocketUtil | null = null;
   private logger: Logger;
   private server: Server | null = null;
+  private initPromise: Promise<WebSocketUtil> | null = null;
 
   private constructor() {
     this.logger = new Logger('WebSocketManager');
@@ -9477,20 +9798,57 @@ class WebSocketManager {
       this.server = server;
       this._wss = new WebSocketUtil(server);
       this.logger.info('WebSocketManager: WebSocket server initialized');
+      
+      // Store the WebSocket instance
+      (global as any).__webSocketInstance = this._wss;
     }
     return this._wss;
   }
 
-  public getWebSocket(): WebSocketUtil {
+  public getWebSocket(): WebSocketUtil | null {
     if (!this._wss) {
-      this.logger.warn('WebSocketManager: WebSocket not initialized yet, returning null');
-      return null as any; // This will be caught by the services
+      // Try to get from global
+      if ((global as any).__webSocketInstance) {
+        this._wss = (global as any).__webSocketInstance;
+        this.logger.info('WebSocketManager: Retrieved WebSocket from global');
+      } else {
+        this.logger.warn('WebSocketManager: WebSocket not initialized yet');
+      }
     }
     return this._wss;
+  }
+
+  public async waitForWebSocket(timeoutMs: number = 10000): Promise<WebSocketUtil> {
+    // If already initialized, return it with type assertion
+    if (this._wss) {
+      return this._wss as WebSocketUtil; // Type assertion here
+    }
+
+    const startTime = Date.now();
+    
+    while (!this._wss && Date.now() - startTime < timeoutMs) {
+      // Check global
+      if ((global as any).__webSocketInstance) {
+        this._wss = (global as any).__webSocketInstance;
+        this.logger.info('WebSocketManager: Found WebSocket in global after wait');
+        return this._wss as WebSocketUtil; // Type assertion here
+      }
+      
+      this.logger.debug('WebSocketManager: Waiting for WebSocket initialization...');
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    // If we get here and still no WebSocket, throw error
+    if (!this._wss) {
+      throw new Error(`WebSocket not available after ${timeoutMs}ms`);
+    }
+    
+    // Type assertion for the final return
+    return this._wss as WebSocketUtil;
   }
 
   public isInitialized(): boolean {
-    return this._wss !== null;
+    return this._wss !== null || (global as any).__webSocketInstance !== undefined;
   }
 }
 
@@ -9788,6 +10146,364 @@ export class WebSocketUtil {
 // export const webSocketUtil = new WebSocketUtil();
 ```
 
+`test-order-flow.ps1`:
+
+```ps1
+# PowerShell script for testing order flow
+$BASE_URL = "http://localhost:3004"
+$SERVICE_SECRET = "shared_service_secret_key_1234567890"
+
+# Colors for output
+$GREEN = "Green"
+$RED = "Red"
+$YELLOW = "Yellow"
+$CYAN = "Cyan"
+
+function Write-ColorOutput($color, $message) {
+    Write-Host $message -ForegroundColor $color
+}
+
+function Show-Menu {
+    Clear-Host
+    Write-ColorOutput $CYAN "========================================"
+    Write-ColorOutput $CYAN "   ORDER SERVICE TEST CLI - POWERSHELL  "
+    Write-ColorOutput $CYAN "========================================"
+    Write-Host ""
+    Write-Host "1. Create a new order"
+    Write-Host "2. Accept an order (as driver)"
+    Write-Host "3. Reject an order (as driver)"
+    Write-Host "4. Get order details"
+    Write-Host "5. Check WebSocket status"
+    Write-Host "6. List all orders for driver"
+    Write-Host "7. List all orders for customer"
+    Write-Host "8. Exit"
+    Write-Host ""
+}
+
+function Create-Order {
+    Write-ColorOutput $CYAN "`n📦 Creating test order..."
+    
+    $orderId = "ORD-TEST-$([DateTimeOffset]::Now.ToUnixTimeMilliseconds())"
+    
+    $orderData = @{
+        orderId = $orderId
+        customerInfo = @{
+            id = "1d25b961-0870-4f92-991d-6f966f595658"
+            name = "Makolas Jones"
+            email = "mwale22@gmail.com"
+            phone = "0963884441"
+        }
+        driverInfo = @{
+            id = "1358764d-1e0b-44bd-a735-ca0fc71732f1"
+            name = "Lieson Mwale"
+            phone = "0963884441"
+            email = "lieson22@gmail.com"
+            rating = 4.8
+        }
+        locations = @{
+            pickup = @{
+                address = "Zagorodnyi prospekt, 24, Sankt-Peterburg"
+                coordinates = @{
+                    lat = 59.925209
+                    lng = 30.341745
+                }
+            }
+            delivery = @{
+                address = "ulitsa Esenina, 3, Sankt-Peterburg"
+                coordinates = @{
+                    lat = 60.033350
+                    lng = 30.329644
+                }
+            }
+            distance = @{
+                km = 11.287
+            }
+        }
+        packageDetails = @{
+            category = "furniture"
+            weight = @{
+                value = 2.5
+                unit = "kg"
+            }
+            volume = @{
+                value = 1.4
+                unit = "m³"
+            }
+            urgency = "normal"
+        }
+        pricing = @{
+            estimatedPrice = @{
+                usd = 6.84
+                rub = 615.44
+            }
+            currency = "USD"
+        }
+        timing = @{
+            estimatedDuration = @{
+                minutes = 15
+            }
+        }
+    }
+
+    $jsonBody = $orderData | ConvertTo-Json -Depth 10
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/orders/receive" `
+            -Method Post `
+            -Headers @{
+                "Content-Type" = "application/json"
+                "x-service-secret" = $SERVICE_SECRET
+            } `
+            -Body $jsonBody
+        
+        Write-ColorOutput $GREEN "✅ Order created successfully!"
+        Write-Host "Order ID: $($response.data.id)"
+        Write-Host "Order Number: $($response.data.order_number)"
+        Write-Host "Status: $($response.data.status)"
+        
+        return $response.data
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to create order:"
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $responseBody = $reader.ReadToEnd() | ConvertFrom-Json
+            Write-Host $responseBody.message
+        } else {
+            Write-Host $_.Exception.Message
+        }
+        return $null
+    }
+}
+
+function Accept-Order {
+    Write-ColorOutput $CYAN "`n✅ Accepting order..."
+    
+    $orderId = Read-Host "Enter order ID"
+    $driverToken = Read-Host "Enter driver JWT token"
+    
+    if ([string]::IsNullOrEmpty($driverToken)) {
+        Write-ColorOutput $RED "❌ Driver token is required"
+        return
+    }
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/orders/$orderId/accept" `
+            -Method Post `
+            -Headers @{
+                "Authorization" = "Bearer $driverToken"
+                "Content-Type" = "application/json"
+            } `
+            -Body "{}"
+        
+        Write-ColorOutput $GREEN "✅ Order accepted successfully!"
+        Write-Host "Status: $($response.data.status)"
+        Write-Host "Message: $($response.message)"
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to accept order:"
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $responseBody = $reader.ReadToEnd() | ConvertFrom-Json
+            Write-Host $responseBody.error
+        } else {
+            Write-Host $_.Exception.Message
+        }
+    }
+}
+
+function Reject-Order {
+    Write-ColorOutput $CYAN "`n❌ Rejecting order..."
+    
+    $orderId = Read-Host "Enter order ID"
+    $driverToken = Read-Host "Enter driver JWT token"
+    $reason = Read-Host "Reason for rejection (optional)"
+    
+    if ([string]::IsNullOrEmpty($driverToken)) {
+        Write-ColorOutput $RED "❌ Driver token is required"
+        return
+    }
+    
+    $body = @{
+        reason = if ($reason) { $reason } else { "Driver unavailable" }
+    } | ConvertTo-Json
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/orders/$orderId/reject" `
+            -Method Post `
+            -Headers @{
+                "Authorization" = "Bearer $driverToken"
+                "Content-Type" = "application/json"
+            } `
+            -Body $body
+        
+        Write-ColorOutput $GREEN "✅ Order rejected successfully!"
+        Write-Host "Status: $($response.data.status)"
+        Write-Host "Message: $($response.message)"
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to reject order:"
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $responseBody = $reader.ReadToEnd() | ConvertFrom-Json
+            Write-Host $responseBody.error
+        } else {
+            Write-Host $_.Exception.Message
+        }
+    }
+}
+
+function Get-OrderDetails {
+    Write-ColorOutput $CYAN "`n🔍 Getting order details..."
+    
+    $orderId = Read-Host "Enter order ID"
+    $token = Read-Host "Enter JWT token (customer or driver)"
+    
+    if ([string]::IsNullOrEmpty($token)) {
+        Write-ColorOutput $RED "❌ Token is required"
+        return
+    }
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/orders/$orderId" `
+            -Method Get `
+            -Headers @{
+                "Authorization" = "Bearer $token"
+            }
+        
+        Write-ColorOutput $GREEN "✅ Order retrieved successfully!"
+        Write-Host "`nOrder Details:"
+        Write-Host "  ID: $($response.data.id)"
+        Write-Host "  Number: $($response.data.order_number)"
+        Write-Host "  Status: $($response.data.status)"
+        Write-Host "  Driver Accepted: $($response.data.driver_info.accepted)"
+        if ($response.data.driver_info.accepted_at) {
+            Write-Host "  Accepted At: $($response.data.driver_info.accepted_at)"
+        }
+        Write-Host "  Customer: $($response.data.customer_info.name)"
+        Write-Host "  Driver: $($response.data.driver_info.name)"
+        Write-Host "  Price: `$$($response.data.pricing.estimated_usd)"
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to get order:"
+        if ($_.Exception.Response) {
+            $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+            $responseBody = $reader.ReadToEnd() | ConvertFrom-Json
+            Write-Host $responseBody.error
+        } else {
+            Write-Host $_.Exception.Message
+        }
+    }
+}
+
+function Check-WebSocketStatus {
+    Write-ColorOutput $CYAN "`n📡 Checking WebSocket status..."
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/test/websocket" -Method Get
+        
+        Write-ColorOutput $GREEN "✅ WebSocket Status:"
+        Write-Host "  WebSocket Exists: $($response.data.wssExists)"
+        Write-Host "  Initialized: $($response.data.isInitialized)"
+        Write-Host "  Notification Service Ready: $($response.data.notificationServiceReady)"
+        Write-Host "  Timestamp: $($response.data.timestamp)"
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to check WebSocket status: $($_.Exception.Message)"
+    }
+}
+
+function Get-DriverOrders {
+    Write-ColorOutput $CYAN "`n🚚 Getting driver orders..."
+    
+    $driverId = Read-Host "Enter driver ID"
+    $token = Read-Host "Enter driver JWT token"
+    
+    if ([string]::IsNullOrEmpty($token)) {
+        Write-ColorOutput $RED "❌ Token is required"
+        return
+    }
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/driver/orders?driverId=$driverId" `
+            -Method Get `
+            -Headers @{
+                "Authorization" = "Bearer $token"
+            }
+        
+        Write-ColorOutput $GREEN "✅ Orders retrieved successfully!"
+        if ($response.orders.Count -eq 0) {
+            Write-Host "No orders found for this driver"
+        } else {
+            foreach ($order in $response.orders) {
+                Write-Host "`nOrder: $($order.order_number) - Status: $($order.status)"
+            }
+        }
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to get driver orders: $($_.Exception.Message)"
+    }
+}
+
+function Get-CustomerOrders {
+    Write-ColorOutput $CYAN "`n👤 Getting customer orders..."
+    
+    $customerId = Read-Host "Enter customer ID"
+    $token = Read-Host "Enter customer JWT token"
+    
+    if ([string]::IsNullOrEmpty($token)) {
+        Write-ColorOutput $RED "❌ Token is required"
+        return
+    }
+    
+    try {
+        $response = Invoke-RestMethod -Uri "$BASE_URL/api/customer/orders?customerId=$customerId" `
+            -Method Get `
+            -Headers @{
+                "Authorization" = "Bearer $token"
+            }
+        
+        Write-ColorOutput $GREEN "✅ Orders retrieved successfully!"
+        if ($response.orders.Count -eq 0) {
+            Write-Host "No orders found for this customer"
+        } else {
+            foreach ($order in $response.orders) {
+                Write-Host "`nOrder: $($order.order_number) - Status: $($order.status) - Price: `$$($order.estimated_price_usd)"
+            }
+        }
+    }
+    catch {
+        Write-ColorOutput $RED "❌ Failed to get customer orders: $($_.Exception.Message)"
+    }
+}
+
+# Main loop
+do {
+    Show-Menu
+    $choice = Read-Host "Select option (1-8)"
+    
+    switch ($choice) {
+        "1" { Create-Order }
+        "2" { Accept-Order }
+        "3" { Reject-Order }
+        "4" { Get-OrderDetails }
+        "5" { Check-WebSocketStatus }
+        "6" { Get-DriverOrders }
+        "7" { Get-CustomerOrders }
+        "8" { 
+            Write-ColorOutput $YELLOW "Exiting..."
+            break
+        }
+        default { Write-ColorOutput $RED "Invalid option" }
+    }
+    
+    if ($choice -ne "8") {
+        Write-Host ""
+        Read-Host "Press Enter to continue"
+    }
+} while ($choice -ne "8")
+```
+
 `tsconfig.json`:
 
 ```json
@@ -9836,4 +10552,101 @@ export class WebSocketUtil {
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.spec.ts"]
 }
+```
+
+`websocket-test-client.js`:
+
+```js
+const WebSocket = require('ws');
+const readline = require('readline');
+
+const WS_URL = 'ws://localhost:3004/ws'; // or 8080 if using standalone
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+console.log('🔌 WebSocket Test Client');
+console.log('=======================\n');
+
+rl.question('Enter user ID to authenticate as: ', (userId) => {
+  rl.question('Enter user type (customer/driver): ', (userType) => {
+    
+    console.log(`\nConnecting to ${WS_URL}...`);
+    const ws = new WebSocket(WS_URL);
+
+    ws.on('open', () => {
+      console.log('✅ Connected to WebSocket server');
+      
+      // Authenticate
+      ws.send(JSON.stringify({
+        type: 'authenticate',
+        data: {
+          userId: userId,
+          userType: userType,
+          token: 'test-token' // In production, use real JWT
+        }
+      }));
+      
+      console.log(`\n🔐 Authenticating as ${userType}: ${userId}`);
+    });
+
+    ws.on('message', (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+        console.log('\n📩 Received message:');
+        console.log('Type:', message.type);
+        console.log('Data:', JSON.stringify(message.data, null, 2));
+        console.log('Timestamp:', new Date(message.timestamp).toLocaleTimeString());
+        
+        // Special handling for different message types
+        if (message.type === 'new_order_available') {
+          console.log('\n🚚 NEW ORDER FOR DRIVER!');
+          console.log('Action required: Accept or Reject');
+        } else if (message.type === 'order_accepted') {
+          console.log('\n✅ ORDER ACCEPTED!');
+        } else if (message.type === 'order_rejected') {
+          console.log('\n❌ ORDER REJECTED!');
+        } else if (message.type === 'notification') {
+          console.log('\n🔔 NOTIFICATION!');
+        }
+        
+      } catch (error) {
+        console.log('\n📩 Raw message:', data.toString());
+      }
+    });
+
+    ws.on('error', (error) => {
+      console.error('❌ WebSocket error:', error.message);
+    });
+
+    ws.on('close', () => {
+      console.log('🔌 Disconnected from WebSocket server');
+    });
+
+    // Keep connection alive with ping
+    const interval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping', data: {} }));
+      }
+    }, 30000);
+
+    console.log('\n📝 Listening for messages... (Press Ctrl+C to exit)');
+    
+    // Handle exit
+    process.on('SIGINT', () => {
+      clearInterval(interval);
+      ws.close();
+      rl.close();
+      process.exit();
+    });
+  });
+});
+
+//node websocket-test-client.js
+
+//# Using the test script
+//node test-order-flow.js
+//# Choose option 1 to create an order
 ```
