@@ -21,34 +21,37 @@ export class OrderService {
   private orderRepository: OrderRepository;
   private trackingRepository: TrackingRepository;
 
-  constructor(
-    websocketUtil: WebSocketUtil,
-    notificationService?: NotificationService,
-    customOrderRepository?: OrderRepository,
-    customTrackingRepository?: TrackingRepository
-  ) {
-    this.logger = new Logger('OrderService');
-  
-    this.logger.info('OrderService constructor', {
-      hasWebSocket: !!websocketUtil,
-      websocketType: typeof websocketUtil
-    });
+  // Update the constructor to accept nullable WebSocket
+constructor(
+  websocketUtil: WebSocketUtil | null, // Allow null
+  notificationService?: NotificationService,
+  customOrderRepository?: OrderRepository,
+  customTrackingRepository?: TrackingRepository
+) {
+  this.logger = new Logger('OrderService');
 
-    this.websocketUtil = websocketUtil as WebSocketUtil; // Cast, but handle null checks later
+  this.logger.info('OrderService constructor', {
+    hasWebSocket: !!websocketUtil,
+    websocketType: typeof websocketUtil
+  });
 
-    if (notificationService) {
-      this.notificationService = notificationService;
-      this.logger.info('Using provided notification service');
-    } else {
-      this.logger.info('Creating new notification service');
-      this.notificationService = new NotificationService(websocketUtil);
-    }
-    this.messagingService = new MessagingService();
-    this.balanceService = new BalanceService();
-    this.capacityOptimizationService = new CapacityOptimizationService();
-    this.orderRepository = customOrderRepository || orderRepository;
-    this.trackingRepository = customTrackingRepository || trackingRepository;
+  // Store websocketUtil (may be null)
+  this.websocketUtil = websocketUtil as WebSocketUtil; // We'll handle null checks in methods
+
+  if (notificationService) {
+    this.notificationService = notificationService;
+    this.logger.info('Using provided notification service');
+  } else {
+    this.logger.info('Creating new notification service');
+    this.notificationService = new NotificationService(websocketUtil);
   }
+  
+  this.messagingService = new MessagingService();
+  this.balanceService = new BalanceService();
+  this.capacityOptimizationService = new CapacityOptimizationService();
+  this.orderRepository = customOrderRepository || orderRepository;
+  this.trackingRepository = customTrackingRepository || trackingRepository;
+}
 
   /** 
    * TRANSFORMATION PROCEDURE:
@@ -122,11 +125,11 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
       order_number: order_number,
       customer_id: requestData.customerInfo.id,
       driver_id: requestData.driverInfo.id,
-      
+      status: 'pending',
       customer_name: requestData.customerInfo.name || 'Unknown Customer',
       customer_email: requestData.customerInfo.email || `${requestData.customerInfo.id}@example.com`,
       customer_phone: requestData.customerInfo.phone || '0000000000',
-      
+      driver_accepted_at: null,
       pickup_address: requestData.locations.pickup.address,
       pickup_latitude: requestData.locations.pickup.coordinates?.lat || 0,
       pickup_longitude: requestData.locations.pickup.coordinates?.lng || 0,
@@ -300,6 +303,159 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
       recommendations: ['Check server logs for details'],
       timestamp: new Date().toISOString()
     };
+  }
+}
+
+  /**
+ * Get order by ID with full details including progress and messages
+ */
+async getOrder(orderId: string): Promise<any> {
+  try {
+    this.logger.info(`Getting order details: ${orderId}`);
+    
+    // Find the order
+    const order = await this.orderRepository.findById(orderId);
+    
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Get order messages
+    let messages: any[] = [];
+    try {
+      messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
+    } catch (error) {
+      this.logger.warn(`Could not fetch messages for order ${orderId}:`, error);
+    }
+    
+    // Get latest tracking location
+    let currentLocation = null;
+    try {
+      const latestLocation = await this.trackingRepository.getLatestLocation(orderId);
+      if (latestLocation) {
+        currentLocation = {
+          latitude: latestLocation.latitude,
+          longitude: latestLocation.longitude,
+          lastUpdated: latestLocation.timestamp,
+          speed: latestLocation.speed,
+          bearing: latestLocation.bearing
+        };
+      }
+    } catch (error) {
+      this.logger.warn(`Could not fetch tracking for order ${orderId}:`, error);
+    }
+    
+    // Calculate progress
+    const progress = this.calculateOrderProgress(order);
+    
+    // Get driver rating if available
+    let driverRating = null;
+    if (order.driver_id && order.status === 'delivered') {
+      try {
+        const ratings = await this.messagingService.getDriverRatings(order.driver_id);
+        if (ratings.length > 0) {
+          const avgRating = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length;
+          driverRating = {
+            average: parseFloat(avgRating.toFixed(2)),
+            count: ratings.length,
+            userRating: order.customer_rating
+          };
+        }
+      } catch (error) {
+        this.logger.warn(`Could not fetch driver ratings:`, error);
+      }
+    }
+    
+    // Format the response
+    const formattedOrder = this.formatOrderResponse(order);
+    
+    return {
+      ...formattedOrder,
+      progress,
+      messages: messages.map(msg => ({
+        id: msg.id,
+        senderId: msg.sender_id,
+        senderType: msg.sender_type,
+        senderName: msg.senderName,
+        content: msg.content,
+        messageType: msg.message_type,
+        readStatus: msg.read_status === 1,
+        createdAt: msg.created_at,
+        metadata: msg.metadata
+      })),
+      currentLocation,
+      driverRating,
+      unreadCount: {
+        customer: order.unread_customer_messages,
+        driver: order.unread_driver_messages
+      }
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error(`Failed to get order ${orderId}:`, errorMessage);
+    throw error;
+  }
+}
+
+/**
+ * Calculate order progress percentage and steps
+ */
+private calculateOrderProgress(order: any): {
+  steps: Array<{ status: string; label: string; completed: boolean; timestamp?: Date }>;
+  currentStatus: string;
+  progressPercentage: number;
+  nextStep?: string;
+} {
+  const statusFlow = [
+    { status: 'pending', label: 'Order Placed' },
+    { status: 'driver_assigned', label: 'Driver Assigned' },
+    { status: 'route_to_pickup', label: 'Route to Pickup' },
+    { status: 'in_transit', label: 'In Transit' },
+    { status: 'delivered', label: 'Delivered' }
+  ];
+  
+  const currentIndex = statusFlow.findIndex(s => s.status === order.status);
+  
+  const steps = statusFlow.map((step, index) => ({
+    ...step,
+    completed: index <= currentIndex,
+    timestamp: this.getStatusTimestamp(order, step.status)
+  }));
+  
+  const progressPercentage = currentIndex >= 0 
+    ? Math.round((currentIndex / (statusFlow.length - 1)) * 100) 
+    : 0;
+  
+  const nextStep = currentIndex >= 0 && currentIndex < statusFlow.length - 1
+    ? statusFlow[currentIndex + 1].status
+    : undefined;
+  
+  return {
+    steps,
+    currentStatus: order.status,
+    progressPercentage,
+    nextStep
+  };
+}
+
+/**
+ * Get timestamp for a specific status from order
+ */
+private getStatusTimestamp(order: any, status: string): Date | undefined {
+  switch (status) {
+    case 'pending':
+      return order.created_at;
+    case 'driver_assigned':
+      return order.driver_accepted_at || undefined;
+    case 'route_to_pickup':
+      return order.delivery_started_at || undefined;
+    case 'in_transit':
+      return order.delivery_started_at || undefined; // You might want a separate field
+    case 'delivered':
+      return order.delivery_completed_at || undefined;
+    default:
+      return undefined;
   }
 }
 
@@ -494,34 +650,167 @@ async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<
    * Notify driver about new order assignment
    */
   private async notifyDriverAssignment(order: Order): Promise<void> {
+    try {
+      if (!order.driver_id) return;
+      
+      await this.notificationService.sendOrderNotification(
+        order.driver_id,
+        order.order_number,
+        'order_assigned',
+        {
+          orderNumber: order.order_number,
+          orderId: order.id,
+          customerName: order.customer_name,
+          pickupAddress: order.pickup_address,
+          deliveryAddress: order.delivery_address,
+          estimatedPrice: order.estimated_price_usd,
+          packageWeight: order.weight_kg,
+          packageVolume: order.volume_m3,
+          estimatedDuration: order.estimated_duration_minutes,
+          timestamp: new Date().toISOString()
+        }
+      );
+      
+      this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
+    } catch (error) {
+      this.logger.warn('Failed to notify driver:', error);
+    }
+  }
+
+  /**
+ * Driver accepts an order
+ */
+async acceptOrder(orderId: string, driverId: string): Promise<any> {
   try {
-    if (!order.driver_id) return;
+    this.logger.info(`Processing order acceptance: ${orderId} by driver ${driverId}`);
     
-    // Prepare order data for driver
-    const driverNotificationData = {
-      orderId: order.id,
-      orderNumber: order.order_number,
-      customerName: order.customer_name,
-      pickupAddress: order.pickup_address,
-      deliveryAddress: order.delivery_address,
-      estimatedPrice: order.estimated_price_usd,
-      packageWeight: order.weight_kg,
-      packageVolume: order.volume_m3,
-      estimatedDuration: order.estimated_duration_minutes,
-      requiresAction: true,
-      actions: ['accept', 'reject'],
-      timestamp: new Date().toISOString()
-    };
+    // Find the order
+    const order = await this.orderRepository.findById(orderId);
     
-    // Use the dedicated driver notification method
-    await this.notificationService.sendDriverOrderNotification(
-      order.driver_id,
-      driverNotificationData
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Verify this driver is assigned to the order
+    if (order.driver_id !== driverId) {
+      throw new Error('This order is not assigned to you');
+    }
+    
+    // Check if already accepted
+    if (order.driver_accepted) {
+      throw new Error('Order already accepted');
+    }
+    
+    // Check if order is still pending
+    if (order.status !== 'pending') {
+      throw new Error(`Cannot accept order with status: ${order.status}`);
+    }
+    
+    // Update the order
+    const updatedOrder = await this.orderRepository.update(orderId, {
+      status: 'driver_assigned',
+      driver_accepted: true,
+      driver_accepted_at: new Date()
+    });
+    
+    // Process payment (deduct from customer, add to driver pending)
+    try {
+      await this.balanceService.processOrderPayment(
+        order.customer_id,
+        driverId,
+        order.estimated_price_usd,
+        orderId
+      );
+      this.logger.info(`Payment processed for order ${orderId}`);
+    } catch (paymentError) {
+      this.logger.error(`Payment processing failed for order ${orderId}:`, paymentError);
+      // Continue anyway - order is accepted
+    }
+    
+    // Notify customer
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      orderId,
+      'order_accepted',
+      {
+        message: 'Driver has accepted your order',
+        driverName: order.driver_name,
+        estimatedArrival: order.estimated_duration_minutes,
+        orderNumber: order.order_number,
+        acceptedAt: new Date().toISOString()
+      }
     );
     
-    this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
-  } catch (error) {
-    this.logger.warn('Failed to notify driver:', error);
+    this.logger.info(`Order ${orderId} accepted successfully by driver ${driverId}`);
+    
+    return {
+      success: true,
+      order: this.formatOrderResponse(updatedOrder!),
+      message: 'Order accepted successfully'
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Accept order failed:', errorMessage);
+    throw error;
+  }
+}
+
+/**
+ * Driver rejects an order
+ */
+async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
+  try {
+    this.logger.info(`Processing order rejection: ${orderId} by driver ${driverId}`);
+    
+    // Find the order
+    const order = await this.orderRepository.findById(orderId);
+    
+    if (!order) {
+      throw new Error('Order not found');
+    }
+    
+    // Verify this driver is assigned to the order
+    if (order.driver_id !== driverId) {
+      throw new Error('This order is not assigned to you');
+    }
+    
+    // Check if already accepted/rejected
+    if (order.driver_accepted) {
+      throw new Error('Order already accepted - cannot reject');
+    }
+    
+    // Update the order status to cancelled
+    const updatedOrder = await this.orderRepository.update(orderId, {
+      status: 'cancelled',
+      notes: `Rejected by driver: ${reason || 'No reason provided'}`
+    });
+    
+    // Notify customer
+    await this.notificationService.sendOrderNotification(
+      order.customer_id,
+      orderId,
+      'order_rejected',
+      {
+        message: 'Driver could not accept your order',
+        reason: reason || 'Driver unavailable',
+        orderNumber: order.order_number,
+        rejectedAt: new Date().toISOString()
+      }
+    );
+    
+    this.logger.info(`Order ${orderId} rejected by driver ${driverId}: ${reason || 'No reason'}`);
+    
+    return {
+      success: true,
+      order: this.formatOrderResponse(updatedOrder!),
+      message: 'Order rejected successfully'
+    };
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Reject order failed:', errorMessage);
+    throw error;
   }
 }
 

@@ -46,9 +46,9 @@ class WebSocketManager {
   }
 
   public async waitForWebSocket(timeoutMs: number = 10000): Promise<WebSocketUtil> {
-    // If already initialized, return it (with type assertion since we know it's not null)
+    // If already initialized, return it with type assertion
     if (this._wss) {
-      return this._wss;
+      return this._wss as WebSocketUtil; // Type assertion here
     }
 
     const startTime = Date.now();
@@ -58,7 +58,7 @@ class WebSocketManager {
       if ((global as any).__webSocketInstance) {
         this._wss = (global as any).__webSocketInstance;
         this.logger.info('WebSocketManager: Found WebSocket in global after wait');
-        return this._wss; // TypeScript now knows this is WebSocketUtil
+        return this._wss as WebSocketUtil; // Type assertion here
       }
       
       this.logger.debug('WebSocketManager: Waiting for WebSocket initialization...');
@@ -70,7 +70,8 @@ class WebSocketManager {
       throw new Error(`WebSocket not available after ${timeoutMs}ms`);
     }
     
-    return this._wss;
+    // Type assertion for the final return
+    return this._wss as WebSocketUtil;
   }
 
   public isInitialized(): boolean {
