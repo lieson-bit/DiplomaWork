@@ -13,23 +13,37 @@ const PORT = process.env.PORT || 3004;
 // Create HTTP server
 const server = createServer(app);
 
-// Initialize WebSocket server through the manager
-export const wss = webSocketManager.initialize(server);
+// STEP 1: Initialize WebSocket FIRST before anything else that depends on it
+logger.info('🚀 Initializing WebSocket server...');
+const wss = webSocketManager.initialize(server);
+logger.info(`🔌 WebSocket initialized: ${webSocketManager.isInitialized() ? '✅' : '❌'}`);
 
-// 3. NOW initialize services that depend on WebSocket
+// STEP 2: Import services that depend on WebSocket (after WebSocket is initialized)
 import { OrderRepository } from './repositories/order.repository';
 import { TrackingRepository } from './repositories/tracking.repository';
 import { NotificationService } from './services/notification.service';
 import { OrderService } from './services/order.service';
 
+// STEP 3: Create repositories
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
-const notificationService = new NotificationService(wss);
-const orderService = new OrderService(
-  wss, notificationService, orderRepository, trackingRepository
-);
 
-export { server, orderService };
+// STEP 4: Create notification service with the initialized WebSocket
+// This ensures notification service has WebSocket from the start
+const notificationService = new NotificationService(wss);
+logger.info('📨 NotificationService created with WebSocket');
+
+// STEP 5: Create order service with all dependencies
+const orderService = new OrderService(
+  wss,
+  notificationService,
+  orderRepository,
+  trackingRepository
+);
+logger.info('📦 OrderService created');
+
+// Export for use in routes and controllers
+export { server, orderService, notificationService, wss };
 
 // Test database connection on startup
 async function testDatabaseConnection(): Promise<boolean> {
@@ -150,15 +164,19 @@ async function startServer(): Promise<void> {
     
     // Start HTTP server
     server.listen(PORT, () => {
-      logger.info(`🚀 Order Service is running`);
+      logger.info('🚀 Order Service is running');
       logger.info(`📡 HTTP: http://localhost:${PORT}`);
-      logger.info(`🔌 WebSocket: ws://localhost:${PORT}/ws (via HTTP server)`);
+      logger.info(`🔌 WebSocket: ws://localhost:${PORT}/ws`);
       logger.info(`📊 Health check: http://localhost:${PORT}/health`);
       logger.info(`📚 API Docs: http://localhost:${PORT}/api-docs`);
       logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
       
       // Log WebSocket status after server is fully started
-      logger.info(`🔌 WebSocket initialized: ${webSocketManager.isInitialized() ? '✅' : '❌'}`);
+      logger.info(`🔌 WebSocket status: ${webSocketManager.isInitialized() ? '✅ Active' : '❌ Not initialized'}`);
+      
+      // Log service status
+      logger.info(`📨 Notification service: ✅ Ready`);
+      logger.info(`📦 Order service: ✅ Ready`);
     });
     
     server.on('error', (error: NodeJS.ErrnoException) => {
@@ -181,6 +199,4 @@ async function startServer(): Promise<void> {
 startServer();
 
 // Export the server instance for testing
-
-// Export the wss instance for use in routes (will be available after initialization)
 export default wss;
