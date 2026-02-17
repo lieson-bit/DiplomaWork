@@ -14,6 +14,9 @@ import os
 from datetime import datetime
 from enum import Enum
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_MODELS_DIR = os.path.join(BASE_DIR, 'models')
+
 class ItemCategory(Enum):
     """Категории грузов"""
     DOCUMENTS_SMALL = "Документы и мелкие посылки"
@@ -52,7 +55,10 @@ class VehicleType(Enum):
 class DeliveryPricePredictor:
     """Система расчета стоимости доставки с учетом груза"""
     
-    def __init__(self, models_dir='E:/DiplomaWork/BACKEND/historical-rides/models'):
+    def __init__(self, models_dir=None):
+
+        if models_dir is None:
+            models_dir = DEFAULT_MODELS_DIR
         """
         Инициализация системы расчета стоимости
         
