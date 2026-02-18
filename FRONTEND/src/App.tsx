@@ -205,11 +205,6 @@ function AppContent() {
                 </TabsContent>
               </div>
 
-              <div className={activeView === 'bulk' ? 'block' : 'hidden'}>
-                <TabsContent value="bulk" forceMount className="mt-6">
-                  <BulkBooking />
-                </TabsContent>
-              </div>
 
               <div className={activeView === 'tracking' ? 'block' : 'hidden'}>
                 <TabsContent value="tracking" forceMount className="mt-6">
