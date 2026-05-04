@@ -1,4 +1,4 @@
-import { Server } from 'http';
+/*import { Server } from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { Logger } from './logger';
 
@@ -283,4 +283,4 @@ export class WebSocketUtil {
 
 // FIXED: Remove the singleton export or make it conditional
 // Don't automatically create an instance
-// export const webSocketUtil = new WebSocketUtil();
+// export const webSocketUtil = new WebSocketUtil();*/

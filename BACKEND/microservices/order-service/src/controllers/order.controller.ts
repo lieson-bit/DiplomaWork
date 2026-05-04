@@ -1,10 +1,9 @@
+// src/controllers/order.controller.ts
 import { Request, Response } from 'express';
 import { OrderService } from '../services/order.service';
 import { ResponseUtil } from '../utils/response.util';
 import { Logger } from '../utils/logger';
 import { OrderReceiveRequest } from '../types/index';
-import { trackingRepository } from '../repositories/tracking.repository';
-import { LocationTracking } from '../repositories/tracking.repository';
 
 export class OrderController {
   private orderService: OrderService;
@@ -15,100 +14,31 @@ export class OrderController {
     this.orderService = orderService;
   }
   
+  // Receive order from UI
   async receiveOrder(req: Request, res: Response) {
     try {
-      this.logger.info('=== ORDER RECEIVE REQUEST ===');
-      this.logger.info('Received order from external service:');
-      this.logger.info(`Customer: ${req.body.customerInfo?.name} (${req.body.customerInfo?.id})`);
-      this.logger.info(`Driver: ${req.body.driverInfo?.name} (${req.body.driverInfo?.id})`);
-      this.logger.info(`Package: ${req.body.packageDetails?.weight?.value}kg, ${req.body.packageDetails?.volume?.value}m³`);
-      
-      // Cast to our interface
+      this.logger.info('Receiving order from UI');
       const orderRequest = req.body as OrderReceiveRequest;
       
-      // Process the order
       const result = await this.orderService.createOrderFromExternalRequest(orderRequest);
       
       if (!result.success) {
-        this.logger.error('Order creation failed:', {
-          reason: result.reason,
-          recommendations: result.recommendations
-        });
-        
         return ResponseUtil.error(res, result.message, 400, {
           reason: result.reason,
           recommendations: result.recommendations,
-          capacityDetails: result.capacityDetails,
-          timestamp: result.timestamp
+          capacityDetails: result.capacityDetails
         });
       }
       
-      this.logger.info('=== ORDER RECEIVE SUCCESS ===');
-      this.logger.info(`Order created: ${result.order.order_number} (${result.order.id})`);
-      
-      return ResponseUtil.success(
-        res,
-        result.order,
-        result.message || 'Order received and processing started',
-        202
-      );
+      return ResponseUtil.success(res, result.order, result.message, 201);
       
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      
-      this.logger.error('=== ORDER RECEIVE ERROR ===', {
-        message: errorMessage,
-        stack: errorStack
-      });
-      
-      return ResponseUtil.error(res, 'Failed to process order', 500, {
-        message: errorMessage,
-        timestamp: new Date().toISOString()
-      });
+      this.logger.error('Receive order error:', errorMessage);
+      return ResponseUtil.error(res, 'Failed to process order', 500, errorMessage);
     }
   }
 
-  /* Receive order from external service
-  async receiveOrder(req: Request, res: Response) {
-  try {
-    this.logger.info('Receiving order from external service:', req.body);
-    
-    // Transform and validate external data
-    const result = await this.orderService.createOrderFromExternalRequest(req.body);
-    
-    if (!result.success) {
-      this.logger.error('Order creation failed:', {
-        reason: result.reason,
-        recommendations: result.recommendations
-      });
-      
-      return ResponseUtil.error(res, result.message, 400, {
-        reason: result.reason,
-        recommendations: result.recommendations
-      });
-    }
-    
-    return ResponseUtil.success(
-      res,
-      result,
-      'Order received and processing started',
-      202
-    );
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const errorStack = error instanceof Error ? error.stack : undefined;
-    
-    this.logger.error('Receive order error:', {
-      message: errorMessage,
-      stack: errorStack,
-      body: req.body
-    });
-    
-    return ResponseUtil.error(res, 'Failed to process order', 500, errorMessage);
-  }
-}
-  
   // Driver accepts order
   async acceptOrder(req: Request, res: Response) {
     try {
@@ -117,15 +47,12 @@ export class OrderController {
       
       const result = await this.orderService.acceptOrder(orderId, driverId);
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Order accepted successfully'
-      );
+      return ResponseUtil.success(res, result.order, result.message);
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Accept order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to accept order', 400, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 400);
     }
   }
   
@@ -138,75 +65,30 @@ export class OrderController {
       
       const result = await this.orderService.rejectOrder(orderId, driverId, reason);
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Order rejected successfully'
-      );
+      return ResponseUtil.success(res, result.order, result.message);
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Reject order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to reject order', 400, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 400);
     }
   }
   
-  // Get order details
-  async getOrder(req: Request, res: Response) {
-    try {
-      const orderId = req.params.id;
-      const userId = req.user!.userId;
-      const userType = req.user!.userType;
-      
-      const order = await this.orderService.getOrder(orderId);
-      
-      // Verify access
-      if (userType === 'customer' && order.customer_info.id !== userId) {
-        return ResponseUtil.forbidden(res, 'Access denied');
-      }
-      
-      if (userType === 'driver' && order.driver_info?.id !== userId) {
-        return ResponseUtil.forbidden(res, 'Access denied');
-      }
-      
-      return ResponseUtil.success(
-        res,
-        order,
-        'Order retrieved successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Get order error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get order', 404, errorMessage);
-    }
-  }
-
-  // Get order with progress tracking
+  // Get order with progress
   async getOrderWithProgress(req: Request, res: Response) {
     try {
       const orderId = req.params.id;
       const userId = req.user!.userId;
       const userType = req.user!.userType;
-
-      const order = await this.orderService.getOrder(orderId);
-
-      // Verify access
-      if (userType === 'customer' && order.customer_info.id !== userId) {
-        return ResponseUtil.forbidden(res, 'Access denied');
-      }
-
-      if (userType === 'driver' && order.driver_info?.id !== userId) {
-        return ResponseUtil.forbidden(res, 'Access denied');
-      }
-
-      return ResponseUtil.success(
-        res,
-        order,
-        'Order with progress retrieved successfully'
-      );
+      
+      const order = await this.orderService.getOrderWithProgress(orderId, userId, userType);
+      
+      return ResponseUtil.success(res, order, 'Order retrieved successfully');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Get order with progress error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get order details', 400, errorMessage);
+      this.logger.error('Get order error:', errorMessage);
+      return ResponseUtil.error(res, errorMessage, 404);
     }
   }
 
@@ -216,27 +98,19 @@ export class OrderController {
       const orderId = req.params.id;
       const driverId = req.user!.userId;
       const { status, location } = req.body;
-
+      
       if (!status) {
         return ResponseUtil.error(res, 'Status is required', 400);
       }
-
-      const result = await this.orderService.updateOrderStatus(
-        orderId,
-        driverId,
-        status,
-        location
-      );
-
-      return ResponseUtil.success(
-        res,
-        result,
-        'Order status updated successfully'
-      );
+      
+      const result = await this.orderService.updateOrderStatus(orderId, driverId, status, location);
+      
+      return ResponseUtil.success(res, result.order, result.message);
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Update order status error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to update order status', 400, errorMessage);
+      this.logger.error('Update status error:', errorMessage);
+      return ResponseUtil.error(res, errorMessage, 400);
     }
   }
 
@@ -244,18 +118,15 @@ export class OrderController {
   async getOptimizedRoute(req: Request, res: Response) {
     try {
       const driverId = req.user!.userId;
-
-      const result = await this.orderService.getDriverOptimizedRoute(driverId);
-
-      return ResponseUtil.success(
-        res,
-        result,
-        'Optimized route retrieved successfully'
-      );
+      
+      const route = await this.orderService.getDriverOptimizedRoute(driverId);
+      
+      return ResponseUtil.success(res, route, 'Optimized route retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Get optimized route error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get optimized route', 400, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 400);
     }
   }
 
@@ -266,66 +137,30 @@ export class OrderController {
       const userId = req.user!.userId;
       const userType = req.user!.userType;
       
-      // Verify access
+      // Get order to verify access
       const order = await this.orderService.getOrder(orderId);
       
-      if (userType === 'customer' && order.customer_info.id !== userId) {
+      if (!order) {
+        return ResponseUtil.error(res, 'Order not found', 404);
+      }
+      
+      if (userType === 'customer' && order.customer_id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      if (userType === 'driver' && order.driver_info?.id !== userId) {
+      if (userType === 'driver' && order.driver_id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      const tracking = await trackingRepository.findByOrderId(orderId, { 
-        limit: 100,
-        orderBy: 'ASC' as const
-      });
+      // Get tracking data from order service
+      const tracking = await this.orderService.getOrderTracking(orderId);
       
-      return ResponseUtil.success(
-        res,
-        tracking.map((t: LocationTracking) => ({
-          latitude: t.latitude,
-          longitude: t.longitude,
-          timestamp: t.timestamp,
-          speed: t.speed,
-          bearing: t.bearing
-        })),
-        'Tracking data retrieved successfully'
-      );
+      return ResponseUtil.success(res, tracking, 'Tracking data retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Get tracking error:', errorMessage);
       return ResponseUtil.error(res, 'Failed to get tracking data', 400, errorMessage);
-    }
-  }
-
-  // Send message
-  async sendMessage(req: Request, res: Response) {
-    try {
-      const orderId = req.params.id;
-      const senderId = req.user!.userId;
-      const senderType = req.user!.userType;
-      const { content, messageType, metadata } = req.body;
-      
-      const result = await this.orderService.sendMessage(
-        orderId,
-        senderId,
-        senderType,
-        content,
-        messageType,
-        metadata
-      );
-      
-      return ResponseUtil.success(
-        res,
-        result,
-        'Message sent successfully'
-      );
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Send message error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to send message', 400, errorMessage);
     }
   }
   
@@ -339,23 +174,81 @@ export class OrderController {
       // Get order to verify access
       const order = await this.orderService.getOrder(orderId);
       
-      if (userType === 'customer' && order.customer_info.id !== userId) {
+      if (!order) {
+        return ResponseUtil.error(res, 'Order not found', 404);
+      }
+      
+      if (userType === 'customer' && order.customer_id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      if (userType === 'driver' && order.driver_info?.id !== userId) {
+      if (userType === 'driver' && order.driver_id !== userId) {
         return ResponseUtil.forbidden(res, 'Access denied');
       }
       
-      return ResponseUtil.success(
-        res,
-        order.messages,
-        'Messages retrieved successfully'
-      );
+      // Get messages from order service
+      const messages = await this.orderService.getOrderMessages(orderId, userId);
+      
+      return ResponseUtil.success(res, messages, 'Messages retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Get messages error:', errorMessage);
       return ResponseUtil.error(res, 'Failed to get messages', 400, errorMessage);
+    }
+  }
+
+  async getOrder(req: Request, res: Response) {
+  try {
+    const orderId = req.params.id;
+    const userId = req.user!.userId;
+    const userType = req.user!.userType;
+    
+    const order = await this.orderService.getOrder(orderId);
+    
+    if (!order) {
+      return ResponseUtil.error(res, 'Order not found', 404);
+    }
+    
+    // Verify access
+    if (userType === 'customer' && order.customer_id !== userId) {
+      return ResponseUtil.forbidden(res, 'Access denied');
+    }
+    
+    if (userType === 'driver' && order.driver_id !== userId) {
+      return ResponseUtil.forbidden(res, 'Access denied');
+    }
+    
+    return ResponseUtil.success(res, order, 'Order retrieved successfully');
+    
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    this.logger.error('Get order error:', errorMessage);
+    return ResponseUtil.error(res, errorMessage, 404);
+  }
+}
+
+
+  // Send message
+  async sendMessage(req: Request, res: Response) {
+    try {
+      const orderId = req.params.id;
+      const senderId = req.user!.userId;
+      const senderType = req.user!.userType;
+      const { content } = req.body;
+      
+      if (!content) {
+        return ResponseUtil.error(res, 'Message content is required', 400);
+      }
+      
+      const result = await this.orderService.sendMessage(orderId, senderId, senderType as 'customer' | 'driver', content);
+      
+      return ResponseUtil.success(res, result.message, 'Message sent');
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Send message error:', errorMessage);
+      return ResponseUtil.error(res, errorMessage, 400);
     }
   }
   
@@ -366,17 +259,18 @@ export class OrderController {
       const customerId = req.user!.userId;
       const { rating, review } = req.body;
       
+      if (!rating) {
+        return ResponseUtil.error(res, 'Rating is required', 400);
+      }
+      
       const result = await this.orderService.rateDriver(orderId, customerId, rating, review);
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Driver rated successfully'
-      );
+      return ResponseUtil.success(res, result, result.message);
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Rate driver error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to rate driver', 400, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 400);
     }
   }
   
@@ -386,17 +280,14 @@ export class OrderController {
       const userId = req.user!.userId;
       const userType = req.user!.userType;
       
-      const result = await this.orderService.getUserBalance(userId, userType);
+      const balance = await this.orderService.getUserBalance(userId, userType);
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Balance retrieved successfully'
-      );
+      return ResponseUtil.success(res, balance, 'Balance retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Get balance error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get balance', 500, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 500);
     }
   }
   
@@ -413,15 +304,12 @@ export class OrderController {
         parseInt(limit as string) || 20
       );
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Customer orders retrieved successfully'
-      );
+      return ResponseUtil.success(res, result, 'Orders retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Get customer orders error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get customer orders', 500, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 500);
     }
   }
   
@@ -438,33 +326,34 @@ export class OrderController {
         parseInt(limit as string) || 20
       );
       
-      return ResponseUtil.success(
-        res,
-        result,
-        'Driver orders retrieved successfully'
-      );
+      return ResponseUtil.success(res, result, 'Orders retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Get driver orders error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to get driver orders', 500, errorMessage);
+      return ResponseUtil.error(res, errorMessage, 500);
     }
   }
-  
-  // Optimize driver route
-  async optimizeRoute(req: Request, res: Response) {
+
+  // Get user notifications (polling endpoint)
+  async getNotifications(req: Request, res: Response) {
     try {
-      const driverId = req.user!.userId;
+      const userId = req.user!.userId;
+      const { markAsRead } = req.query;
       
-      // This would trigger re-optimization
-      return ResponseUtil.success(
-        res,
-        { message: 'Route optimization is automatic when accepting new orders' },
-        'Route optimization info'
+      const notifications = await this.orderService.getUserNotifications(
+        userId, 
+        markAsRead === 'true'
       );
+      
+      const unreadCount = await this.orderService.getUnreadNotificationCount(userId);
+      
+      return ResponseUtil.success(res, { notifications, unreadCount }, 'Notifications retrieved');
+      
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Optimize route error:', errorMessage);
-      return ResponseUtil.error(res, 'Failed to optimize route', 500, errorMessage);
+      this.logger.error('Get notifications error:', errorMessage);
+      return ResponseUtil.error(res, errorMessage, 500);
     }
-  }*/
+  }
 }

@@ -33,7 +33,7 @@
     "destination": "Красная площадь, Москва",
     "distance_km": 3.507,
     "distance_text": "3.5 km",
-    "duration_minutes": 9.566666666666666,
+    "duration_minutes": 9.783333333333333,
     "duration_text": "9 mins",
     "recommended_vehicle": "motorcycle",
     "item_category": "Документы и мелкие посылки",
@@ -43,12 +43,12 @@
     "special_requirement": "Нет особых требований"
   },
   "weather_data": {
-    "temperature": -16.3,
-    "feels_like": -23.28,
-    "humidity": 92,
-    "conditions": "overcast clouds"
+    "temperature": 10.11,
+    "feels_like": 7.91,
+    "humidity": 28,
+    "conditions": "few clouds"
   },
-  "timestamp": "2026-02-03T14:49:56.363172",
+  "timestamp": "2026-04-22T11:31:59.072114",
   "model_info": {
     "model_type": "XGBoost",
     "r2_score": 0.8117,

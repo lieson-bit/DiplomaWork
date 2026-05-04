@@ -43,8 +43,8 @@
     "destination": "Казанский Кремль, Казань",
     "distance_km": 15.339,
     "distance_text": "15.3 km",
-    "duration_minutes": 30.183333333333334,
-    "duration_text": "30 mins",
+    "duration_minutes": 31.3,
+    "duration_text": "31 mins",
     "recommended_vehicle": "car_hatchback",
     "item_category": "Продукты питания и напитки",
     "weight_kg": 35,
@@ -53,12 +53,12 @@
     "special_requirement": "Охлаждаемый"
   },
   "weather_data": {
-    "temperature": -19.54,
-    "feels_like": -24.73,
-    "humidity": 93,
-    "conditions": "broken clouds"
+    "temperature": 2.9,
+    "feels_like": -0.06,
+    "humidity": 65,
+    "conditions": "overcast clouds"
   },
-  "timestamp": "2026-02-03T14:50:06.447484",
+  "timestamp": "2026-04-22T11:32:06.205507",
   "model_info": {
     "model_type": "XGBoost",
     "r2_score": 0.8117,

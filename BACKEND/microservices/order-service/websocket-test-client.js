@@ -84,9 +84,3 @@ rl.question('Enter user ID to authenticate as: ', (userId) => {
     });
   });
 });
-
-//node websocket-test-client.js
-
-//# Using the test script
-//node test-order-flow.js
-//# Choose option 1 to create an order

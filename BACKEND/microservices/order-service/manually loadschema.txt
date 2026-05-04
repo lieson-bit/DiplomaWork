@@ -14,3 +14,55 @@ Then inside MySQL:
 SOURCE /docker-entrypoint-initdb.d/schema.sql;
 SHOW TABLES;
 DESCRIBE orders;
+
+
+-- Use database
+USE order_service_db;
+
+-- Show current counts
+SELECT 'Before cleanup:' as Status;
+SELECT COUNT(*) as orders_before FROM orders;
+
+-- Disable foreign key checks
+SET FOREIGN_KEY_CHECKS = 0;
+
+-- Delete all data from related tables
+DELETE FROM order_status_history;
+DELETE FROM order_messages;
+DELETE FROM location_tracking;
+DELETE FROM driver_ratings;
+DELETE FROM balance_transactions;
+DELETE FROM notifications;
+DELETE FROM route_waypoints;
+DELETE FROM driver_order_queue;
+DELETE FROM driver_capacity_tracking;
+DELETE FROM driver_routes;
+
+-- Delete from main orders table
+DELETE FROM orders;
+
+-- Reset any sequences
+ALTER TABLE orders AUTO_INCREMENT = 1;
+
+-- Re-enable foreign key checks
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- Show after cleanup counts
+SELECT 'After cleanup:' as Status;
+SELECT COUNT(*) as orders_after FROM orders;
+
+
+
+
+You're absolutely right! The algorithm should be region-based optimization where the driver can interleave pickups and deliveries based on location proximity, not strictly all pickups first. This is much more efficient - you pick up and deliver in the same area before moving to another region.
+
+What I've Changed:
+New Algorithm Logic:
+
+Region-based clustering - Stops are grouped by geographic proximity
+
+Intelligent interleaving - Within a region, the driver can both pick up AND deliver before moving to the next region
+
+Constraint enforcement - A delivery cannot happen before its pickup, but pickups and deliveries can be mixed across different orders
+
+Optimal path calculation - Uses TSP with constraints to find the shortest route that respects pickup-before-delivery rules

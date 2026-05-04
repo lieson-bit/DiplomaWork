@@ -1,9 +1,7 @@
-// Updated logger.ts - Fix Winston type issue
 import winston, { Logger as WinstonLogger } from 'winston';
 import path from 'path';
 import fs from 'fs';
 
-// Ensure logs directory exists
 const logDir = process.env.LOG_DIR || path.join(__dirname, '../../logs');
 if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
@@ -16,7 +14,6 @@ const logFormat = winston.format.combine(
   winston.format.json()
 );
 
-// Logger class for better OOP usage
 export class Logger {
   private logger: WinstonLogger;
   private context: string;
@@ -67,19 +64,7 @@ export class Logger {
   debug(message: string, meta?: any) {
     this.logger.debug(message, meta);
   }
-
-  http(message: string, meta?: any) {
-    // Check if http method exists, fallback to info if not
-    if ((this.logger as any).http) {
-      (this.logger as any).http(message, meta);
-    } else {
-      this.logger.info(`[HTTP] ${message}`, meta);
-    }
-  }
 }
 
-// Keep the default instance for backward compatibility
 export const defaultLogger = new Logger('App');
-
-// Export for direct use
 export default defaultLogger;

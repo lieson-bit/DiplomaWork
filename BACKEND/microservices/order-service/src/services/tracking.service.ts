@@ -1,5 +1,5 @@
+// src/services/tracking.service.ts
 import { Logger } from '../utils/logger';
-import { WebSocketUtil } from '../utils/websocket.util';
 import { TrackingRepository } from '../repositories/tracking.repository';
 import { OrderRepository, Order } from '../repositories/order.repository';
 import { LocationTracking, CreateTrackingData } from '../repositories/tracking.repository';
@@ -36,13 +36,6 @@ export interface TrackingData {
   };
 }
 
-export interface LiveTrackingEvent {
-  type: 'location_update' | 'status_change' | 'eta_update';
-  orderId: string;
-  data: any;
-  timestamp: Date;
-}
-
 export interface Coordinates {
   lat: number;
   lng: number;
@@ -50,18 +43,15 @@ export interface Coordinates {
 
 export class TrackingService {
   private logger: Logger;
-  private websocketUtil: WebSocketUtil;
   private trackingRepository: TrackingRepository;
   private orderRepository: OrderRepository;
   private liveConnections: Map<string, Set<string>> = new Map(); // orderId -> connectionIds
 
   constructor(
-    websocketUtil: WebSocketUtil,
     trackingRepository: TrackingRepository,
     orderRepository: OrderRepository
   ) {
     this.logger = new Logger('TrackingService');
-    this.websocketUtil = websocketUtil;
     this.trackingRepository = trackingRepository;
     this.orderRepository = orderRepository;
   }
@@ -95,9 +85,6 @@ export class TrackingService {
           update.longitude
         );
       }
-
-      // Broadcast to connected clients
-      await this.broadcastLocationUpdate(update);
 
       // Calculate and update ETA if needed
       await this.updateETA(update.orderId);
@@ -175,51 +162,6 @@ export class TrackingService {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Failed to get live location for order ${orderId}:`, errorMessage);
       return null;
-    }
-  }
-
-  async subscribeToLiveTracking(orderId: string, connectionId: string): Promise<void> {
-    try {
-      if (!this.liveConnections.has(orderId)) {
-        this.liveConnections.set(orderId, new Set());
-      }
-      
-      this.liveConnections.get(orderId)!.add(connectionId);
-      
-      // Send current location immediately
-      const currentLocation = await this.getLiveLocation(orderId);
-      if (currentLocation) {
-        await this.websocketUtil.sendToConnection(connectionId, 'tracking_update', {
-          type: 'location_update',
-          orderId,
-          data: currentLocation,
-          timestamp: new Date()
-        });
-      }
-      
-      this.logger.info(`Connection ${connectionId} subscribed to order ${orderId} tracking`);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to subscribe to live tracking for order ${orderId}:`, errorMessage);
-      throw error;
-    }
-  }
-
-  async unsubscribeFromLiveTracking(orderId: string, connectionId: string): Promise<void> {
-    try {
-      const connections = this.liveConnections.get(orderId);
-      if (connections) {
-        connections.delete(connectionId);
-        if (connections.size === 0) {
-          this.liveConnections.delete(orderId);
-        }
-      }
-      
-      this.logger.info(`Connection ${connectionId} unsubscribed from order ${orderId} tracking`);
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to unsubscribe from live tracking for order ${orderId}:`, errorMessage);
-      throw error;
     }
   }
 
@@ -322,7 +264,6 @@ export class TrackingService {
           return this.generateCSVReport(trackingData);
           
         case 'pdf':
-          // In a real implementation, this would generate a PDF
           throw new Error('PDF report generation not implemented');
           
         default:
@@ -377,29 +318,6 @@ export class TrackingService {
     }
   }
 
-  private async broadcastLocationUpdate(update: LocationUpdate): Promise<void> {
-    const connections = this.liveConnections.get(update.orderId);
-    if (connections && connections.size > 0) {
-      const event: LiveTrackingEvent = {
-        type: 'location_update',
-        orderId: update.orderId,
-        data: update,
-        timestamp: new Date()
-      };
-      
-      for (const connectionId of connections) {
-        try {
-          await this.websocketUtil.sendToConnection(connectionId, 'tracking_update', event);
-        } catch (error: unknown) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-          this.logger.warn(`Failed to send update to connection ${connectionId}:`, errorMessage);
-          // Remove disconnected client
-          connections.delete(connectionId);
-        }
-      }
-    }
-  }
-
   private async updateETA(orderId: string): Promise<void> {
     try {
       const order = await this.orderRepository.findById(orderId);
@@ -433,25 +351,6 @@ export class TrackingService {
       // Log ETA
       this.logger.info(`ETA for order ${orderId}: ${Math.round(etaMinutes)} minutes, distance: ${distance.toFixed(2)} km`);
       
-      // Broadcast ETA update
-      const connections = this.liveConnections.get(orderId);
-      if (connections && connections.size > 0) {
-        const event: LiveTrackingEvent = {
-          type: 'eta_update',
-          orderId,
-          data: { etaMinutes: Math.round(etaMinutes), distance: parseFloat(distance.toFixed(2)) },
-          timestamp: new Date()
-        };
-        
-        for (const connectionId of connections) {
-          try {
-            await this.websocketUtil.sendToConnection(connectionId, 'tracking_update', event);
-          } catch (error: unknown) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            this.logger.warn(`Failed to send ETA update to connection ${connectionId}:`, errorMessage);
-          }
-        }
-      }
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.warn(`Failed to update ETA for order ${orderId}:`, errorMessage);
@@ -520,38 +419,6 @@ export class TrackingService {
 
   private toRad(degrees: number): number {
     return degrees * (Math.PI / 180);
-  }
-
-  private decodePolyline(encoded: string): Coordinates[] {
-    const points: Coordinates[] = [];
-    let index = 0;
-    const len = encoded.length;
-    let lat = 0, lng = 0;
-
-    while (index < len) {
-      let b, shift = 0, result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
-      lat += dlat;
-
-      shift = 0;
-      result = 0;
-      do {
-        b = encoded.charCodeAt(index++) - 63;
-        result |= (b & 0x1f) << shift;
-        shift += 5;
-      } while (b >= 0x20);
-      const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
-      lng += dlng;
-
-      points.push({ lat: lat / 1e5, lng: lng / 1e5 });
-    }
-
-    return points;
   }
 
   private calculateRouteDistance(points: Coordinates[]): number {

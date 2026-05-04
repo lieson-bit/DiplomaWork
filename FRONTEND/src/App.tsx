@@ -6,9 +6,9 @@ import { Badge } from "./components/ui/badge";
 import { Truck, User, Package, MapPin, Clock, Star } from 'lucide-react';
 import { DriverDashboard } from './components/DriverDashboard';
 import { CustomerBooking } from './components/CustomerBooking';
-import { MatchingEngine } from './components/MatchingEngine';
+//import { MatchingEngine } from './components/MatchingEngine';
 import { OrderTracking } from './components/OrderTracking';
-import { BulkBooking } from './components/BulkBooking';
+//import { BulkBooking } from './components/BulkBooking';
 import { LandingPage } from './src/components/LandingPage';
 import { AuthPage } from './components/AuthPage';
 import { DriverOnboarding } from './components/DriverOnboarding';
@@ -205,6 +205,11 @@ function AppContent() {
                 </TabsContent>
               </div>
 
+              {/*<div className={activeView === 'bulk' ? 'block' : 'hidden'}>
+                <TabsContent value="bulk" forceMount className="mt-6">
+                  <BulkBooking />
+                </TabsContent>
+              </div> */}
 
               <div className={activeView === 'tracking' ? 'block' : 'hidden'}>
                 <TabsContent value="tracking" forceMount className="mt-6">
@@ -212,11 +217,11 @@ function AppContent() {
                 </TabsContent>
               </div>
 
-              <div className={activeView === 'matching' ? 'block' : 'hidden'}>
+             {/*} <div className={activeView === 'matching' ? 'block' : 'hidden'}>
                 <TabsContent value="matching" forceMount className="mt-6">
                   <MatchingEngine />
                 </TabsContent>
-              </div>
+              </div> */}
 
               <div className={activeView === 'notifications' ? 'block' : 'hidden'}>
                 <TabsContent value="notifications" forceMount className="mt-6">

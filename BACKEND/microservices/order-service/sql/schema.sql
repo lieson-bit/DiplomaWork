@@ -388,7 +388,7 @@ SELECT
 FROM orders o
 LEFT JOIN driver_ratings dr ON o.driver_id = dr.driver_id AND o.id = dr.order_id
 WHERE o.status = 'completed'
-GROUP BY d.driver_id;
+GROUP BY o.driver_id;
 
 -- Create view for customer spending
 CREATE VIEW customer_spending_view AS

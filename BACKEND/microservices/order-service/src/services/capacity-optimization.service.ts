@@ -3,6 +3,7 @@
 import { Logger } from '../utils/logger';
 import { db } from '../config/database';
 import { HttpClient } from '../utils/httpClient';
+import { orderRepository } from '@/repositories/order.repository';
 
 export interface VehicleCapacity {
   maxWeight: number; // kg
@@ -109,7 +110,7 @@ export class CapacityOptimizationService {
       }
 
       // 2. Calculate current load from existing active orders
-      const activeOrders = await this.getDriverActiveOrders(driverId, excludeOrderId);
+      const activeOrders = await orderRepository.getDriverActiveOrders(driverId, excludeOrderId);
       
       const currentWeight = activeOrders.reduce((sum, order) => sum + order.weight_kg, 0);
       const currentVolume = activeOrders.reduce((sum, order) => sum + order.volume_m3, 0);
@@ -259,9 +260,20 @@ export class CapacityOptimizationService {
     }
   }
 
+  private async getDriverActiveOrders(driverId: string, excludeOrderId?: string): Promise<any[]> {
+  // DELEGATE to OrderRepository instead
+  try {
+    const { orderRepository } = require('../repositories/order.repository');
+    return await orderRepository.getDriverActiveOrders(driverId, excludeOrderId);
+  } catch (error) {
+    this.logger.error('Failed to get driver active orders:', error);
+    return [];
+  }
+}
+
   /**
    * Get driver's active orders from database with weight and volume
-   */
+   *//*
   private async getDriverActiveOrders(
     driverId: string, 
     excludeOrderId?: string
@@ -295,7 +307,7 @@ export class CapacityOptimizationService {
       this.logger.error('Failed to get driver active orders:', error);
       return [];
     }
-  }
+  }*/
 
   /**
    * Check if driver can accept multiple orders at once

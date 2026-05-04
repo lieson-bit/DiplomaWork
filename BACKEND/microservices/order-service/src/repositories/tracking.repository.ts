@@ -139,9 +139,9 @@ export class TrackingRepository {
       
       sql += ` ORDER BY timestamp ${options?.orderBy || 'ASC'}`;
       
+      // FIX: Use CONCAT for LIMIT instead of parameter binding
       if (options?.limit) {
-        sql += ' LIMIT ?';
-        params.push(options.limit);
+        sql += ` LIMIT ${options.limit}`;  // Direct value, not parameter
       }
       
       return await db.query<LocationTracking>(sql, params);

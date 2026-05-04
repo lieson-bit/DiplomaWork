@@ -7,10 +7,11 @@ import { Switch } from "./ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
 import { Avatar, AvatarFallback } from "./ui/avatar";
-import { Truck, MapPin, Package, Clock, Star, Weight, Gauge, Upload, Eye, AlertTriangle, RefreshCw, Navigation, Compass, User, Wifi, WifiOff } from 'lucide-react';
+import { Truck, MapPin, Package, Clock, Star, Weight, Gauge, Upload, Eye, AlertTriangle, RefreshCw, Navigation, Compass, User, Wifi, WifiOff, CheckCircle } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { driverApi } from '../src/lib/api';
 import { useDriverProfile } from '../src/hooks/useDriverProfile';
+import { orderApi } from '../src/lib/api';
 import { toast } from 'sonner';
 
 interface Vehicle {
@@ -54,6 +55,34 @@ interface LocationCoords {
   timestamp?: number;
 }
 
+interface DriverOrder {
+  id: string;
+  order_number: string;
+  status: string;
+  customer_info?: {
+    name: string;
+    phone: string;
+  };
+  pickup_location?: {
+    address: string;
+  };
+  delivery_location?: {
+    address: string;
+  };
+  pricing?: {
+    estimated_usd: number;
+  };
+  package_details?: {
+    category: string;
+    weight_kg: number;
+    volume_m3: number;
+  };
+  progress?: {
+    progressPercentage: number;
+    currentStatus: string;
+  };
+}
+
 export function DriverDashboard() {
   const [isOnline, setIsOnline] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState('');
@@ -63,7 +92,12 @@ export function DriverDashboard() {
   const [loading, setLoading] = useState(true);
   const [uploadingVehiclePic, setUploadingVehiclePic] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
-  
+  const [optimizedRoute, setOptimizedRoute] = useState<any>(null);
+  const [driverOrders, setDriverOrders] = useState<any[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [rejectTimers, setRejectTimers] = useState<Record<string, NodeJS.Timeout>>({});
+  const [timeRemaining, setTimeRemaining] = useState<Record<string, number>>({});
+
   // Location state
   const [currentLocation, setCurrentLocation] = useState<string>('Downtown Area');
   const [locationCoords, setLocationCoords] = useState<LocationCoords | null>(null);
@@ -81,7 +115,237 @@ export function DriverDashboard() {
     if (driverData?.currentLocation) {
       setCurrentLocation(driverData.currentLocation);
     }
+    loadDriverOrders();
+    loadOptimizedRoute();
   }, [driverData]);
+
+  // Auto-reject timer effect for pending orders
+  useEffect(() => {
+    const intervals: NodeJS.Timeout[] = [];
+    
+    driverOrders.forEach(order => {
+      if (order.status === 'pending') {
+        const interval = setInterval(() => {
+          setTimeRemaining(prev => {
+            const current = prev[order.id] || 120; // 2 minutes = 120 seconds
+            if (current <= 0) {
+              clearInterval(interval);
+              return prev;
+            }
+            return { ...prev, [order.id]: current - 1 };
+          });
+        }, 1000);
+        intervals.push(interval);
+        
+        // Initialize timer if not set
+        setTimeRemaining(prev => {
+          if (!prev[order.id]) {
+            return { ...prev, [order.id]: 120 };
+          }
+          return prev;
+        });
+        
+        // Start auto-reject timer
+        startAutoRejectTimer(order.id);
+      }
+    });
+    
+    return () => {
+      intervals.forEach(interval => clearInterval(interval));
+    };
+  }, [driverOrders]);
+
+  const loadDriverOrders = async () => {
+  setLoadingOrders(true);
+  try {
+    const response = await orderApi.getDriverOrders();
+    console.log('📦 Full driver orders response:', response);
+    
+    if (response.success && response.data) {
+      // Check different possible data structures
+      let ordersList = [];
+      
+      if (Array.isArray(response.data)) {
+        // If data is directly an array
+        ordersList = response.data;
+      } else if (response.data.orders && Array.isArray(response.data.orders)) {
+        // If data has an orders property
+        ordersList = response.data.orders;
+      } else if (response.data.data && Array.isArray(response.data.data)) {
+        // If data has a nested data property
+        ordersList = response.data.data;
+      } else if (response.data.items && Array.isArray(response.data.items)) {
+        ordersList = response.data.items;
+      } else {
+        // Try to see what's in the response
+        console.log('⚠️ Unknown orders data structure:', Object.keys(response.data));
+        ordersList = [];
+      }
+      
+      console.log(`📦 Found ${ordersList.length} orders for driver`);
+      
+      // Log each order to see what's coming through
+      ordersList.forEach((order: any, index: number) => {
+        console.log(`  Order ${index + 1}:`, {
+          id: order.id,
+          order_number: order.order_number,
+          status: order.status,
+          driver_id: order.driver_id,
+          customer_name: order.customer_info?.name
+        });
+      });
+      
+      setDriverOrders(ordersList);
+    } else {
+      console.log('No orders in response:', response);
+      setDriverOrders([]);
+    }
+  } catch (error) {
+    console.error('Error loading driver orders:', error);
+    toast.error('Failed to load orders');
+    setDriverOrders([]);
+  } finally {
+    setLoadingOrders(false);
+  }
+};
+
+  // Add function to start auto-reject timer
+  const startAutoRejectTimer = (orderId: string) => {
+    // Clear existing timer if any
+    if (rejectTimers[orderId]) {
+      clearTimeout(rejectTimers[orderId]);
+    }
+    
+    // Set timer to auto-reject after 2 minutes (120 seconds)
+    const timer = setTimeout(async () => {
+      try {
+        const response = await orderApi.rejectOrder(orderId, 'Auto-rejected: No response within 2 minutes');
+        if (response.success) {
+          toast.info(`Order ${orderId.slice(-8)} was auto-rejected due to no response`);
+          loadDriverOrders(); // Refresh orders list
+          loadOptimizedRoute();
+        }
+      } catch (error) {
+        console.error('Auto-reject failed:', error);
+      } finally {
+        // Clean up timer
+        setRejectTimers(prev => {
+          const newTimers = { ...prev };
+          delete newTimers[orderId];
+          return newTimers;
+        });
+        setTimeRemaining(prev => {
+          const newTime = { ...prev };
+          delete newTime[orderId];
+          return newTime;
+        });
+      }
+    }, 120000); // 2 minutes = 120000 ms
+    
+    setRejectTimers(prev => ({ ...prev, [orderId]: timer }));
+  };
+
+  // Modify handleAcceptOrder to clear timer when accepted
+  const handleAcceptOrder = async (orderId: string) => {
+    // Clear auto-reject timer
+    if (rejectTimers[orderId]) {
+      clearTimeout(rejectTimers[orderId]);
+      setRejectTimers(prev => {
+        const newTimers = { ...prev };
+        delete newTimers[orderId];
+        return newTimers;
+      });
+      setTimeRemaining(prev => {
+        const newTime = { ...prev };
+        delete newTime[orderId];
+        return newTime;
+      });
+    }
+    
+    try {
+      const response = await orderApi.acceptOrder(orderId);
+      if (response.success) {
+        toast.success('Order accepted successfully!');
+        loadDriverOrders();
+        loadOptimizedRoute();
+      } else {
+        toast.error(response.error || 'Failed to accept order');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Network error');
+    }
+  };
+
+  // Add function to manually reject
+  const handleRejectOrder = async (orderId: string, reason?: string) => {
+    // Clear auto-reject timer
+    if (rejectTimers[orderId]) {
+      clearTimeout(rejectTimers[orderId]);
+      setRejectTimers(prev => {
+        const newTimers = { ...prev };
+        delete newTimers[orderId];
+        return newTimers;
+      });
+      setTimeRemaining(prev => {
+        const newTime = { ...prev };
+        delete newTime[orderId];
+        return newTime;
+      });
+    }
+    
+    try {
+      const response = await orderApi.rejectOrder(orderId, reason || 'Driver rejected');
+      if (response.success) {
+        toast.info('Order rejected');
+        loadDriverOrders();
+        loadOptimizedRoute();
+      } else {
+        toast.error(response.error || 'Failed to reject order');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Network error');
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: string, status: string) => {
+    try {
+      let location;
+      if (navigator.geolocation) {
+        const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            timeout: 5000,
+            enableHighAccuracy: true
+          });
+        });
+        location = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        };
+      }
+
+      const response = await orderApi.updateOrderStatus(orderId, status, location);
+      if (response.success) {
+        toast.success(`Order status updated to ${status.replace('_', ' ')}`);
+        loadDriverOrders(); // Refresh orders list
+        loadOptimizedRoute(); // Refresh optimized route
+      } else {
+        toast.error(response.error || 'Failed to update status');
+      }
+    } catch (error: any) {
+      toast.error(error.message || 'Network error');
+    }
+  };
+
+  const loadOptimizedRoute = async () => {
+    try {
+      const response = await orderApi.getOptimizedRoute();
+      if (response.success && response.data) {
+        setOptimizedRoute(response.data);
+      }
+    } catch (error) {
+      console.error('Error loading optimized route:', error);
+    }
+  };
 
   const loadDashboardData = async () => {
     try {
@@ -497,6 +761,24 @@ export function DriverDashboard() {
   const currentVehicleImageUrl = currentVehicle ? getVehicleImageUrl(currentVehicle) : null;
   const hasVehiclePicError = currentVehicle ? imageErrors[currentVehicle.id] : false;
 
+  // Add a useEffect to periodically refresh orders when driver is online
+  useEffect(() => {
+    let refreshInterval: NodeJS.Timeout | null = null;
+    
+    if (isOnline) {
+      // Refresh orders every 30 seconds when online
+      refreshInterval = setInterval(() => {
+        loadDriverOrders();
+      }, 30000);
+    }
+    
+    return () => {
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+      }
+    };
+  }, [isOnline]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -869,8 +1151,191 @@ export function DriverDashboard() {
           </div>
         </CardContent>
       </Card>
+      
+      {/* My Orders Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <CardTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              My Orders
+            </CardTitle>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              onClick={loadDriverOrders}
+              disabled={loadingOrders}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${loadingOrders ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+          <p className="text-gray-600">Orders assigned to you for delivery</p>
+        </CardHeader>
+        <CardContent>
+          {loadingOrders ? (
+            <div className="flex justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            </div>
+          ) : driverOrders.length === 0 ? (
+            <div className="text-center py-8">
+              <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg text-gray-900 mb-2">No orders assigned</h3>
+              <p className="text-gray-600">
+                {isOnline 
+                  ? 'You are online. Orders will appear here when assigned.'
+                  : 'Go online to receive delivery requests.'}
+              </p>
+              {!isOnline && (
+                <Button 
+                  onClick={() => handleToggleOnline(true)} 
+                  className="mt-4 bg-green-600 hover:bg-green-700"
+                >
+                  <Wifi className="h-4 w-4 mr-2" />
+                  Go Online
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {driverOrders.map((order) => (
+                <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50 transition">
+                  <div className="flex justify-between items-start mb-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-medium">#{order.order_number?.slice(-8) || order.id?.slice(-8)}</h4>
+                        <Badge className={order.status === 'delivered' ? 'bg-green-100 text-green-800' : 
+                                        order.status === 'in_transit' ? 'bg-blue-100 text-blue-800' :
+                                        order.status === 'route_to_pickup' ? 'bg-purple-100 text-purple-800' :
+                                        order.status === 'driver_assigned' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-gray-100 text-gray-800'}>
+                          {order.status?.replace('_', ' ')}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-gray-600 mt-1">
+                        Customer: {order.customer_info?.name || 'N/A'}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-lg font-semibold text-green-600">
+                        ${order.pricing?.estimated_usd || '0'}
+                      </p>
+                      {order.progress && (
+                        <p className="text-xs text-gray-500">
+                          {order.progress.progressPercentage}% complete
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2 mb-3">
+                    <div className="flex items-start space-x-2">
+                      <MapPin className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Pickup:</p>
+                        <p className="text-sm text-gray-600">{order.pickup_location?.address || 'N/A'}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start space-x-2">
+                      <MapPin className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm font-medium">Delivery:</p>
+                        <p className="text-sm text-gray-600">{order.delivery_location?.address || 'N/A'}</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 text-sm text-gray-600">
+                      <span>📦 {order.package_details?.category || 'General'}</span>
+                      <span>⚖️ {order.package_details?.weight_kg || 0} kg</span>
+                      <span>📐 {order.package_details?.volume_m3 || 0} m³</span>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                      {order.status === 'pending' && (
+                        <>
+                          <Button 
+                            onClick={() => handleAcceptOrder(order.id)}
+                            size="sm"
+                            className="bg-green-600 hover:bg-green-700"
+                          >
+                            Accept Order
+                          </Button>
+                          <Button 
+                            onClick={() => handleRejectOrder(order.id, 'Driver unavailable')}
+                            size="sm"
+                            variant="destructive"
+                          >
+                            Reject
+                          </Button>
+                          {timeRemaining[order.id] > 0 && (
+                            <div className="text-xs text-orange-600 mt-1">
+                              Auto-reject in: {Math.floor(timeRemaining[order.id] / 60)}:{String(timeRemaining[order.id] % 60).padStart(2, '0')}
+                            </div>
+                          )}
+                        </>
+                      )}
+                      
+                      {order.status === 'driver_assigned' && (
+                        <Button 
+                          onClick={() => handleUpdateOrderStatus(order.id, 'route_to_pickup')}
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          <Navigation className="h-4 w-4 mr-1" />
+                          Start to Pickup
+                        </Button>
+                      )}
+                      
+                      {order.status === 'route_to_pickup' && (
+                        <Button 
+                          onClick={() => handleUpdateOrderStatus(order.id, 'in_transit')}
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-700"
+                        >
+                          <Truck className="h-4 w-4 mr-1" />
+                          Start Delivery
+                        </Button>
+                      )}
+                      
+                      {order.status === 'in_transit' && (
+                        <Button 
+                          onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700"
+                        >
+                          <CheckCircle className="h-4 w-4 mr-1" />
+                          Mark Delivered
+                        </Button>
+                      )}
+                      
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={() => window.location.href = `/order-tracking?orderId=${order.id}`}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  
+                  {/* Timer display for pending orders */}
+                  {order.status === 'pending' && timeRemaining[order.id] > 0 && (
+                    <div className="mt-3 pt-2 border-t">
+                      <div className="text-xs text-orange-600">
+                        Auto-reject in: {Math.floor(timeRemaining[order.id] / 60)}:{String(timeRemaining[order.id] % 60).padStart(2, '0')} minutes
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Pending Orders */}
+      {/* Pending Orders - Available Orders Near You */}
       {pendingOrders.length > 0 && (
         <Card>
           <CardHeader>

@@ -11,6 +11,7 @@ import debounce from 'lodash/debounce';
 import { useLanguage } from './LanguageContext';
 import { Badge } from "./ui/badge";
 import { getAuthToken, getCurrentUser } from '../src/lib/api';
+import { orderApi } from '../src/lib/api';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "./ui/dialog";
 import axios from 'axios';
 
@@ -845,7 +846,7 @@ export function CustomerBooking() {
 
       // Driver information
       driverInfo: selectedDriverData ? {
-        id: selectedDriver,
+        id: selectedDriverData.userId,
         driverId: selectedDriverData.driverId,
         userId: selectedDriverData.userId,
         name: `${selectedDriverData.user.firstName} ${selectedDriverData.user.lastName}`,
@@ -957,40 +958,29 @@ export function CustomerBooking() {
   const createOrder = async (orderData: any) => {
     try {
       const token = getAuthToken();
-      
-      console.log('📦 Sending Order Data to API:', JSON.stringify(orderData, null, 2));
-      
-      const response = await fetch('http://localhost:3004/api/orders/create', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(orderData),
-      });
 
-      if (!response.ok) {
-        throw new Error(`Order creation failed: ${response.status}`);
-      }
+      console.log('📦 Sending Order Data to Order Service:', JSON.stringify(orderData, null, 2));
 
-      const data = await response.json();
-      
-      if (data.success) {
+      // Use the orderApi instead of direct fetch
+      const response = await orderApi.createOrder(orderData);
+
+      if (response.success) {
         toast.success(t('customer.booking.order_created'));
-        
         console.log('✅ Order Created Successfully!');
         console.log('📊 Order ID:', orderData.orderId);
         console.log('📍 Pickup Coordinates:', orderData.locations.pickup.coordinates);
         console.log('📍 Delivery Coordinates:', orderData.locations.delivery.coordinates);
-        console.log('💰 Price:', orderData.pricing.estimatedPrice.formatted.usd);
-        
+        console.log('💰 Price:', orderData.pricing.estimatedPrice.formatted?.usd);
+        return response;
       } else {
-        toast.error(data.error || t('customer.booking.order_creation_failed'));
+        toast.error(response.error || t('customer.booking.order_creation_failed'));
+        return null;
       }
-      
+
     } catch (error: any) {
       console.error('Error creating order:', error);
       toast.error(t('customer.booking.order_service_error'));
+      return null;
     }
   };
 

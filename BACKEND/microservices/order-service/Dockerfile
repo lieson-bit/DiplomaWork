@@ -44,7 +44,7 @@ USER nodejs
 
 # Expose ports
 EXPOSE 3004
-EXPOSE 8080
+# EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

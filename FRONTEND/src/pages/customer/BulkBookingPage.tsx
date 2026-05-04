@@ -1,5 +1,5 @@
 import React from 'react';
-import { BulkBooking } from '../../components/BulkBooking';
+import { BulkBooking } from '../../keep/BulkBooking';
 
 /**
  * Bulk Booking Page

@@ -1,0 +1,492 @@
+# Order Service Microservice - Complete System Description
+
+## 📋 **Service Overview**
+
+The **Order Service** is a critical microservice in a delivery platform that manages the entire lifecycle of delivery orders - from creation to completion. It handles order management, driver assignment, real-time tracking, payments, messaging, and route optimization.
+
+## 🎯 **Primary Functions**
+
+### 1. **Order Management**
+- Receive orders from customer booking form with complete order structure
+- Store order details in database (pickup/delivery addresses, package details, pricing)
+- Track order status through 5-step workflow
+- Maintain order history with timestamps
+
+### 2. **Capacity Management**
+- Check driver's vehicle capacity before assigning orders
+- Fetch vehicle max weight/volume from Driver Service API
+- Calculate current load from active orders in database
+- Prevent overloading by rejecting orders that exceed capacity
+- Provide recommendations when capacity is exceeded
+
+### 3. **Driver Acceptance Flow**
+- Notify driver when new order is assigned (via in-memory notifications)
+- Allow driver to accept or reject orders
+- Process payment deduction from customer when driver accepts
+- Add pending balance to driver's account
+- Update order status from 'pending' to 'driver_assigned'
+
+### 4. **Status Tracking (5-Step Progress)**
+```
+Step 1: Order Placed (pending)
+Step 2: Driver Assigned (driver_assigned) 
+Step 3: Route to Pickup (route_to_pickup)
+Step 4: In Transit (in_transit)
+Step 5: Delivered (delivered)
+```
+- Driver updates status as they progress through delivery
+- Each status change triggers notifications for customer
+- Progress percentage calculated automatically (0%, 25%, 50%, 75%, 100%)
+- Timestamps recorded for each milestone
+
+### 5. **Payment System (Simple Balance-Based)**
+- No external payment API integration
+- Customer balance deducted when driver accepts order
+- Driver receives pending balance on acceptance
+- Pending balance released to available when order delivered
+- Track weekly spending (customer) and earnings (driver)
+- Maintain total earned/spent balances
+
+### 6. **Route Optimization**
+- Traveling Salesman Problem (TSP) algorithm implementation
+- Optimizes delivery sequence for drivers with multiple orders
+- Constraint: Pickup must come before delivery for each order
+- Calculates shortest distance and estimated time
+- Shows optimized route with labeled order sequence
+- Calculates estimated savings vs non-optimized route
+
+### 7. **Messaging System**
+- Simple in-app text messaging between customer and driver
+- Messages stored in database with timestamps
+- Track read/unread status
+- No real-time WebSocket - uses HTTP polling
+
+### 8. **Rating System**
+- Customer rates driver after delivery (1-5 stars)
+- New rating formula: (current average + new rating) / 2
+- Store individual ratings and calculate new average
+- Optional review text
+
+### 9. **Notification System**
+- Simple in-memory notification queue (no WebSocket)
+- UI polls for notifications every 5-10 seconds
+- Notification types: order_created, order_accepted, status_update, new_message, new_rating
+- Mark notifications as read
+
+### 10. **Location Tracking**
+- Store driver GPS coordinates during delivery
+- Update order with current driver location
+- Customers can view driver's real-time position on map
+- Track complete route history for completed deliveries
+
+## 📁 **Complete File Structure**
+
+```
+order-service/
+├── Dockerfile                          # Container configuration
+├── package.json                        # Dependencies (no WebSocket)
+├── tsconfig.json                       # TypeScript configuration
+├── .env                                # Environment variables
+├── sql/
+│   └── schema.sql                      # Database tables definition
+├── src/
+│   ├── index.ts                        # Server entry point
+│   ├── app.ts                          # Express app configuration
+│   │
+│   ├── config/
+│   │   └── database.ts                 # MySQL connection pool
+│   │
+│   ├── controllers/
+│   │   └── order.controller.ts         # HTTP request handlers
+│   │
+│   ├── middleware/
+│   │   ├── auth.middleware.ts          # JWT authentication
+│   │   ├── error.middleware.ts         # Global error handler
+│   │   └── validation.middleware.ts    # Request validation
+│   │
+│   ├── repositories/
+│   │   ├── order.repository.ts         # Order database operations
+│   │   └── tracking.repository.ts      # Location tracking DB ops
+│   │
+│   ├── routes/
+│   │   └── order.routes.ts             # API endpoint definitions
+│   │
+│   ├── services/
+│   │   ├── order.service.ts            # Core business logic
+│   │   ├── balance.service.ts          # Payment balance management
+│   │   ├── route-optimization.service.ts # TSP route optimization
+│   │   ├── messaging.service.ts        # In-app messaging
+│   │   └── tracking.service.ts         # Location tracking logic
+│   │
+│   ├── types/
+│   │   └── index.ts                    # TypeScript interfaces
+│   │
+│   └── utils/
+│       ├── logger.ts                   # Winston logging
+│       ├── response.util.ts            # Standard API responses
+│       ├── httpClient.ts               # HTTP requests to other services
+│       └── distance.util.ts            # Distance calculation helpers
+│
+└── test-order-flow.ps1                 # PowerShell test script
+```
+
+## 🔌 **API Endpoints**
+
+### Order Endpoints
+| Method | Endpoint | Description | Access |
+|--------|----------|-------------|--------|
+| POST | `/api/orders/receive` | Create new order | Service Secret |
+| GET | `/api/orders/:id/progress` | Get order with progress | Customer/Driver |
+| POST | `/api/orders/:id/accept` | Driver accepts order | Driver |
+| POST | `/api/orders/:id/reject` | Driver rejects order | Driver |
+| PATCH | `/api/orders/:id/status` | Update order status | Driver |
+| POST | `/api/orders/:id/messages` | Send message | Customer/Driver |
+| POST | `/api/orders/:id/rate` | Rate driver | Customer |
+
+### Customer Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/customer/orders` | Get customer's orders |
+
+### Driver Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/driver/orders` | Get driver's orders |
+| GET | `/api/driver/route/optimized` | Get optimized route |
+
+### Balance Endpoint
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/balance` | Get user balance |
+
+### Notification Endpoint
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/notifications` | Poll for notifications |
+
+## 🗄️ **Database Schema (8 Tables)**
+
+### 1. **orders** - Main order table
+- Order ID, number, customer/driver IDs
+- Status tracking (pending → driver_assigned → route_to_pickup → in_transit → delivered)
+- Pickup/delivery addresses with coordinates
+- Package details (weight, volume, category)
+- Driver and vehicle information
+- Pricing and payment status
+- Timestamps for each milestone
+- Driver rating and customer review
+
+### 2. **order_status_history** - Audit trail
+- Records every status change
+- Who changed it and when
+- Previous and new status
+
+### 3. **order_messages** - Communication
+- Messages between customer and driver
+- Sender type, content, timestamp
+- Read/unread status
+
+### 4. **user_balances** - Payment balances
+- Available balance
+- Pending balance
+- Total earned (drivers) / spent (customers)
+- Currency
+
+### 5. **balance_transactions** - Transaction history
+- Each payment, refund, adjustment
+- Linked to orders
+- Before/after balances
+
+### 6. **driver_ratings** - Rating history
+- Individual ratings per order
+- Review text
+- Calculates driver's average rating
+
+### 7. **location_tracking** - GPS tracking
+- Real-time driver coordinates
+- Speed, bearing, accuracy
+- Timestamp for each point
+
+### 8. **driver_capacity_tracking** - Capacity monitoring
+- Daily capacity utilization
+- Weight and volume carried
+- Efficiency scores
+
+## 🔄 **Service Dependencies**
+
+### External Services Called
+- **Driver Service** (`http://localhost:3002`)
+  - Endpoint: `GET /api/drivers/{id}/vehicles-picture`
+  - Returns vehicle capacity (maxWeight, maxVolume)
+
+### External Services That Call This Service
+- **Customer Booking UI** - Creates orders via `/api/orders/receive`
+- **Driver App** - Accepts/rejects orders, updates status
+
+## 📊 **Order Workflow**
+
+```
+1. Customer submits order via UI
+   ↓
+2. Order Service receives order with driver pre-selected
+   ↓
+3. Capacity check: 
+   - Fetch driver's vehicle capacity from Driver Service
+   - Query active orders from database
+   - Calculate if new order fits
+   ↓
+4. If capacity exceeded → Reject with recommendations
+   ↓
+5. If capacity OK → Save order to database (status: 'pending')
+   ↓
+6. Add notification for driver (polling endpoint)
+   ↓
+7. Driver sees notification, accepts/rejects
+   ↓
+8. If accepted:
+   - Update status to 'driver_assigned'
+   - Deduct payment from customer balance
+   - Add pending balance to driver
+   ↓
+9. Driver updates status as they progress:
+   - 'route_to_pickup' → Customer notified
+   - 'in_transit' → Customer notified
+   - 'delivered' → Release driver's pending balance
+   ↓
+10. Customer rates driver (1-5 stars)
+    - New average = (old_avg + new_rating) / 2
+```
+
+## 🔐 **Authentication**
+
+- **JWT Tokens** for customer/driver endpoints
+- **Service Secret** (`x-service-secret` header) for service-to-service calls
+- Tokens contain: userId, userType (customer/driver)
+
+## 📝 **Environment Variables Required**
+
+```env
+# Server
+PORT=3004
+NODE_ENV=development
+
+# Database
+MYSQL_HOST=localhost
+MYSQL_PORT=3306
+MYSQL_USER=order_user
+MYSQL_PASSWORD=order_pass
+MYSQL_DATABASE=order_service_db
+
+# JWT
+JWT_SECRET=your_jwt_secret_key
+
+# Service Communication
+SERVICE_SECRET=shared_service_secret_key
+DRIVER_SERVICE_URL=http://localhost:3002
+CUSTOMER_SERVICE_URL=http://localhost:3001
+
+# Geocoding (optional)
+GEOCODING_API_KEY=your_api_key
+GEOCODING_API_URL=https://maps.googleapis.com/maps/api
+```
+
+## 🚀 **How to Deploy**
+
+```bash
+# Install dependencies (no WebSocket)
+npm install
+
+# Build TypeScript
+npm run build
+
+# Start server
+npm start
+
+# Development mode
+npm run dev
+```
+
+## 📤 **Expected Order Input Format**
+
+The service accepts orders in this exact structure:
+```json
+{
+  "orderId": "ORD-1776952458747-w2vn9kd9t",
+  "status": "pending",
+  "createdAt": "2026-04-23T13:54:18.747Z",
+  "lastUpdated": "2026-04-23T13:54:18.747Z",
+  "customerInfo": {
+    "id": "1d25b961-0870-4f92-991d-6f966f595658",
+    "name": "Makolas Jones",
+    "email": "mwale22@gmail.com",
+    "phone": "0963884441",
+    "userType": "customer"
+  },
+  "locations": {
+    "pickup": {
+      "address": "Zagorodnyi prospekt, 24, Sankt-Peterburg, Russia, 191002",
+      "coordinates": {
+        "lat": 59.9606739,
+        "lng": 30.1586551
+      },
+      "geocoded": true,
+      "geocodingMethod": "Nominatim",
+      "accuracy": "medium"
+    },
+    "delivery": {
+      "address": "Варшавская улица, округ Московская застава, Санкт-Петербург, Северо-Западный федеральный округ, 196128, Россия",
+      "coordinates": {
+        "lat": 59.8827928,
+        "lng": 30.3123525
+      },
+      "geocoded": true,
+      "geocodingMethod": "Nominatim",
+      "accuracy": "medium"
+    },
+    "distance": {
+      "km": 6.931,
+      "miles": 4.306722401
+    }
+  },
+  "packageDetails": {
+    "category": "construction",
+    "categoryLabel": "Construction Materials",
+    "weight": {
+      "value": 4,
+      "unit": "kg"
+    },
+    "volume": {
+      "value": 2,
+      "unit": "m³"
+    },
+    "urgency": "normal",
+    "urgencyLabel": "normal"
+  },
+  "specialRequirements": {
+    "fragile": false,
+    "refrigerated": false,
+    "oversized": false,
+    "hazardous": false,
+    "requirementsList": []
+  },
+  "driverInfo": {
+    "id": "1358764d-1e0b-44bd-a735-ca0fc71732f1",
+    "driverId": "1358764d-1e0b-44bd-a735-ca0fc71732f1",
+    "userId": "7383849d-c318-4fd7-8c62-6e9981beadc5",
+    "name": "Lieson Mwale",
+    "phone": "0963884441",
+    "email": "lieson22@gmail.com",
+    "rating": 4.800000190734863,
+    "matchScore": 73,
+    "suitability": "good",
+    "estimatedArrival": "12 mins"
+  },
+  "vehicleInfo": {
+    "type": "small_van",
+    "typeFormatted": "Small Van",
+    "make": "Ford",
+    "model": "Transit",
+    "licensePlate": "ABD-25",
+    "capacity": {
+      "maxWeight": 100,
+      "maxVolume": 10,
+      "unit": {
+        "weight": "kg",
+        "volume": "m³"
+      }
+    },
+    "imageUrl": "http://localhost:3002/uploads/vehicles/7383849d-c318-4fd7-8c62-6e9981beadc5/a2b128a2-abeb-438c-8f42-f4d925089f3c_1769541668103.jpg",
+    "imageError": false
+  },
+  "pricing": {
+    "estimatedPrice": {
+      "usd": 5.361402409532335,
+      "rub": 482.5262168579102,
+      "formatted": {
+        "usd": "$5.36",
+        "rub": "₽482.53"
+      }
+    },
+    "confidenceInterval": {
+      "low": 410.1472843292237,
+      "high": 554.9051493865967,
+      "formatted": "$4.56 - $6.17"
+    },
+    "currency": "USD",
+    "baseCurrency": "RUB"
+  },
+  "timing": {
+    "estimatedDuration": {
+      "minutes": 18.383333333333333,
+      "text": "18 mins",
+      "formatted": "18 mins"
+    },
+    "pickupTime": {
+      "estimated": "2026-04-23T13:54:18.747Z",
+      "driverArrival": "12 mins minutes"
+    },
+    "deliveryTime": {
+      "estimated": "2026-04-23T14:12:41.747Z",
+      "scheduled": "2026-04-23T14:12:41.747Z"
+    },
+    "urgencyLevel": "normal",
+    "serviceHours": "24/7"
+  },
+  "systemInfo": {
+    "geocodingStatus": {
+      "pickup": "success",
+      "delivery": "success"
+    },
+    "calculationTimestamp": "2026-04-23T16:44:43.644282",
+    "apiVersion": "1.0",
+    "source": "customer-booking-form"
+  },
+  "metadata": {
+    "geocodingAttempts": 1,
+    "driverSelectionTime": "2026-04-23T13:54:18.747Z",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+    "platform": "web"
+  }
+}
+```
+
+## ⚠️ **Important Notes**
+
+1. **No WebSocket** - Uses HTTP polling for notifications
+2. **Simple Payment** - No external payment API, balance-based only
+3. **Capacity Check** - Requires Driver Service to be running
+4. **Route Optimization** - Works with 2+ active orders per driver
+5. **Notifications** - Stored in memory (lost on restart), UI polls every 5-10 seconds
+
+---
+
+## 📋 **Files Checklist for New Chat**
+
+When starting a new chat, provide these files in this order:
+
+1. `package.json`
+2. `src/index.ts`
+3. `src/app.ts`
+4. `src/config/database.ts`
+5. `src/controllers/order.controller.ts`
+6. `src/middleware/auth.middleware.ts`
+7. `src/middleware/validation.middleware.ts`
+8. `src/middleware/error.middleware.ts`
+9. `src/repositories/order.repository.ts`
+10. `src/repositories/tracking.repository.ts`
+11. `src/routes/order.routes.ts`
+12. `src/services/order.service.ts`
+13. `src/services/balance.service.ts`
+14. `src/services/route-optimization.service.ts`
+15. `src/services/messaging.service.ts`
+16. `src/services/tracking.service.ts`
+17. `src/types/index.ts`
+18. `src/utils/logger.ts`
+19. `src/utils/response.util.ts`
+20. `src/utils/httpClient.ts`
+21. `src/utils/distance.util.ts`
+22. `sql/schema.sql`
+23. `Dockerfile`
+24. `tsconfig.json`
+
+**This service is ready to be edited. Tell me what changes you need!**

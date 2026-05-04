@@ -1,4 +1,4 @@
-import { Server } from 'http';
+/*import { Server } from 'http';
 import { WebSocketUtil } from './websocket.util';
 import { Logger } from './logger';
 
@@ -79,4 +79,4 @@ class WebSocketManager {
   }
 }
 
-export const webSocketManager = WebSocketManager.getInstance();
+export const webSocketManager = WebSocketManager.getInstance();*/

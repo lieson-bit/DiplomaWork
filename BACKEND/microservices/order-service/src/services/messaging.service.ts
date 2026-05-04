@@ -151,21 +151,22 @@ export class MessagingService {
   
   // Get user name
   private async getUserName(userId: string, userType: string): Promise<string> {
-    try {
-      if (userType === 'customer') {
-        const query = `SELECT pickup_contact_name as name FROM orders WHERE customer_id = ? LIMIT 1`;
-        const result = await db.queryOne<any>(query, [userId]);
-        return result?.name || 'Customer';
-      } else {
-        const query = `SELECT pickup_contact_name as name FROM orders WHERE driver_id = ? LIMIT 1`;
-        const result = await db.queryOne<any>(query, [userId]);
-        return result?.name || 'Driver';
-      }
-    } catch {
-      return userType === 'customer' ? 'Customer' : 'Driver';
+  try {
+    if (userType === 'customer') {
+      // FIX: Use customer_name instead of pickup_contact_name
+      const query = `SELECT customer_name as name FROM orders WHERE customer_id = ? LIMIT 1`;
+      const result = await db.queryOne<any>(query, [userId]);
+      return result?.name || 'Customer';
+    } else {
+      // FIX: Use driver_name instead of pickup_contact_name
+      const query = `SELECT driver_name as name FROM orders WHERE driver_id = ? LIMIT 1`;
+      const result = await db.queryOne<any>(query, [userId]);
+      return result?.name || 'Driver';
     }
+  } catch {
+    return userType === 'customer' ? 'Customer' : 'Driver';
   }
 }
-
+}
 // Export singleton instance
 export const messagingService = new MessagingService();

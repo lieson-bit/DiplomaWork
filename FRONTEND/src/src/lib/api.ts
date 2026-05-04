@@ -1,5 +1,4 @@
 import { MICROSERVICES_CONFIG } from '../config/environment';
-
 // ==========================================
 // Helper Functions
 // ==========================================
@@ -465,12 +464,127 @@ export const customerApi = {
   },
 };
 
+
+
 // ==========================================
-// Export Default
+// Order Service API
 // ==========================================
 
+// Helper function for order requests
+async function makeOrderRequest<T = any>(
+  endpoint: string,
+  method: string = 'GET',
+  body?: any,
+  includeServiceSecret: boolean = false
+): Promise<{
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+  status?: number;
+}> {
+  try {
+    const token = getAuthToken();
+    const url = `http://localhost:3004${endpoint}`;
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    if (includeServiceSecret) {
+      headers['x-service-secret'] = 'shared_service_secret_key_1234567890';
+    }
+
+    const config: RequestInit = {
+      method,
+      headers,
+    };
+
+    if (body && method !== 'GET') {
+      config.body = JSON.stringify(body);
+    }
+
+    console.log(`🌐 Order Service ${method} ${url}`);
+
+    const response = await fetch(url, config);
+    const data = await response.json();
+
+    console.log(`📨 Order Service ${response.status}:`, data);
+
+    if (response.status === 401) {
+      return {
+        success: false,
+        error: 'Session expired. Please login again.',
+        status: 401,
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: data.error || data.message || `HTTP ${response.status}`,
+        status: response.status,
+      };
+    }
+
+    return {
+      success: true,
+      data: data.data || data,
+      message: data.message,
+      status: response.status,
+    };
+  } catch (error: any) {
+    console.error('❌ Order Service Error:', error);
+    return {
+      success: false,
+      error: error.message || 'Network error',
+      status: 0,
+    };
+  }
+}
+
+// Create orderApi object
+const orderApi = {
+  createOrder: async (data: any) => makeOrderRequest('/api/orders/receive', 'POST', data, true),
+  getOrderProgress: async (orderId: string) => makeOrderRequest(`/api/orders/${orderId}/progress`, 'GET'),
+  getOrderTracking: async (orderId: string) => makeOrderRequest(`/api/orders/${orderId}/tracking`, 'GET'),
+  getOrderMessages: async (orderId: string) => makeOrderRequest(`/api/orders/${orderId}/messages`, 'GET'),
+  sendMessage: async (orderId: string, content: string) => makeOrderRequest(`/api/orders/${orderId}/messages`, 'POST', { content }),
+  rateDriver: async (orderId: string, rating: number, review?: string) => makeOrderRequest(`/api/orders/${orderId}/rate`, 'POST', { rating, review }),
+  getBalance: async () => makeOrderRequest('/api/balance', 'GET'),
+  getCustomerOrders: async (status?: string, page: number = 1, limit: number = 20) => {
+    let url = `/api/customer/orders?page=${page}&limit=${limit}`;
+    if (status) url += `&status=${status}`;
+    return makeOrderRequest(url, 'GET');
+  },
+  getDriverOrders: async (status?: string, page: number = 1, limit: number = 20) => {
+    let url = `/api/driver/orders?page=${page}&limit=${limit}`;
+    if (status) url += `&status=${status}`;
+    return makeOrderRequest(url, 'GET');
+  },
+  acceptOrder: async (orderId: string) => makeOrderRequest(`/api/orders/${orderId}/accept`, 'POST', {}),
+  rejectOrder: async (orderId: string, reason?: string) => makeOrderRequest(`/api/orders/${orderId}/reject`, 'POST', { reason }),
+  updateOrderStatus: async (orderId: string, status: string, location?: { lat: number; lng: number }) => 
+    makeOrderRequest(`/api/orders/${orderId}/status`, 'PATCH', { status, location }),
+  getOptimizedRoute: async () => makeOrderRequest('/api/driver/route/optimized', 'GET'),
+  getNotifications: async (markAsRead: boolean = false) => makeOrderRequest(`/api/notifications?markAsRead=${markAsRead}`, 'GET'),
+};
+
+// ==========================================
+// EXPORTS - THIS IS THE IMPORTANT PART
+// ==========================================
+
+// Named export for orderApi (what you're trying to import)
+export { orderApi };
+
+// Default export with all APIs
 export default {
   auth: authApi,
   driver: driverApi,
   customer: customerApi,
+  order: orderApi,
 };

@@ -159,7 +159,10 @@ export interface CreateOrderData {
   // Communication
   unread_customer_messages?: number;
   unread_driver_messages?: number;
-  
+  customer_rating?: number | null;
+  customer_review?: string | null;
+  rating_given_at?: Date | null;
+
   // Capacity check
   capacity_check_passed?: boolean;
   capacity_check_data?: any;
@@ -327,24 +330,23 @@ export class OrderRepository {
     try {
       let sql = 'SELECT * FROM orders WHERE customer_id = ?';
       const params: any[] = [customerId];
-      
+
       if (options?.status) {
         sql += ' AND status = ?';
         params.push(options.status);
       }
-      
+
       sql += ' ORDER BY created_at DESC';
-      
+
+      // FIX: Use direct values for LIMIT and OFFSET
       if (options?.limit) {
-        sql += ' LIMIT ?';
-        params.push(options.limit);
+        sql += ` LIMIT ${options.limit}`;
       }
-      
+
       if (options?.offset) {
-        sql += ' OFFSET ?';
-        params.push(options.offset);
+        sql += ` OFFSET ${options.offset}`;
       }
-      
+
       return await db.query<Order>(sql, params);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -375,14 +377,13 @@ export class OrderRepository {
       
       sql += ' ORDER BY created_at DESC';
       
+      // FIX: Use direct values for LIMIT and OFFSET
       if (options?.limit) {
-        sql += ' LIMIT ?';
-        params.push(options.limit);
+        sql += ` LIMIT ${options.limit}`;
       }
       
       if (options?.offset) {
-        sql += ' OFFSET ?';
-        params.push(options.offset);
+        sql += ` OFFSET ${options.offset}`;
       }
       
       return await db.query<Order>(sql, params);
@@ -429,15 +430,14 @@ export class OrderRepository {
     }
   }
 
-  async getDriverActiveOrders(driverId: string, excludeOrderId?: string): Promise<any[]> {
+  // Add this method to OrderRepository class
+async getDriverActiveOrders(driverId: string, excludeOrderId?: string): Promise<any[]> {
   try {
     const activeStatuses = [
       'driver_assigned',
       'route_to_pickup',
       'in_transit'
     ];
-    
-    this.logger.debug(`Getting active orders for driver ${driverId} with statuses: ${activeStatuses.join(', ')}`);
     
     let sql = `
       SELECT id, weight_kg, volume_m3 
@@ -453,13 +453,11 @@ export class OrderRepository {
       params.push(excludeOrderId);
     }
     
-    this.logger.debug(`Executing query: ${sql} with params: ${JSON.stringify(params)}`);
     const orders = await db.query<any>(sql, params);
-    this.logger.debug(`Found ${orders.length} active orders for driver ${driverId}`);
-    
     return orders || [];
+    
   } catch (error) {
-    this.logger.error(`Failed to get driver active orders for driver ${driverId}:`, error);
+    this.logger.error(`Failed to get driver active orders:`, error);
     return [];
   }
 }

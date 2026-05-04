@@ -1,51 +1,46 @@
-// index.ts
+// src/index.ts
 import 'dotenv/config';
 import app from './app';
 import { createServer } from 'http';
 import { Logger } from './utils/logger';
 import { db } from './config/database';
-import { webSocketManager } from './utils/websocket.manager';
 
 const logger = new Logger('Server');
-
 const PORT = process.env.PORT || 3004;
 
-// Create HTTP server
+// Create HTTP server (no WebSocket)
 const server = createServer(app);
 
-// STEP 1: Initialize WebSocket FIRST before anything else that depends on it
-logger.info('🚀 Initializing WebSocket server...');
-const wss = webSocketManager.initialize(server);
-logger.info(`🔌 WebSocket initialized: ${webSocketManager.isInitialized() ? '✅' : '❌'}`);
-
-// STEP 2: Import services that depend on WebSocket (after WebSocket is initialized)
+// Import services
 import { OrderRepository } from './repositories/order.repository';
 import { TrackingRepository } from './repositories/tracking.repository';
-import { NotificationService } from './services/notification.service';
 import { OrderService } from './services/order.service';
+import { BalanceService } from './services/balance.service';
+import { RouteOptimizationService } from './services/route-optimization.service';
+import { MessagingService } from './services/messaging.service';
 
-// STEP 3: Create repositories
+// Create repositories
 const orderRepository = new OrderRepository();
 const trackingRepository = new TrackingRepository();
 
-// STEP 4: Create notification service with the initialized WebSocket
-// This ensures notification service has WebSocket from the start
-const notificationService = new NotificationService(wss);
-logger.info('📨 NotificationService created with WebSocket');
+// Create services
+const balanceService = new BalanceService();
+const routeOptimizationService = new RouteOptimizationService();
+const messagingService = new MessagingService();
 
-// STEP 5: Create order service with all dependencies
+// Create order service (no WebSocket dependencies)
 const orderService = new OrderService(
-  wss,
-  notificationService,
   orderRepository,
-  trackingRepository
+  trackingRepository,
+  balanceService,
+  routeOptimizationService,
+  messagingService
 );
-logger.info('📦 OrderService created');
 
-// Export for use in routes and controllers
-export { server, orderService, notificationService, wss };
+// Export for use in routes
+export { server, orderService, balanceService, routeOptimizationService, messagingService };
 
-// Test database connection on startup
+// Test database connection
 async function testDatabaseConnection(): Promise<boolean> {
   try {
     const isConnected = await db.testConnection();
@@ -62,23 +57,6 @@ async function testDatabaseConnection(): Promise<boolean> {
   }
 }
 
-// Test external service connections
-async function testServiceConnections(): Promise<void> {
-  const services = [
-    { name: 'User Service', url: process.env.USER_SERVICE_URL },
-    { name: 'Driver Service', url: process.env.DRIVER_SERVICE_URL },
-    { name: 'Customer Service', url: process.env.CUSTOMER_SERVICE_URL },
-  ];
-
-  for (const service of services) {
-    if (service.url) {
-      logger.info(`✅ ${service.name} configured at ${service.url}`);
-    } else {
-      logger.warn(`⚠️  ${service.name} URL not configured`);
-    }
-  }
-}
-
 // Graceful shutdown
 function setupGracefulShutdown(): void {
   const shutdown = async (signal: string): Promise<void> => {
@@ -90,12 +68,6 @@ function setupGracefulShutdown(): void {
     }, 10000);
     
     try {
-      // Close WebSocket server
-      if (wss) {
-        await wss.close();
-        logger.info('✅ WebSocket server closed');
-      }
-      
       // Close database connections
       if (db && typeof db.close === 'function') {
         await db.close();
@@ -121,62 +93,26 @@ function setupGracefulShutdown(): void {
   
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGQUIT', () => shutdown('SIGQUIT'));
-  
   process.on('uncaughtException', (error) => {
     logger.error('❌ Uncaught Exception:', error);
     shutdown('UNCAUGHT_EXCEPTION');
-  });
-  
-  process.on('unhandledRejection', (reason, promise) => {
-    logger.error('❌ Unhandled Rejection at:', { promise, reason });
-    shutdown('UNHANDLED_REJECTION');
   });
 }
 
 // Start server
 async function startServer(): Promise<void> {
   try {
-    // Test database connection
-    const isDbConnected = await testDatabaseConnection();
-    if (!isDbConnected) {
-      if (process.env.NODE_ENV === 'production') {
-        logger.error('❌ Cannot start server without database connection');
-        process.exit(1);
-      } else {
-        logger.warn('⚠️ Starting server without database connection (development mode)');
-      }
-    }
+    await testDatabaseConnection();
     
-    // Check if tables exist
-    try {
-      await db.query('SELECT 1 FROM orders LIMIT 1');
-      logger.info('✅ Database tables are ready');
-    } catch (error) {
-      logger.warn('⚠️ Database tables may not exist. Please run schema.sql manually.');
-    }
-    
-    // Test service connections
-    await testServiceConnections();
-    
-    // Setup graceful shutdown
     setupGracefulShutdown();
     
-    // Start HTTP server
     server.listen(PORT, () => {
       logger.info('🚀 Order Service is running');
       logger.info(`📡 HTTP: http://localhost:${PORT}`);
-      logger.info(`🔌 WebSocket: ws://localhost:${PORT}/ws`);
       logger.info(`📊 Health check: http://localhost:${PORT}/health`);
       logger.info(`📚 API Docs: http://localhost:${PORT}/api-docs`);
       logger.info(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
-      
-      // Log WebSocket status after server is fully started
-      logger.info(`🔌 WebSocket status: ${webSocketManager.isInitialized() ? '✅ Active' : '❌ Not initialized'}`);
-      
-      // Log service status
-      logger.info(`📨 Notification service: ✅ Ready`);
-      logger.info(`📦 Order service: ✅ Ready`);
+      logger.info(`📨 Notifications: HTTP Polling (GET /api/notifications)`);
     });
     
     server.on('error', (error: NodeJS.ErrnoException) => {
@@ -195,8 +131,4 @@ async function startServer(): Promise<void> {
   }
 }
 
-// Start the server
 startServer();
-
-// Export the server instance for testing
-export default wss;

@@ -1,877 +1,924 @@
-// services/order.service.ts
+// src/services/order.service.ts
 import { Logger } from '../utils/logger';
-import { Order, CreateOrderData } from '../repositories/order.repository';
-import { orderRepository, OrderRepository } from '../repositories/order.repository';
-import { trackingRepository, TrackingRepository } from '../repositories/tracking.repository';
-import { NotificationService } from './notification.service';
-import { MessagingService } from './messaging.service';
+import { OrderRepository, Order, CreateOrderData } from '../repositories/order.repository';
+import { TrackingRepository } from '../repositories/tracking.repository';
 import { BalanceService } from './balance.service';
-import { CapacityOptimizationService } from './capacity-optimization.service';
-import { WebSocketUtil } from '../utils/websocket.util';
+import { RouteOptimizationService, OptimizedRoute } from './route-optimization.service';
+import { MessagingService } from './messaging.service';
 import { OrderReceiveRequest } from '../types/index';
 import { v4 as uuidv4 } from 'uuid';
 
-export class OrderService {
-  private logger: Logger;
-  private notificationService: NotificationService;
-  private messagingService: MessagingService;
-  private balanceService: BalanceService;
-  private websocketUtil: WebSocketUtil;
-  private capacityOptimizationService: CapacityOptimizationService;
-  private orderRepository: OrderRepository;
-  private trackingRepository: TrackingRepository;
-
-  // Update the constructor to accept nullable WebSocket
-constructor(
-  websocketUtil: WebSocketUtil | null, // Allow null
-  notificationService?: NotificationService,
-  customOrderRepository?: OrderRepository,
-  customTrackingRepository?: TrackingRepository
-) {
-  this.logger = new Logger('OrderService');
-
-  this.logger.info('OrderService constructor', {
-    hasWebSocket: !!websocketUtil,
-    websocketType: typeof websocketUtil
-  });
-
-  // Store websocketUtil (may be null)
-  this.websocketUtil = websocketUtil as WebSocketUtil; // We'll handle null checks in methods
-
-  if (notificationService) {
-    this.notificationService = notificationService;
-    this.logger.info('Using provided notification service');
-  } else {
-    this.logger.info('Creating new notification service');
-    this.notificationService = new NotificationService(websocketUtil);
-  }
-  
-  this.messagingService = new MessagingService();
-  this.balanceService = new BalanceService();
-  this.capacityOptimizationService = new CapacityOptimizationService();
-  this.orderRepository = customOrderRepository || orderRepository;
-  this.trackingRepository = customTrackingRepository || trackingRepository;
+// Simple notification queue (in-memory)
+interface Notification {
+  id: string;
+  userId: string;
+  userType: 'customer' | 'driver';
+  type: string;
+  title: string;
+  message: string;
+  orderId?: string;
+  data?: any;
+  read: boolean;
+  createdAt: Date;
 }
 
-  /** 
-   * TRANSFORMATION PROCEDURE:
-   * 
-   * Step 1: Receive the exact JSON structure from the customer booking form
-   * Step 2: Validate required fields are present
-   * Step 3: Extract driver ID and perform capacity check by:
-   *    a) Fetching vehicle capacity from driver service API
-   *    b) Querying active orders for this driver from orders table
-   *    c) Calculating current weight/volume load
-   *    d) Checking if new order fits within remaining capacity
-   * Step 4: If capacity check fails -> reject with recommendations
-   * Step 5: If capacity check passes -> transform to database schema
-   * Step 6: Map all fields from JSON to database columns:
-   *    - customerInfo → customer_* fields
-   *    - locations → pickup_/delivery_* fields
-   *    - packageDetails → weight_kg/volume_m3/package_category
-   *    - driverInfo → driver_* fields
-   *    - vehicleInfo → vehicle_* fields
-   *    - pricing → estimated_price_* fields
-   *    - timing → estimated_duration_minutes and *_time_estimated
-   * Step 7: Generate order number and set default values for missing fields
-   * Step 8: Insert into database with capacity_check_passed and capacity_check_data
-   * Step 9: Notify driver about new order assignment
-   * Step 10: Return formatted response with order details
-   */
-  // services/order.service.ts
-// Full fixed method:
+export class OrderService {
+  private logger: Logger;
+  private orderRepository: OrderRepository;
+  private trackingRepository: TrackingRepository;
+  private balanceService: BalanceService;
+  private routeOptimizationService: RouteOptimizationService;
+  private messagingService: MessagingService;
+  private notifications: Map<string, Notification[]> = new Map(); // userId -> notifications
 
-async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<any> {
-  try {
-    this.logger.info('=== ORDER CREATION PROCESS STARTED ===');
-    
-    let order_number: string;
+  constructor(
+    orderRepository: OrderRepository,
+    trackingRepository: TrackingRepository,
+    balanceService: BalanceService,
+    routeOptimizationService: RouteOptimizationService,
+    messagingService: MessagingService
+  ) {
+    this.logger = new Logger('OrderService');
+    this.orderRepository = orderRepository;
+    this.trackingRepository = trackingRepository;
+    this.balanceService = balanceService;
+    this.routeOptimizationService = routeOptimizationService;
+    this.messagingService = messagingService;
+  }
 
-    // Check if orderId exists in the request
-    if (requestData && 'orderId' in requestData && requestData.orderId) {
-      order_number = requestData.orderId;
-      this.logger.info(`Using provided order ID: ${order_number}`);
-    } else {
-      order_number = `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-      this.logger.info(`Generated new order number: ${order_number}`);
-    }
-    
-    this.logger.info(`Processing order: ${order_number}`);
-    this.logger.info(`Customer: ${requestData.customerInfo?.name} (${requestData.customerInfo?.id})`);
-    this.logger.info(`Driver: ${requestData.driverInfo?.name} (${requestData.driverInfo?.id})`);
-    this.logger.info(`Package: ${requestData.packageDetails?.weight?.value}kg, ${requestData.packageDetails?.volume?.value}m³`);
+  // Create order from external request
+  async createOrderFromExternalRequest(requestData: OrderReceiveRequest): Promise<any> {
+    try {
+      this.logger.info('=== ORDER CREATION STARTED ===');
 
-    // Validate required fields
-    if (!requestData.customerInfo?.id) {
-      this.logger.error('Missing customer ID');
-      return this.createErrorResponse('Customer ID is required', 'MISSING_CUSTOMER_ID');
-    }
+      const orderNumber = requestData.orderId || `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-    if (!requestData.driverInfo?.id) {
-      this.logger.error('Missing driver ID');
-      return this.createErrorResponse('Driver ID is required', 'MISSING_DRIVER_ID');
-    }
+      // Validate required fields
+      if (!requestData.customerInfo?.id) {
+        return this.createErrorResponse('Customer ID is required', 'MISSING_CUSTOMER_ID');
+      }
+      if (!requestData.driverInfo?.id) {
+        return this.createErrorResponse('Driver ID is required', 'MISSING_DRIVER_ID');
+      }
 
-    if (!requestData.locations?.pickup?.address || !requestData.locations?.delivery?.address) {
-      this.logger.error('Missing pickup or delivery address');
-      return this.createErrorResponse('Pickup and delivery addresses are required', 'MISSING_ADDRESS');
-    }
+      // Map urgency
+      const urgency = this.mapUrgency(requestData.packageDetails?.urgency || 'normal');
 
-    // Map urgency
-    const urgency = this.mapUrgency(requestData.packageDetails?.urgency || 'normal');
+      // Get the driver ID for vehicle lookup (prefer driverId over id)
+      const driverLookupId = requestData.driverInfo.driverId || requestData.driverInfo.id;
 
-    // Create order data
-    const dbOrderData: CreateOrderData = {
-      order_number: order_number,
-      customer_id: requestData.customerInfo.id,
-      driver_id: requestData.driverInfo.id,
-      status: 'pending',
-      customer_name: requestData.customerInfo.name || 'Unknown Customer',
-      customer_email: requestData.customerInfo.email || `${requestData.customerInfo.id}@example.com`,
-      customer_phone: requestData.customerInfo.phone || '0000000000',
-      driver_accepted_at: null,
-      pickup_address: requestData.locations.pickup.address,
-      pickup_latitude: requestData.locations.pickup.coordinates?.lat || 0,
-      pickup_longitude: requestData.locations.pickup.coordinates?.lng || 0,
-      
-      delivery_address: requestData.locations.delivery.address,
-      delivery_latitude: requestData.locations.delivery.coordinates?.lat || 0,
-      delivery_longitude: requestData.locations.delivery.coordinates?.lng || 0,
-      distance_km: requestData.locations.distance?.km || 0,
-      
-      package_category: requestData.packageDetails?.category || 'General',
-      weight_kg: requestData.packageDetails?.weight?.value || 1,
-      volume_m3: requestData.packageDetails?.volume?.value || 0.1,
-      urgency: urgency,
-      
-      fragile: requestData.specialRequirements?.fragile || false,
-      refrigerated: requestData.specialRequirements?.refrigerated || false,
-      oversized: requestData.specialRequirements?.oversized || false,
-      hazardous: requestData.specialRequirements?.hazardous || false,
-      
-      driver_name: requestData.driverInfo?.name || null,
-      driver_phone: requestData.driverInfo?.phone || null,
-      driver_email: requestData.driverInfo?.email || null,
-      driver_rating: requestData.driverInfo?.rating || null,
-      driver_match_score: requestData.driverInfo?.matchScore || null,
-      
-      vehicle_type: requestData.vehicleInfo?.type || null,
-      vehicle_make: requestData.vehicleInfo?.make || null,
-      vehicle_model: requestData.vehicleInfo?.model || null,
-      vehicle_license_plate: requestData.vehicleInfo?.licensePlate || null,
-      vehicle_image_url: requestData.vehicleInfo?.imageUrl || null,
-      vehicle_max_weight: requestData.vehicleInfo?.capacity?.maxWeight || null,
-      vehicle_max_volume: requestData.vehicleInfo?.capacity?.maxVolume || null,
-      
-      estimated_price_usd: requestData.pricing?.estimatedPrice?.usd || 0,
-      estimated_price_local: requestData.pricing?.estimatedPrice?.rub || 0,
-      currency: requestData.pricing?.currency || 'USD',
-      base_currency: requestData.pricing?.baseCurrency || 'RUB',
-      
-      estimated_duration_minutes: Math.ceil(requestData.timing?.estimatedDuration?.minutes || 30),
-      pickup_time_estimated: requestData.timing?.pickupTime?.estimated 
-        ? new Date(requestData.timing.pickupTime.estimated) 
-        : null,
-      delivery_time_estimated: requestData.timing?.deliveryTime?.estimated 
-        ? new Date(requestData.timing.deliveryTime.estimated) 
-        : null,
-      
-      route_polyline: null,
-      route_order_index: 0,
-      
-      amount_paid: 0,
-      payment_status: 'pending',
-      
-      driver_accepted: false,
-      
-      unread_customer_messages: 0,
-      unread_driver_messages: 0
-    };
+      this.logger.info(`Creating order: User ID=${requestData.driverInfo.id}, Driver Lookup ID=${driverLookupId}`);
 
-    this.logger.info('Step 1: Basic order data created', {
-      orderNumber: dbOrderData.order_number,
-      customerId: dbOrderData.customer_id,
-      driverId: dbOrderData.driver_id
-    });
-
-    // Perform capacity check
-    if (dbOrderData.driver_id) {
-      this.logger.info('Step 2: Performing capacity check for driver', { driverId: dbOrderData.driver_id });
-      
+      // Perform capacity check (integrates with Driver Service)
+      // Pass the user ID first (for database lookup) and driver ID second (for Driver Service API)
       const capacityCheck = await this.performCapacityCheck(
-        dbOrderData.driver_id,
-        dbOrderData
+        requestData.driverInfo.id,      // This is the USER ID (stored in driver_id column)
+        requestData.packageDetails?.weight?.value || 1,
+        requestData.packageDetails?.volume?.value || 0.1,
+        driverLookupId                   // This is the actual DRIVER ID for vehicle lookup
       );
 
-      (dbOrderData as any).capacity_check_passed = capacityCheck.passed;
-      (dbOrderData as any).capacity_check_data = {
-        timestamp: new Date().toISOString(),
-        orderWeight: dbOrderData.weight_kg,
-        orderVolume: dbOrderData.volume_m3,
-        driverId: dbOrderData.driver_id,
-        ...capacityCheck.capacityResult
-      };
-
-      this.logger.info('Step 3: Capacity check completed', {
-        passed: capacityCheck.passed,
-        canAccept: capacityCheck.capacityResult?.canAccept
-      });
-
       if (!capacityCheck.passed) {
-        this.logger.warn('Step 4: Capacity check FAILED - rejecting order');
-        
-        await this.notifyBookingFailure(
-          dbOrderData.customer_id,
-          requestData.driverInfo?.id || 'unknown',
-          'Driver at maximum capacity',
-          capacityCheck.capacityResult?.recommendations || []
+        // Add notification for customer (to be retrieved via API)
+        this.addNotification(
+          requestData.customerInfo.id,
+          'customer',
+          'booking_failed',
+          'Booking Failed',
+          `Driver at maximum capacity. ${capacityCheck.recommendations.join(' ')}`,
+          undefined,
+          { reason: capacityCheck.reason, recommendations: capacityCheck.recommendations }
         );
 
         return {
           success: false,
           message: 'Driver is at maximum capacity',
           reason: 'CAPACITY_EXCEEDED',
-          recommendations: capacityCheck.capacityResult?.recommendations || [
-            'Try again later',
-            'Select a different driver'
-          ],
-          capacityDetails: capacityCheck.capacityResult?.capacityCheck || {},
+          recommendations: capacityCheck.recommendations,
+          capacityDetails: capacityCheck.details,
           timestamp: new Date().toISOString()
         };
       }
 
-      this.logger.info('Step 4: Capacity check PASSED');
-    }
+      // Create order data
+      const dbOrderData: CreateOrderData = {
+        order_number: orderNumber,
+        customer_id: requestData.customerInfo.id,
+        driver_id: requestData.driverInfo.id,  // Store the USER ID here (matches JWT)
+        status: 'pending',
+        customer_name: requestData.customerInfo.name || 'Unknown',
+        customer_email: requestData.customerInfo.email || '',
+        customer_phone: requestData.customerInfo.phone || '',
+        driver_accepted_at: null,
+        pickup_address: requestData.locations.pickup.address,
+        pickup_latitude: requestData.locations.pickup.coordinates?.lat || 0,
+        pickup_longitude: requestData.locations.pickup.coordinates?.lng || 0,
+        delivery_address: requestData.locations.delivery.address,
+        delivery_latitude: requestData.locations.delivery.coordinates?.lat || 0,
+        delivery_longitude: requestData.locations.delivery.coordinates?.lng || 0,
+        distance_km: requestData.locations.distance?.km || 0,
+        package_category: requestData.packageDetails?.category || 'General',
+        weight_kg: requestData.packageDetails?.weight?.value || 1,
+        volume_m3: requestData.packageDetails?.volume?.value || 0.1,
+        urgency: urgency,
+        fragile: requestData.specialRequirements?.fragile || false,
+        refrigerated: requestData.specialRequirements?.refrigerated || false,
+        oversized: requestData.specialRequirements?.oversized || false,
+        hazardous: requestData.specialRequirements?.hazardous || false,
+        driver_name: requestData.driverInfo?.name || null,
+        driver_phone: requestData.driverInfo?.phone || null,
+        driver_email: requestData.driverInfo?.email || null,
+        driver_rating: requestData.driverInfo?.rating || null,
+        driver_match_score: requestData.driverInfo?.matchScore || null,
+        vehicle_type: requestData.vehicleInfo?.type || null,
+        vehicle_make: requestData.vehicleInfo?.make || null,
+        vehicle_model: requestData.vehicleInfo?.model || null,
+        vehicle_license_plate: requestData.vehicleInfo?.licensePlate || null,
+        vehicle_image_url: requestData.vehicleInfo?.imageUrl || null,
+        vehicle_max_weight: requestData.vehicleInfo?.capacity?.maxWeight || null,
+        vehicle_max_volume: requestData.vehicleInfo?.capacity?.maxVolume || null,
+        estimated_price_usd: requestData.pricing?.estimatedPrice?.usd || 0,
+        estimated_price_local: requestData.pricing?.estimatedPrice?.rub || 0,
+        currency: requestData.pricing?.currency || 'USD',
+        base_currency: requestData.pricing?.baseCurrency || 'RUB',
+        estimated_duration_minutes: Math.ceil(requestData.timing?.estimatedDuration?.minutes || 30),
+        pickup_time_estimated: requestData.timing?.pickupTime?.estimated ? new Date(requestData.timing.pickupTime.estimated) : null,
+        delivery_time_estimated: requestData.timing?.deliveryTime?.estimated ? new Date(requestData.timing.deliveryTime.estimated) : null,
+        route_polyline: null,
+        route_order_index: 0,
+        amount_paid: 0,
+        payment_status: 'pending',
+        driver_accepted: false,
+        unread_customer_messages: 0,
+        unread_driver_messages: 0,
+        capacity_check_passed: capacityCheck.passed,
+        capacity_check_data: capacityCheck.details
+      };
 
-    // Create order in database
-    this.logger.info('Step 5: Inserting order into database');
-    
-    let order;
-    try {
-      order = await this.orderRepository.create(dbOrderData);
-      this.logger.info('Step 6: Order created successfully', {
-        orderId: order.id,
-        orderNumber: order.order_number,
-        status: order.status
-      });
-    } catch (dbError: any) {
-      this.logger.error('Step 5 ERROR: Database insertion failed', {
-        message: dbError.message,
-        code: dbError.code
-      });
-      
+      // Create order in database
+      const order = await this.orderRepository.create(dbOrderData);
+
+      // Add notification for driver about new order
+      this.addNotification(
+        requestData.driverInfo.id,
+        'driver',
+        'new_order',
+        'New Order Available',
+        `New order #${orderNumber} from ${requestData.customerInfo.name}`,
+        order.id,
+        { orderNumber, customerName: requestData.customerInfo.name, estimatedPrice: requestData.pricing?.estimatedPrice?.usd }
+      );
+
+      this.logger.info(`Order ${orderNumber} created successfully`);
+
       return {
-        success: false,
-        message: 'Database error: ' + dbError.message,
-        reason: dbError.code || 'DB_ERROR',
-        recommendations: ['Check database logs for details'],
+        success: true,
+        order: this.formatOrderResponse(order),
+        message: 'Order created successfully',
+        notifications: this.getUserNotifications(requestData.customerInfo.id),
         timestamp: new Date().toISOString()
       };
-    }
 
-    // Notify driver
-    if (order.driver_id) {
-      this.logger.info('Step 7: Notifying driver about new order assignment');
-      await this.notifyDriverAssignment(order);
-    }
-
-    // Send WebSocket update
-    this.logger.info('Step 8: Sending WebSocket update to customer');
-    await this.sendOrderCreationUpdates(order, order.customer_id);
-
-    this.logger.info('=== ORDER CREATION PROCESS COMPLETED SUCCESSFULLY ===');
-    
-    return {
-      success: true,
-      order: this.formatOrderResponse(order),
-      message: 'Order created successfully',
-      capacityCheck: (dbOrderData as any).capacity_check_passed ? 'passed' : 'not_checked',
-      timestamp: new Date().toISOString()
-    };
-
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('=== ORDER CREATION PROCESS FAILED ===', {
-      message: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined
-    });
-    
-    return {
-      success: false,
-      message: 'Failed to create order: ' + errorMessage,
-      reason: 'INTERNAL_ERROR',
-      recommendations: ['Check server logs for details'],
-      timestamp: new Date().toISOString()
-    };
-  }
-}
-
-  /**
- * Get order by ID with full details including progress and messages
- */
-async getOrder(orderId: string): Promise<any> {
-  try {
-    this.logger.info(`Getting order details: ${orderId}`);
-    
-    // Find the order
-    const order = await this.orderRepository.findById(orderId);
-    
-    if (!order) {
-      throw new Error('Order not found');
-    }
-    
-    // Get order messages
-    let messages: any[] = [];
-    try {
-      messages = await this.messagingService.getOrderMessages(orderId, order.customer_id);
-    } catch (error) {
-      this.logger.warn(`Could not fetch messages for order ${orderId}:`, error);
-    }
-    
-    // Get latest tracking location
-    let currentLocation = null;
-    try {
-      const latestLocation = await this.trackingRepository.getLatestLocation(orderId);
-      if (latestLocation) {
-        currentLocation = {
-          latitude: latestLocation.latitude,
-          longitude: latestLocation.longitude,
-          lastUpdated: latestLocation.timestamp,
-          speed: latestLocation.speed,
-          bearing: latestLocation.bearing
-        };
-      }
-    } catch (error) {
-      this.logger.warn(`Could not fetch tracking for order ${orderId}:`, error);
-    }
-    
-    // Calculate progress
-    const progress = this.calculateOrderProgress(order);
-    
-    // Get driver rating if available
-    let driverRating = null;
-    if (order.driver_id && order.status === 'delivered') {
-      try {
-        const ratings = await this.messagingService.getDriverRatings(order.driver_id);
-        if (ratings.length > 0) {
-          const avgRating = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length;
-          driverRating = {
-            average: parseFloat(avgRating.toFixed(2)),
-            count: ratings.length,
-            userRating: order.customer_rating
-          };
-        }
-      } catch (error) {
-        this.logger.warn(`Could not fetch driver ratings:`, error);
-      }
-    }
-    
-    // Format the response
-    const formattedOrder = this.formatOrderResponse(order);
-    
-    return {
-      ...formattedOrder,
-      progress,
-      messages: messages.map(msg => ({
-        id: msg.id,
-        senderId: msg.sender_id,
-        senderType: msg.sender_type,
-        senderName: msg.senderName,
-        content: msg.content,
-        messageType: msg.message_type,
-        readStatus: msg.read_status === 1,
-        createdAt: msg.created_at,
-        metadata: msg.metadata
-      })),
-      currentLocation,
-      driverRating,
-      unreadCount: {
-        customer: order.unread_customer_messages,
-        driver: order.unread_driver_messages
-      }
-    };
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error(`Failed to get order ${orderId}:`, errorMessage);
-    throw error;
-  }
-}
-
-/**
- * Calculate order progress percentage and steps
- */
-private calculateOrderProgress(order: any): {
-  steps: Array<{ status: string; label: string; completed: boolean; timestamp?: Date }>;
-  currentStatus: string;
-  progressPercentage: number;
-  nextStep?: string;
-} {
-  const statusFlow = [
-    { status: 'pending', label: 'Order Placed' },
-    { status: 'driver_assigned', label: 'Driver Assigned' },
-    { status: 'route_to_pickup', label: 'Route to Pickup' },
-    { status: 'in_transit', label: 'In Transit' },
-    { status: 'delivered', label: 'Delivered' }
-  ];
-  
-  const currentIndex = statusFlow.findIndex(s => s.status === order.status);
-  
-  const steps = statusFlow.map((step, index) => ({
-    ...step,
-    completed: index <= currentIndex,
-    timestamp: this.getStatusTimestamp(order, step.status)
-  }));
-  
-  const progressPercentage = currentIndex >= 0 
-    ? Math.round((currentIndex / (statusFlow.length - 1)) * 100) 
-    : 0;
-  
-  const nextStep = currentIndex >= 0 && currentIndex < statusFlow.length - 1
-    ? statusFlow[currentIndex + 1].status
-    : undefined;
-  
-  return {
-    steps,
-    currentStatus: order.status,
-    progressPercentage,
-    nextStep
-  };
-}
-
-/**
- * Get timestamp for a specific status from order
- */
-private getStatusTimestamp(order: any, status: string): Date | undefined {
-  switch (status) {
-    case 'pending':
-      return order.created_at;
-    case 'driver_assigned':
-      return order.driver_accepted_at || undefined;
-    case 'route_to_pickup':
-      return order.delivery_started_at || undefined;
-    case 'in_transit':
-      return order.delivery_started_at || undefined; // You might want a separate field
-    case 'delivered':
-      return order.delivery_completed_at || undefined;
-    default:
-      return undefined;
-  }
-}
-
-  /**
-   * Perform capacity check by:
-   * 1. Fetching vehicle capacity from driver service API
-   * 2. Querying active orders for this driver from orders table
-   * 3. Calculating current weight/volume load
-   * 4. Checking if new order fits within remaining capacity
-   */
-  private async performCapacityCheck(
-    driverId: string,
-    orderData: CreateOrderData,
-    excludeOrderId?: string
-  ): Promise<{
-    passed: boolean;
-    capacityResult: any;
-  }> {
-    try {
-      // Get driver's vehicle capacity from driver service
-      const vehicleCapacity = await this.getDriverVehicleCapacity(driverId);
-
-      if (!vehicleCapacity) {
-        this.logger.warn(`No vehicle capacity found for driver ${driverId}, defaulting to allow`);
-        return {
-          passed: true,
-          capacityResult: {
-            canAccept: true,
-            reason: 'Capacity check unavailable - no vehicle found',
-            recommendations: []
-          }
-        };
-      }
-
-      // FIXED: Use the repository method with correct column names
-      this.logger.debug(`Fetching active orders for driver ${driverId} from OrderRepository`);
-      const activeOrders = await this.orderRepository.getDriverActiveOrders(driverId, excludeOrderId);
-      this.logger.debug(`Found ${activeOrders.length} active orders for driver ${driverId}`);
-
-      // Calculate current load
-    const currentWeight = activeOrders.reduce((sum, order) => {
-      const weight = parseFloat(order.weight_kg) || 0;
-      this.logger.debug(`Order ${order.id}: weight_kg = ${weight}`);
-      return sum + weight;
-    }, 0);
-    
-    const currentVolume = activeOrders.reduce((sum, order) => {
-      const volume = parseFloat(order.volume_m3) || 0;
-      this.logger.debug(`Order ${order.id}: volume_m3 = ${volume}`);
-      return sum + volume;
-    }, 0);
-
-      const currentOrders = activeOrders.length;
-
-      const orderWeight = parseFloat(orderData.weight_kg.toString()) || 0;
-      const orderVolume = parseFloat(orderData.volume_m3.toString()) || 0;
-
-      const totalWeight = currentWeight + orderWeight;
-      const totalVolume = currentVolume + orderVolume;
-      const totalOrders = currentOrders + 1;
-
-      const maxWeight = vehicleCapacity.maxWeight;
-      const maxVolume = vehicleCapacity.maxVolume;
-      const maxOrders = 10;
-
-      const weightPasses = totalWeight <= maxWeight;
-      const volumePasses = totalVolume <= maxVolume;
-      const ordersPasses = totalOrders <= maxOrders;
-
-      const canAccept = weightPasses && volumePasses && ordersPasses;
-
-      const recommendations: string[] = [];
-      if (!canAccept) {
-        if (!weightPasses) {
-          recommendations.push(`Reduce weight by ${(totalWeight - maxWeight).toFixed(2)}kg or choose a larger vehicle`);
-        }
-        if (!volumePasses) {
-          recommendations.push(`Reduce volume by ${(totalVolume - maxVolume).toFixed(2)}m³ or choose a larger vehicle`);
-        }
-        if (!ordersPasses) {
-          recommendations.push(`Complete existing orders before accepting new ones (max ${maxOrders} orders)`);
-        }
-      }
-
-      const capacityResult = {
-        canAccept,
-        reason: canAccept ? undefined : 'Exceeds vehicle capacity limits',
-        capacityCheck: {
-          weight: {
-            current: currentWeight,
-            additional: orderWeight,
-            total: totalWeight,
-            max: maxWeight,
-            remaining: Math.max(0, maxWeight - totalWeight),
-            passes: weightPasses
-          },
-          volume: {
-            current: currentVolume,
-            additional: orderVolume,
-            total: totalVolume,
-            max: maxVolume,
-            remaining: Math.max(0, maxVolume - totalVolume),
-            passes: volumePasses
-          },
-          orders: {
-            current: currentOrders,
-            additional: 1,
-            total: totalOrders,
-            max: maxOrders,
-            remaining: Math.max(0, maxOrders - totalOrders),
-            passes: ordersPasses
-          }
-        },
-        estimatedUtilization: {
-          weight: maxWeight > 0 ? (totalWeight / maxWeight) * 100 : 0,
-          volume: maxVolume > 0 ? (totalVolume / maxVolume) * 100 : 0,
-          orders: (totalOrders / maxOrders) * 100
-        },
-        recommendations
-      };
-
-      return {
-        passed: canAccept,
-        capacityResult
-      };
-
-    } catch (error) {
-      this.logger.error('Capacity check failed:', error);
-      return {
-        passed: true,
-        capacityResult: {
-          canAccept: true,
-          reason: 'Capacity check failed - allowing by default',
-          recommendations: []
-        }
-      };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Order creation failed:', errorMessage);
+      return this.createErrorResponse(errorMessage, 'INTERNAL_ERROR');
     }
   }
 
-  /**
-   * Get driver's vehicle capacity from driver service API
-   */
-  private async getDriverVehicleCapacity(driverId: string): Promise<{
-    maxWeight: number;
-    maxVolume: number;
-  } | null> {
+  // Driver accepts order
+  async acceptOrder(orderId: string, driverId: string): Promise<any> {
     try {
-      const HttpClient = require('../utils/httpClient').HttpClient;
-      const httpClient = new HttpClient();
+      this.logger.info(`Driver ${driverId} accepting order ${orderId}`);
       
-      const driverServiceUrl = process.env.DRIVER_SERVICE_URL || 'http://localhost:3002';
-      const url = `${driverServiceUrl}/api/drivers/${driverId}/vehicles-picture`;
+      const order = await this.orderRepository.findById(orderId);
       
-      this.logger.debug(`Fetching vehicle capacity from: ${url}`);
+      if (!order) {
+        throw new Error('Order not found');
+      }
+      if (order.driver_id !== driverId) {
+        throw new Error('Order not assigned to you');
+      }
+      if (order.driver_accepted) {
+        throw new Error('Order already accepted');
+      }
+      if (order.status !== 'pending') {
+        throw new Error(`Cannot accept order with status: ${order.status}`);
+      }
       
-      const response = await httpClient.get(url, {
-        timeout: 5000
+      // Update order
+      const updatedOrder = await this.orderRepository.update(orderId, {
+        status: 'driver_assigned',
+        driver_accepted: true,
+        driver_accepted_at: new Date()
       });
       
-      if (response.data?.success && response.data?.data?.vehicles?.length > 0) {
-        const vehicle = response.data.data.vehicles[0];
-        return {
-          maxWeight: parseFloat(vehicle.maxWeight) || 100,
-          maxVolume: parseFloat(vehicle.maxVolume) || 10
-        };
-      }
-      
-      return null;
-    } catch (error: any) {
-      this.logger.warn(`Failed to fetch vehicle capacity: ${error.message}`);
-      return null;
-    }
-  }
-
-  /**
-   * Map urgency string to database enum
-   */
-  private mapUrgency(urgency: string): 'normal' | 'high' | 'urgent' {
-    if (!urgency) return 'normal';
-    
-    const urgencyLower = urgency.toLowerCase();
-    if (urgencyLower === 'urgent' || urgencyLower === 'emergency' || urgencyLower === 'express') {
-      return 'urgent';
-    }
-    if (urgencyLower === 'high') {
-      return 'high';
-    }
-    return 'normal';
-  }
-
-  /**
-   * Notify driver about new order assignment
-   */
-  private async notifyDriverAssignment(order: Order): Promise<void> {
-    try {
-      if (!order.driver_id) return;
-      
-      await this.notificationService.sendOrderNotification(
-        order.driver_id,
-        order.order_number,
-        'order_assigned',
-        {
-          orderNumber: order.order_number,
-          orderId: order.id,
-          customerName: order.customer_name,
-          pickupAddress: order.pickup_address,
-          deliveryAddress: order.delivery_address,
-          estimatedPrice: order.estimated_price_usd,
-          packageWeight: order.weight_kg,
-          packageVolume: order.volume_m3,
-          estimatedDuration: order.estimated_duration_minutes,
-          timestamp: new Date().toISOString()
-        }
-      );
-      
-      this.logger.info(`Driver ${order.driver_id} notified about order ${order.order_number}`);
-    } catch (error) {
-      this.logger.warn('Failed to notify driver:', error);
-    }
-  }
-
-  /**
- * Driver accepts an order
- */
-async acceptOrder(orderId: string, driverId: string): Promise<any> {
-  try {
-    this.logger.info(`Processing order acceptance: ${orderId} by driver ${driverId}`);
-    
-    // Find the order
-    const order = await this.orderRepository.findById(orderId);
-    
-    if (!order) {
-      throw new Error('Order not found');
-    }
-    
-    // Verify this driver is assigned to the order
-    if (order.driver_id !== driverId) {
-      throw new Error('This order is not assigned to you');
-    }
-    
-    // Check if already accepted
-    if (order.driver_accepted) {
-      throw new Error('Order already accepted');
-    }
-    
-    // Check if order is still pending
-    if (order.status !== 'pending') {
-      throw new Error(`Cannot accept order with status: ${order.status}`);
-    }
-    
-    // Update the order
-    const updatedOrder = await this.orderRepository.update(orderId, {
-      status: 'driver_assigned',
-      driver_accepted: true,
-      driver_accepted_at: new Date()
-    });
-    
-    // Process payment (deduct from customer, add to driver pending)
-    try {
+      // Process payment (deduct from customer, add to driver pending)
       await this.balanceService.processOrderPayment(
         order.customer_id,
         driverId,
         order.estimated_price_usd,
         orderId
       );
-      this.logger.info(`Payment processed for order ${orderId}`);
-    } catch (paymentError) {
-      this.logger.error(`Payment processing failed for order ${orderId}:`, paymentError);
-      // Continue anyway - order is accepted
+      
+      // Add notification for customer
+      this.addNotification(
+        order.customer_id,
+        'customer',
+        'order_accepted',
+        'Order Accepted',
+        `Driver ${order.driver_name || 'assigned'} has accepted your order`,
+        orderId,
+        { driverName: order.driver_name, estimatedArrival: order.estimated_duration_minutes }
+      );
+      
+      // Add notification for driver
+      this.addNotification(
+        driverId,
+        'driver',
+        'acceptance_success',
+        'Order Accepted',
+        `You have successfully accepted order #${order.order_number}`,
+        orderId,
+        { orderNumber: order.order_number }
+      );
+      
+      return {
+        success: true,
+        order: this.formatOrderResponse(updatedOrder!),
+        message: 'Order accepted successfully',
+        notifications: this.getUserNotifications(driverId)
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Accept order failed:', errorMessage);
+      throw error;
     }
-    
-    // Notify customer
-    await this.notificationService.sendOrderNotification(
-      order.customer_id,
-      orderId,
-      'order_accepted',
-      {
-        message: 'Driver has accepted your order',
-        driverName: order.driver_name,
-        estimatedArrival: order.estimated_duration_minutes,
-        orderNumber: order.order_number,
-        acceptedAt: new Date().toISOString()
+  }
+
+  // Driver rejects order
+  async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      
+      if (!order) throw new Error('Order not found');
+      if (order.driver_id !== driverId) throw new Error('Order not assigned to you');
+      if (order.driver_accepted) throw new Error('Order already accepted');
+      
+      const updatedOrder = await this.orderRepository.update(orderId, {
+        status: 'cancelled'
+      });
+      
+      // Add notification for customer
+      this.addNotification(
+        order.customer_id,
+        'customer',
+        'order_rejected',
+        'Order Rejected',
+        `Driver could not accept your order. Reason: ${reason || 'Driver unavailable'}`,
+        orderId,
+        { reason }
+      );
+      
+      return {
+        success: true,
+        order: this.formatOrderResponse(updatedOrder!),
+        message: 'Order rejected successfully'
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Reject order failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Update order status (driver)
+  async updateOrderStatus(orderId: string, driverId: string, status: string, location?: { lat: number; lng: number }): Promise<any> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      
+      if (!order) throw new Error('Order not found');
+      if (order.driver_id !== driverId) throw new Error('Not authorized');
+      
+      const validStatuses = ['driver_assigned', 'route_to_pickup', 'in_transit', 'delivered'];
+      if (!validStatuses.includes(status)) {
+        throw new Error(`Invalid status. Allowed: ${validStatuses.join(', ')}`);
       }
-    );
-    
-    this.logger.info(`Order ${orderId} accepted successfully by driver ${driverId}`);
+      
+      const updateData: any = { status };
+      
+      if (status === 'route_to_pickup') {
+        updateData.delivery_started_at = new Date();
+      }
+      if (status === 'delivered') {
+        updateData.delivery_completed_at = new Date();
+        updateData.payment_status = 'completed';
+        await this.balanceService.completeOrderPayment(orderId);
+      }
+      
+      if (location) {
+        await this.trackingRepository.create({
+          order_id: orderId,
+          driver_id: driverId,
+          latitude: location.lat,
+          longitude: location.lng
+        });
+      }
+      
+      const updatedOrder = await this.orderRepository.update(orderId, updateData);
+      
+      // Add notification for customer
+      const statusMessages: Record<string, string> = {
+        'driver_assigned': 'Driver is on the way to pickup',
+        'route_to_pickup': 'Driver is heading to pickup location',
+        'in_transit': 'Your package is in transit',
+        'delivered': 'Your package has been delivered!'
+      };
+      
+      this.addNotification(
+        order.customer_id,
+        'customer',
+        'status_update',
+        'Order Status Updated',
+        statusMessages[status] || `Order status changed to ${status}`,
+        orderId,
+        { status, location }
+      );
+      
+      // If delivered, add rating notification
+      if (status === 'delivered') {
+        this.addNotification(
+          order.customer_id,
+          'customer',
+          'rate_driver',
+          'Rate Your Driver',
+          'Please rate your driver for this delivery',
+          orderId,
+          { driverId, driverName: order.driver_name }
+        );
+      }
+      
+      return {
+        success: true,
+        order: this.formatOrderResponse(updatedOrder!),
+        message: `Order status updated to ${status}`,
+        notifications: this.getUserNotifications(order.customer_id)
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Update status failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Get order with full details including progress
+  async getOrderWithProgress(orderId: string, userId: string, userType: string): Promise<any> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      
+      if (!order) throw new Error('Order not found');
+      
+      // Verify access
+      if (userType === 'customer' && order.customer_id !== userId) {
+        throw new Error('Access denied');
+      }
+      if (userType === 'driver' && order.driver_id !== userId) {
+        throw new Error('Access denied');
+      }
+      
+      // Get messages
+      const messages = await this.messagingService.getOrderMessages(orderId, userId);
+      
+      // Get tracking locations
+      const tracking = await this.trackingRepository.findByOrderId(orderId, { limit: 100 });
+      const currentLocation = tracking.length > 0 ? {
+        latitude: tracking[tracking.length - 1].latitude,
+        longitude: tracking[tracking.length - 1].longitude,
+        lastUpdated: tracking[tracking.length - 1].timestamp
+      } : null;
+      
+      // Calculate progress
+      const progress = this.calculateOrderProgress(order);
+      
+      // Get driver rating if delivered
+      let driverRating = null;
+      if (order.status === 'delivered' && order.driver_id) {
+        const ratings = await this.messagingService.getDriverRatings(order.driver_id);
+        if (ratings.length > 0) {
+          driverRating = {
+            average: ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length,
+            count: ratings.length,
+            userRating: order.customer_rating
+          };
+        }
+      }
+      
+      // Get notifications for this user
+      const notifications = this.getUserNotifications(userId);
+      
+      return {
+        ...this.formatOrderResponse(order),
+        progress,
+        messages,
+        currentLocation,
+        driverRating,
+        notifications,
+        unreadCount: {
+          customer: order.unread_customer_messages,
+          driver: order.unread_driver_messages
+        }
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get order failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Get customer orders
+  async getCustomerOrders(customerId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
+    try {
+      const orders = await this.orderRepository.findByCustomerId(customerId, { status, limit, offset: (page - 1) * limit });
+      const total = orders.length;
+      
+      const ordersWithProgress = orders.map(order => ({
+        ...this.formatOrderResponse(order),
+        progress: this.calculateOrderProgress(order)
+      }));
+      
+      return {
+        orders: ordersWithProgress,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get customer orders failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Get driver orders
+  async getDriverOrders(driverId: string, status?: string, page: number = 1, limit: number = 20): Promise<any> {
+    try {
+      const orders = await this.orderRepository.findByDriverId(driverId, { status, limit, offset: (page - 1) * limit });
+      const total = orders.length;
+      
+      // Get optimized route for active orders
+      let optimizedRoute = null;
+      const activeOrders = orders.filter(o => ['pending', 'driver_assigned', 'route_to_pickup', 'in_transit'].includes(o.status));
+      if (activeOrders.length > 1) {
+        optimizedRoute = await this.routeOptimizationService.optimizeDriverRoute(driverId, activeOrders);
+      }
+      
+      const ordersWithProgress = orders.map(order => ({
+        ...this.formatOrderResponse(order),
+        progress: this.calculateOrderProgress(order)
+      }));
+      
+      return {
+        orders: ordersWithProgress,
+        optimizedRoute,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get driver orders failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Get driver optimized route
+  async getDriverOptimizedRoute(driverId: string): Promise<OptimizedRoute | null> {
+    try {
+      const activeOrders = await this.orderRepository.findByDriverId(driverId, {
+        status: ['driver_assigned', 'route_to_pickup', 'in_transit']
+      });
+      
+      if (activeOrders.length < 2) {
+        return null;
+      }
+      
+      return await this.routeOptimizationService.optimizeDriverRoute(driverId, activeOrders);
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Get optimized route failed:', errorMessage);
+      return null;
+    }
+  }
+
+  // Send message - FIXED: Explicitly type senderType
+  async sendMessage(
+    orderId: string, 
+    senderId: string, 
+    senderType: 'customer' | 'driver',  // Fixed: Explicit union type
+    content: string
+  ): Promise<any> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      if (!order) throw new Error('Order not found');
+      
+      const receiverId = senderType === 'customer' ? order.driver_id! : order.customer_id;
+      const receiverType = senderType === 'customer' ? 'driver' : 'customer';
+      
+      const message = await this.messagingService.sendMessage(
+        orderId, senderId, senderType, receiverId, receiverType, content
+      );
+      
+      // Add notification for receiver
+      this.addNotification(
+        receiverId,
+        receiverType,
+        'new_message',
+        'New Message',
+        `New message from ${senderType} regarding order #${order.order_number}`,
+        orderId,
+        { message: content.substring(0, 100) }
+      );
+      
+      return {
+        success: true,
+        message,
+        notifications: this.getUserNotifications(receiverId)
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Send message failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Rate driver - FIXED: Use correct field names
+  async rateDriver(orderId: string, customerId: string, rating: number, review?: string): Promise<any> {
+    try {
+      const order = await this.orderRepository.findById(orderId);
+      
+      if (!order) throw new Error('Order not found');
+      if (order.customer_id !== customerId) throw new Error('Not authorized');
+      if (order.status !== 'delivered') throw new Error('Can only rate after delivery');
+      if (order.customer_rating) throw new Error('Already rated');
+      
+      if (rating < 1 || rating > 5) throw new Error('Rating must be between 1 and 5');
+      
+      // Save rating in driver_ratings table
+      await this.messagingService.saveDriverRating(orderId, customerId, order.driver_id!, rating, review);
+      
+      // Update order with rating - FIXED: Use correct field names that exist in CreateOrderData
+      // Note: The update method accepts Partial<CreateOrderData>, but these fields exist in the Order interface
+      // We need to update using direct SQL via the repository's custom update method
+      await this.orderRepository.update(orderId, {
+        // @ts-ignore - These fields exist in the database but not in CreateOrderData type
+        customer_rating: rating,
+        // @ts-ignore
+        customer_review: review || null,
+        // @ts-ignore
+        rating_given_at: new Date()
+      } as any);
+      
+      // Calculate new average rating for driver
+      const ratings = await this.messagingService.getDriverRatings(order.driver_id!);
+      const newAverage = ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length;
+      
+      // Update driver rating in orders table
+      await this.orderRepository.update(orderId, { driver_rating: newAverage } as any);
+      
+      // Add notification for driver
+      this.addNotification(
+        order.driver_id!,
+        'driver',
+        'new_rating',
+        'New Rating Received',
+        `You received a ${rating} star rating for order #${order.order_number}`,
+        orderId,
+        { rating, review, newAverage }
+      );
+      
+      return {
+        success: true,
+        newAverageRating: newAverage,
+        message: 'Driver rated successfully'
+      };
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Rate driver failed:', errorMessage);
+      throw error;
+    }
+  }
+
+  // Get order tracking data
+  async getOrderTracking(orderId: string): Promise<any> {
+    const tracking = await this.trackingRepository.findByOrderId(orderId, { 
+      limit: 100,
+      orderBy: 'ASC'
+    });
     
     return {
-      success: true,
-      order: this.formatOrderResponse(updatedOrder!),
-      message: 'Order accepted successfully'
+      orderId,
+      tracking: tracking.map(t => ({
+        latitude: t.latitude,
+        longitude: t.longitude,
+        timestamp: t.timestamp,
+        speed: t.speed,
+        bearing: t.bearing
+      })),
+      summary: tracking.length > 0 ? {
+        startTime: tracking[0].timestamp,
+        lastUpdate: tracking[tracking.length - 1].timestamp,
+        totalPoints: tracking.length
+      } : null
     };
-    
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Accept order failed:', errorMessage);
-    throw error;
   }
-}
 
-/**
- * Driver rejects an order
- */
-async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<any> {
-  try {
-    this.logger.info(`Processing order rejection: ${orderId} by driver ${driverId}`);
-    
-    // Find the order
+  // Get order messages
+  async getOrderMessages(orderId: string, userId: string): Promise<any[]> {
+    // Verify user has access to this order
     const order = await this.orderRepository.findById(orderId);
-    
     if (!order) {
       throw new Error('Order not found');
     }
     
-    // Verify this driver is assigned to the order
-    if (order.driver_id !== driverId) {
-      throw new Error('This order is not assigned to you');
+    // Get messages from messaging service
+    const messages = await this.messagingService.getOrderMessages(orderId, userId);
+    
+    return messages;
+  }
+
+  // Get user balance
+  async getUserBalance(userId: string, userType: string): Promise<any> {
+    return await this.balanceService.getUserBalance(userId, userType as 'customer' | 'driver');
+  }
+
+  // Get order by ID (for verification)
+  async getOrder(orderId: string): Promise<Order | null> {
+    return await this.orderRepository.findById(orderId);
+  }
+
+  // Get user notifications (polling endpoint)
+  async getUserNotifications(userId: string, markAsRead: boolean = false): Promise<Notification[]> {
+    const userNotifications = this.notifications.get(userId) || [];
+    
+    if (markAsRead) {
+      userNotifications.forEach(n => n.read = true);
+      this.notifications.set(userId, userNotifications);
     }
     
-    // Check if already accepted/rejected
-    if (order.driver_accepted) {
-      throw new Error('Order already accepted - cannot reject');
-    }
-    
-    // Update the order status to cancelled
-    const updatedOrder = await this.orderRepository.update(orderId, {
-      status: 'cancelled',
-      notes: `Rejected by driver: ${reason || 'No reason provided'}`
-    });
-    
-    // Notify customer
-    await this.notificationService.sendOrderNotification(
-      order.customer_id,
+    return userNotifications;
+  }
+
+  // Get unread notification count
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    const userNotifications = this.notifications.get(userId) || [];
+    return userNotifications.filter(n => !n.read).length;
+  }
+
+  // Add notification to queue
+  private addNotification(
+    userId: string,
+    userType: string,
+    type: string,
+    title: string,
+    message: string,
+    orderId?: string,
+    data?: any
+  ): void {
+    const notification: Notification = {
+      id: uuidv4(),
+      userId,
+      userType: userType as 'customer' | 'driver',
+      type,
+      title,
+      message,
       orderId,
-      'order_rejected',
-      {
-        message: 'Driver could not accept your order',
-        reason: reason || 'Driver unavailable',
-        orderNumber: order.order_number,
-        rejectedAt: new Date().toISOString()
-      }
-    );
-    
-    this.logger.info(`Order ${orderId} rejected by driver ${driverId}: ${reason || 'No reason'}`);
-    
-    return {
-      success: true,
-      order: this.formatOrderResponse(updatedOrder!),
-      message: 'Order rejected successfully'
+      data,
+      read: false,
+      createdAt: new Date()
     };
     
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    this.logger.error('Reject order failed:', errorMessage);
-    throw error;
-  }
-}
-
-  /**
-   * Notify customer about booking failure
-   */
-  private async notifyBookingFailure(
-    customerId: string,
-    driverId: string,
-    reason: string,
-    recommendations: string[]
-  ): Promise<void> {
-    try {
-      await this.notificationService.sendBookingFailedNotification(
-        customerId,
-        driverId,
-        reason,
-        recommendations
-      );
-      
-      this.logger.info(`Customer ${customerId} notified about booking failure: ${reason}`);
-    } catch (error) {
-      this.logger.warn('Failed to send booking failure notification:', error);
+    if (!this.notifications.has(userId)) {
+      this.notifications.set(userId, []);
     }
+    
+    this.notifications.get(userId)!.push(notification);
+    
+    // Keep only last 50 notifications per user
+    const userNotifs = this.notifications.get(userId)!;
+    if (userNotifs.length > 50) {
+      this.notifications.set(userId, userNotifs.slice(-50));
+    }
+    
+    this.logger.debug(`Notification added for user ${userId}: ${title}`);
   }
 
-  /**
-   * Send WebSocket update to customer
-   */
-  private async sendOrderCreationUpdates(order: Order, customerId: string): Promise<void> {
+  // Perform capacity check - FIXED: Properly integrates with Driver Service
+  private async performCapacityCheck(
+    userIdOrDriverId: string, 
+    weightKg: number, 
+    volumeM3: number,
+    driverIdForLookup?: string  // New optional parameter for the actual driver ID
+  ): Promise<{
+    passed: boolean;
+    reason?: string;
+    recommendations: string[];
+    details: any;
+  }> {
     try {
-      if (!customerId) return;
-      
-      if (!this.websocketUtil) {
-        this.logger.warn('WebSocketUtil not available, cannot send order creation update');
-        return;
-      }
-      
-      await this.websocketUtil.sendToUser(
-        customerId,
-        'order_created',
-        {
-          orderId: order.id,
-          orderNumber: order.order_number,
-          status: order.status,
-          estimatedDelivery: order.delivery_time_estimated,
-          driverAssigned: !!order.driver_id,
-          driverName: order.driver_name,
-          timestamp: new Date().toISOString()
+      // Use driverIdForLookup if provided, otherwise use userIdOrDriverId
+      const vehicleLookupId = driverIdForLookup || userIdOrDriverId;
+
+      this.logger.info(`Performing capacity check: userId/driverId=${userIdOrDriverId}, lookupId=${vehicleLookupId}, weight=${weightKg}kg, volume=${volumeM3}m³`);
+
+      // 1. Get active orders for this driver from order-service database
+      // Note: This uses the userIdOrDriverId which matches the driver_id in orders table
+      const activeOrders = await this.orderRepository.getDriverActiveOrders(userIdOrDriverId);
+
+      const currentWeight = activeOrders.reduce((sum, o) => sum + (o.weight_kg || 0), 0);
+      const currentVolume = activeOrders.reduce((sum, o) => sum + (o.volume_m3 || 0), 0);
+      const currentOrders = activeOrders.length;
+
+      this.logger.debug(`Current load - Weight: ${currentWeight}kg, Volume: ${currentVolume}m³, Orders: ${currentOrders}`);
+
+      // 2. Get vehicle capacity from Driver Service API using the vehicleLookupId
+      let maxWeight = 100; // default kg
+      let maxVolume = 10;  // default m³
+      let maxOrders = 10;  // default max orders per driver
+
+      try {
+        const axios = require('axios');
+        const driverServiceUrl = process.env.DRIVER_SERVICE_URL || 'http://localhost:3002';
+
+        // Use vehicleLookupId (which is the actual driver ID) for the API call
+        const response = await axios.get(`${driverServiceUrl}/api/drivers/${vehicleLookupId}/vehicles-picture`, {
+          timeout: 5000,
+          headers: {
+            'x-service-secret': process.env.SERVICE_SECRET || 'shared_service_secret_key_1234567890'
+          }
+        });
+
+        if (response.data?.success && response.data?.data?.vehicles?.[0]) {
+          const vehicle = response.data.data.vehicles[0];
+          maxWeight = parseFloat(vehicle.maxWeight) || 100;
+          maxVolume = parseFloat(vehicle.maxVolume) || 10;
+          this.logger.debug(`Vehicle capacity from Driver Service - Max Weight: ${maxWeight}kg, Max Volume: ${maxVolume}m³`);
+        } else {
+          this.logger.warn(`No vehicle found for driver ${vehicleLookupId}, using defaults`);
         }
-      );
-      
-      this.logger.info(`Customer ${customerId} notified via WebSocket about order creation`);
-    } catch (error) {
-      this.logger.warn('Failed to send WebSocket update:', error);
+      } catch (error: any) {
+        this.logger.warn(`Could not fetch vehicle capacity from Driver Service for driver ${vehicleLookupId}: ${error.message}`);
+        this.logger.warn('Using default capacity values: 100kg, 10m³');
+      }
+
+      // 3. Check against capacity constraints
+      const totalWeight = currentWeight + weightKg;
+      const totalVolume = currentVolume + volumeM3;
+      const totalOrders = currentOrders + 1;
+
+      const weightPasses = totalWeight <= maxWeight;
+      const volumePasses = totalVolume <= maxVolume;
+      const ordersPasses = totalOrders <= maxOrders;
+
+      const passed = weightPasses && volumePasses && ordersPasses;
+
+      // 4. Generate recommendations
+      const recommendations: string[] = [];
+      if (!weightPasses) {
+        const excessWeight = totalWeight - maxWeight;
+        recommendations.push(`This order would exceed vehicle weight capacity by ${excessWeight.toFixed(2)}kg. Current load: ${currentWeight.toFixed(2)}kg/${maxWeight}kg, Adding: ${weightKg}kg`);
+      }
+      if (!volumePasses) {
+        const excessVolume = totalVolume - maxVolume;
+        recommendations.push(`This order would exceed vehicle volume capacity by ${excessVolume.toFixed(2)}m³. Current load: ${currentVolume.toFixed(2)}m³/${maxVolume}m³, Adding: ${volumeM3}m³`);
+      }
+      if (!ordersPasses) {
+        recommendations.push(`Driver already has ${currentOrders} active orders (max ${maxOrders}). Complete existing orders first.`);
+      }
+
+      if (passed && (totalWeight / maxWeight > 0.8 || totalVolume / maxVolume > 0.8)) {
+        recommendations.push(`Warning: Capacity utilization will be high (${Math.round(totalWeight/maxWeight*100)}% weight, ${Math.round(totalVolume/maxVolume*100)}% volume)`);
+      }
+
+      return {
+        passed,
+        reason: passed ? undefined : 'Vehicle capacity would be exceeded',
+        recommendations,
+        details: {
+          current: { 
+            weight: parseFloat(currentWeight.toFixed(2)), 
+            volume: parseFloat(currentVolume.toFixed(2)), 
+            orders: currentOrders 
+          },
+          required: { 
+            weight: weightKg, 
+            volume: volumeM3,
+            orders: 1
+          },
+          total: { 
+            weight: parseFloat(totalWeight.toFixed(2)), 
+            volume: parseFloat(totalVolume.toFixed(2)), 
+            orders: totalOrders 
+          },
+          max: { 
+            weight: maxWeight, 
+            volume: maxVolume, 
+            orders: maxOrders 
+          },
+          passes: { 
+            weight: weightPasses, 
+            volume: volumePasses, 
+            orders: ordersPasses 
+          },
+          utilizationPercent: {
+            weight: Math.round(totalWeight / maxWeight * 100),
+            volume: Math.round(totalVolume / maxVolume * 100),
+            orders: Math.round(totalOrders / maxOrders * 100)
+          },
+          lookupId: vehicleLookupId,  // Add this for debugging
+          userIdOrDriverId: userIdOrDriverId  // Add this for debugging
+        }
+      };
+
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Capacity check failed:', errorMessage);
+
+      // On error, allow by default but log warning
+      return {
+        passed: true,
+        recommendations: ['Capacity check temporarily unavailable - order accepted by default'],
+        details: { error: errorMessage, fallback: true }
+      };
     }
   }
 
-  /**
-   * Format order response for API
-   */
+  // Calculate order progress
+  private calculateOrderProgress(order: Order): {
+    steps: Array<{ status: string; label: string; completed: boolean; timestamp?: Date }>;
+    currentStatus: string;
+    progressPercentage: number;
+    nextStep?: string;
+  } {
+    const statusFlow = [
+      { status: 'pending', label: 'Order Placed' },
+      { status: 'driver_assigned', label: 'Driver Assigned' },
+      { status: 'route_to_pickup', label: 'Route to Pickup' },
+      { status: 'in_transit', label: 'In Transit' },
+      { status: 'delivered', label: 'Delivered' }
+    ];
+    
+    const currentIndex = statusFlow.findIndex(s => s.status === order.status);
+    
+    const steps = statusFlow.map((step, index) => ({
+      ...step,
+      completed: index <= currentIndex,
+      timestamp: this.getStatusTimestamp(order, step.status)
+    }));
+    
+    const progressPercentage = currentIndex >= 0 
+      ? Math.round((currentIndex / (statusFlow.length - 1)) * 100) 
+      : 0;
+    
+    const nextStep = currentIndex >= 0 && currentIndex < statusFlow.length - 1
+      ? statusFlow[currentIndex + 1].status
+      : undefined;
+    
+    return { steps, currentStatus: order.status, progressPercentage, nextStep };
+  }
+
+  private getStatusTimestamp(order: Order, status: string): Date | undefined {
+    switch (status) {
+      case 'pending': return order.created_at;
+      case 'driver_assigned': return order.driver_accepted_at || undefined;
+      case 'route_to_pickup': return order.delivery_started_at || undefined;
+      case 'in_transit': return order.delivery_started_at || undefined;
+      case 'delivered': return order.delivery_completed_at || undefined;
+      default: return undefined;
+    }
+  }
+
+  private mapUrgency(urgency: string): 'normal' | 'high' | 'urgent' {
+    const u = urgency?.toLowerCase();
+    if (u === 'urgent') return 'urgent';
+    if (u === 'high') return 'high';
+    return 'normal';
+  }
+
   private formatOrderResponse(order: Order): any {
     return {
       id: order.id,
@@ -879,39 +926,32 @@ async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<a
       status: order.status,
       created_at: order.created_at,
       updated_at: order.updated_at,
-      
       customer_info: {
         id: order.customer_id,
         name: order.customer_name,
         email: order.customer_email,
         phone: order.customer_phone
       },
-      
       driver_info: order.driver_id ? {
         id: order.driver_id,
         name: order.driver_name,
         phone: order.driver_phone,
         email: order.driver_email,
         rating: order.driver_rating,
-        match_score: order.driver_match_score,
         accepted: order.driver_accepted,
         accepted_at: order.driver_accepted_at
       } : null,
-      
       pickup_location: {
         address: order.pickup_address,
         latitude: parseFloat(order.pickup_latitude.toString()),
         longitude: parseFloat(order.pickup_longitude.toString())
       },
-      
       delivery_location: {
         address: order.delivery_address,
         latitude: parseFloat(order.delivery_latitude.toString()),
         longitude: parseFloat(order.delivery_longitude.toString())
       },
-      
       distance_km: parseFloat(order.distance_km.toString()),
-      
       package_details: {
         category: order.package_category,
         weight_kg: parseFloat(order.weight_kg.toString()),
@@ -922,7 +962,6 @@ async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<a
         oversized: order.oversized === true,
         hazardous: order.hazardous === true
       },
-      
       vehicle_info: order.vehicle_type ? {
         type: order.vehicle_type,
         make: order.vehicle_make,
@@ -932,16 +971,13 @@ async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<a
         max_weight: order.vehicle_max_weight ? parseFloat(order.vehicle_max_weight.toString()) : null,
         max_volume: order.vehicle_max_volume ? parseFloat(order.vehicle_max_volume.toString()) : null
       } : null,
-      
       pricing: {
         estimated_usd: parseFloat(order.estimated_price_usd.toString()),
         estimated_local: parseFloat(order.estimated_price_local.toString()),
         currency: order.currency,
-        base_currency: order.base_currency,
         amount_paid: parseFloat(order.amount_paid.toString()),
         payment_status: order.payment_status
       },
-      
       timing: {
         estimated_duration_minutes: order.estimated_duration_minutes,
         pickup_time_estimated: order.pickup_time_estimated,
@@ -949,17 +985,14 @@ async rejectOrder(orderId: string, driverId: string, reason?: string): Promise<a
         delivery_started_at: order.delivery_started_at,
         delivery_completed_at: order.delivery_completed_at
       },
-      
-      capacity_check: {
-        passed: order.capacity_check_passed === true,
-        data: order.capacity_check_data
+      rating: {
+        customer_rating: order.customer_rating,
+        customer_review: order.customer_review,
+        rating_given_at: order.rating_given_at
       }
     };
   }
 
-  /**
-   * Create error response
-   */
   private createErrorResponse(message: string, reason: string): any {
     return {
       success: false,
