@@ -6,7 +6,7 @@ export { RouteOptimizationPage } from './driver/RouteOptimizationPage';
 
 // Customer Pages
 export { BookingPage } from './customer/BookingPage';
-export { BulkBookingPage } from './customer/BulkBookingPage';
+//export { BulkBookingPage } from './customer/BulkBookingPage';
 export { ProfilePage as CustomerProfilePage } from './customer/ProfilePage';
 
 // Common Pages

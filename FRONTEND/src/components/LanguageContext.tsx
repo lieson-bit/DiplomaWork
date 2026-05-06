@@ -10,6 +10,8 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
+
+
 // Comprehensive translation dictionary
 const translations = {
   en: {
@@ -940,7 +942,528 @@ const translations = {
     'customer.booking.match_score_percent': '% Match',
     'customer.booking.distance_text': ' away',
     'customer.booking.drivers_count': 'available',
-  },
+
+    // Order Tracking
+'orderTracking.my_orders': 'My Orders',
+'orderTracking.my_deliveries': 'My Deliveries',
+'orderTracking.order_details': 'Order Details',
+'orderTracking.progress': 'Progress',
+'orderTracking.estimated_time': 'Estimated time',
+'orderTracking.timeline': 'Timeline',
+'orderTracking.driver_info': 'Driver Information',
+'orderTracking.customer_info': 'Customer Information',
+'orderTracking.contact_info': 'Contact Information',
+'orderTracking.pickup': 'Pickup Location',
+'orderTracking.delivery': 'Delivery Location',
+'orderTracking.category': 'Category',
+'orderTracking.weight': 'Weight',
+'orderTracking.volume': 'Volume',
+'orderTracking.price': 'Price',
+'orderTracking.general': 'General',
+'orderTracking.not_available': 'N/A',
+'orderTracking.phone': 'Phone',
+'orderTracking.email': 'Email',
+'orderTracking.call_driver': 'Call Driver',
+'orderTracking.email_driver': 'Email Driver',
+'orderTracking.chat_with_driver': 'Chat with Driver',
+'orderTracking.call_customer': 'Call Customer',
+'orderTracking.email_customer': 'Email Customer',
+'orderTracking.chat_with_customer': 'Chat with Customer',
+'orderTracking.select_order': 'Select an order to view details',
+'orderTracking.more_orders': 'more orders',
+'orderTracking.notifications': 'Notifications',
+'orderTracking.route_optimization_available': 'Route Optimization Available',
+'orderTracking.route_optimization_hint': 'Use route optimization to plan the most efficient path for multiple deliveries',
+
+// Order Tracking - Status
+'orderTracking.status.pending': 'Pending',
+'orderTracking.status.driver_assigned': 'Driver Assigned',
+'orderTracking.status.route_to_pickup': 'En Route to Pickup',
+'orderTracking.status.in_transit': 'In Transit',
+'orderTracking.status.delivered': 'Delivered',
+'orderTracking.status.cancelled': 'Cancelled',
+
+// Order Tracking - Empty State
+'orderTracking.empty.title': 'No Orders Yet',
+'orderTracking.empty.customer_message': "You haven't placed any delivery orders yet. Create your first order to get started!",
+'orderTracking.empty.driver_message': "You don't have any deliveries assigned yet. Check back later for available orders.",
+'orderTracking.empty.create_order': 'Create New Order',
+
+// Order Tracking - Actions
+'orderTracking.actions.accept_order': 'Accept Order',
+'orderTracking.actions.start_to_pickup': 'Start to Pickup',
+'orderTracking.actions.start_delivery': 'Start Delivery',
+'orderTracking.actions.mark_delivered': 'Mark as Delivered',
+'orderTracking.actions.rate_driver': 'Rate Driver',
+'orderTracking.actions.refreshing': 'Refreshing orders...',
+'orderTracking.actions.refresh_title': 'Refresh orders',
+'orderTracking.actions.view_route_optimization': 'View Route Optimization',
+'orderTracking.actions.order_accepted': 'Order accepted successfully!',
+'orderTracking.actions.order_assigned': 'Order #{orderNumber} has been assigned to you',
+'orderTracking.actions.opening_route_optimization': 'Opening route optimization...',
+
+// Order Tracking - Status Messages
+'orderTracking.status_messages.route_to_pickup': 'Starting to pickup location',
+'orderTracking.status_messages.in_transit': 'Delivery in progress',
+'orderTracking.status_messages.delivered': 'Order marked as delivered',
+'orderTracking.status_messages.updated': 'Order status updated to {status}',
+
+// Order Tracking - Rating Modal
+'orderTracking.rating.title': 'Rate Your Driver',
+'orderTracking.rating.placeholder': 'Share your experience with this driver...',
+'orderTracking.rating.submit': 'Submit Rating',
+'orderTracking.rating.cancel': 'Cancel',
+'orderTracking.rating.thank_you': 'Thank you for your rating!',
+
+// Order Tracking - Errors
+'orderTracking.errors.load_failed': 'Failed to load orders',
+'orderTracking.errors.rating_failed': 'Failed to submit rating',
+'orderTracking.errors.network_error': 'Network error. Please check your connection.',
+'orderTracking.errors.accept_failed': 'Failed to accept order',
+'orderTracking.errors.update_failed': 'Failed to update order status',
+'orderTracking.errors.phone_unavailable': 'Phone number not available',
+'orderTracking.errors.email_unavailable': 'Email address not available',
+ 
+// Route Optimization
+'routeOptimization.summary.pickups': 'pickups',
+'routeOptimization.summary.deliveries': 'deliveries',
+'routeOptimization.summary.total_stops': 'total stops',
+'routeOptimization.title': 'Optimal Delivery Route',
+'routeOptimization.summary': '{pickups} pickups | {deliveries} deliveries | {stops} total stops',
+'routeOptimization.your_location': 'Your Location',
+'routeOptimization.starting_point': 'Starting point',
+'routeOptimization.order': 'Order',
+'routeOptimization.pickup': 'Pickup',
+'routeOptimization.delivery': 'Delivery',
+'routeOptimization.pickup_short': 'P',
+'routeOptimization.delivery_short': 'D',
+'routeOptimization.sequence': 'Sequence',
+'routeOptimization.distance': 'Distance',
+'routeOptimization.select_stop': 'Select Stop',
+'routeOptimization.start_label': '📍 START',
+'routeOptimization.pickup_address': 'Pickup address',
+'routeOptimization.delivery_address': 'Delivery address',
+'routeOptimization.customer': 'Customer',
+'routeOptimization.package': 'Package',
+
+// Route Optimization - Priority
+'routeOptimization.priority.high': 'High',
+'routeOptimization.priority.medium': 'Medium',
+'routeOptimization.priority.low': 'Low',
+'routeOptimization.priority.suffix': 'priority',
+
+// Route Optimization - Status
+'routeOptimization.status.completed': 'Completed',
+'routeOptimization.status.in_progress': 'In Progress',
+
+// Route Optimization - Units
+'routeOptimization.units.min': 'min',
+'routeOptimization.units.h': 'h',
+'routeOptimization.units.m': 'm',
+
+// Route Optimization - Views
+'routeOptimization.views.map': 'Real Map',
+'routeOptimization.views.simulation': 'Simulation',
+'routeOptimization.views.list': 'List',
+
+// Route Optimization - Actions
+'routeOptimization.actions.reoptimize': 'Re-optimize',
+'routeOptimization.actions.start': 'Start',
+'routeOptimization.actions.complete': 'Complete',
+'routeOptimization.actions.navigate': 'Navigate',
+'routeOptimization.actions.simulating': 'Simulating...',
+
+// Route Optimization - Stats
+'routeOptimization.stats.total_distance': 'Total Distance',
+'routeOptimization.stats.estimated_duration': 'Est. Duration',
+'routeOptimization.stats.total_stops': 'Total Stops',
+'routeOptimization.stats.net_earnings': 'Net Earnings',
+
+// Route Optimization - Next Stop
+'routeOptimization.next_stop_label': 'Next stop in sequence:',
+
+// Route Optimization - Map View
+'routeOptimization.map.title': 'Interactive Route Map',
+'routeOptimization.map.center_on_me': 'Center on Me',
+'routeOptimization.map.open_in_google': 'Open in Google Maps',
+'routeOptimization.map.description': 'Click on any marker to see details • Colored dots show stop sequence',
+'routeOptimization.map.legend.your_location': 'Your Location',
+'routeOptimization.map.legend.pickup': 'Pickup',
+'routeOptimization.map.legend.delivery': 'Delivery',
+'routeOptimization.map.legend.completed': 'Completed',
+'routeOptimization.map.legend.selected': 'Selected',
+'routeOptimization.map.legend.optimized_route': 'Optimized Route',
+
+// Route Optimization - Simulation View
+'routeOptimization.simulation.title': 'Route Simulation',
+'routeOptimization.simulation.reset_view': 'Reset View',
+'routeOptimization.simulation.getting_location': 'Getting location...',
+'routeOptimization.simulation.get_location': '📍 Get My Location',
+'routeOptimization.simulation.speed': 'Speed',
+'routeOptimization.simulation.moving': 'Moving...',
+'routeOptimization.simulation.ready': 'Ready',
+'routeOptimization.simulation.hint': '✨ Click "Start" button on any stop to begin',
+'routeOptimization.simulation.hint_car': '🚗 Red car will animate along the route',
+'routeOptimization.simulation.hint_optimized': '✅ Optimized route: All pickups first, then all deliveries',
+'routeOptimization.simulation.progress_title': '📊 PROGRESS',
+'routeOptimization.simulation.completed': 'Completed',
+'routeOptimization.simulation.pickups': 'pickups',
+'routeOptimization.simulation.deliveries': 'deliveries',
+
+// Route Optimization - List View
+'routeOptimization.list.title': 'Delivery Sequence ({stops} stops in optimal order)',
+'routeOptimization.list.description': '✨ Optimized route: Pickups first (nearest neighbor), then deliveries (nearest neighbor)',
+'routeOptimization.list.estimated': 'Est.',
+'routeOptimization.list.address': 'Address',
+'routeOptimization.list.details': 'Details',
+'routeOptimization.list.distance': 'Distance',
+'routeOptimization.list.customer': 'Customer',
+
+// Route Optimization - Legend
+'routeOptimization.legend.title': 'LEGEND',
+'routeOptimization.legend.start': '📍 START',
+'routeOptimization.legend.your_location': 'Your Location',
+'routeOptimization.legend.pickup': '📦 PICKUP',
+'routeOptimization.legend.collect_packages': 'Collect packages',
+'routeOptimization.legend.delivery': '🏠 DELIVERY',
+'routeOptimization.legend.drop_off': 'Drop off',
+'routeOptimization.legend.moving': '🚗 MOVING',
+'routeOptimization.legend.vehicle': 'Vehicle',
+'routeOptimization.legend.in_progress': '🔵 IN PROGRESS',
+'routeOptimization.legend.completed': '✓ COMPLETED',
+'routeOptimization.controls_hint': '🔍 + / - Zoom | 🖱️ Drag to pan',
+
+// Route Optimization - Features
+'routeOptimization.features.title': 'Route Optimization Features',
+'routeOptimization.features.region_clustering': 'REGION-BASED CLUSTERING',
+'routeOptimization.features.region_clustering_desc': 'Stops are grouped by geographic proximity within 3km radius',
+'routeOptimization.features.intelligent_interleaving': 'INTELLIGENT INTERLEAVING',
+'routeOptimization.features.intelligent_interleaving_desc': 'Within a region, the driver can both pick up AND deliver before moving to the next region',
+'routeOptimization.features.constraint_enforcement': 'CONSTRAINT ENFORCEMENT',
+'routeOptimization.features.constraint_enforcement_desc': 'A delivery cannot happen before its pickup, but pickups and deliveries can be mixed across different orders',
+'routeOptimization.features.optimal_path': 'OPTIMAL PATH CALCULATION',
+'routeOptimization.features.optimal_path_desc': 'Uses TSP with constraints to find the shortest route that respects pickup-before-delivery rules',
+'routeOptimization.features.separate_stops': '• Each order has separate Pickup and Delivery stops',
+'routeOptimization.features.follow_sequence': '• Follow the numbered sequence for optimal route efficiency',
+'routeOptimization.features.auto_reoptimize': '• Route automatically re-optimizes after each completion',
+
+// Route Optimization - Messages
+'routeOptimization.messages.using_approximate_location': 'Using approximate location (St. Petersburg center)',
+'routeOptimization.messages.location_detected': 'Location detected',
+'routeOptimization.messages.permission_denied': 'Location permission denied. Using approximate location.',
+'routeOptimization.messages.timeout': 'Location request timed out. Using approximate location.',
+'routeOptimization.messages.unavailable': 'Location unavailable. Using approximate location.',
+'routeOptimization.messages.route_optimized': '✅ Route optimized: {stops} stops | {distance} km',
+'routeOptimization.messages.calculating_route': 'Calculating optimal route...',
+'routeOptimization.messages.getting_location_first': 'Getting your location first...',
+'routeOptimization.messages.map_centered': 'Map centered on your location',
+'routeOptimization.messages.map_centered_first_stop': 'Map centered on first stop',
+'routeOptimization.messages.started': 'Started {type} for order {orderNumber}',
+'routeOptimization.messages.completed': '{type} completed for order {orderNumber}',
+'routeOptimization.messages.completed_next': '✅ Completed! Next: {type} for order {orderNumber}',
+
+// Route Optimization - Empty State
+'routeOptimization.empty.title': 'No Active Deliveries',
+'routeOptimization.empty.message': 'You don\'t have any active deliveries at the moment.',
+'routeOptimization.empty.check_orders': 'Check for Orders',
+
+// Route Optimization - Errors
+'routeOptimization.errors.calculation_failed': 'Failed to calculate optimal route',
+'routeOptimization.errors.location_unavailable': 'Unable to get your location. Please enable location services.',
+'routeOptimization.errors.stop_not_found': 'Stop not found',
+'routeOptimization.errors.mark_complete_failed': 'Failed to mark as complete',
+
+// Driver Earnings
+'driverEarnings.title': 'Earnings & Payments',
+'driverEarnings.subtitle': 'Track your earnings, spending, and manage payouts',
+
+// Driver Earnings - Tabs
+'driverEarnings.tabs.overview': 'Overview',
+'driverEarnings.tabs.transactions': 'Transactions',
+'driverEarnings.tabs.spending_analysis': 'Spending Analysis',
+'driverEarnings.tabs.payment_methods': 'Payment Methods',
+
+// Driver Earnings - Stats
+'driverEarnings.stats.available_balance': 'Available Balance',
+'driverEarnings.stats.total_earned': 'Total Earned',
+'driverEarnings.stats.total_spent': 'Total Spent',
+'driverEarnings.stats.total_withdrawn': 'Total Withdrawn',
+'driverEarnings.stats.from_deliveries': 'From {count} completed deliveries',
+'driverEarnings.stats.from_all_deliveries': 'From all deliveries',
+'driverEarnings.stats.on_expenses': 'On business expenses',
+'driverEarnings.stats.to_bank': 'To your bank account',
+
+// Driver Earnings - Overview
+'driverEarnings.overview.earnings_summary': 'Earnings Summary',
+'driverEarnings.overview.this_week': 'This Week',
+'driverEarnings.overview.this_month': 'This Month',
+'driverEarnings.overview.this_year': 'This Year',
+'driverEarnings.overview.deliveries': 'deliveries',
+'driverEarnings.overview.total_deliveries': 'total deliveries',
+'driverEarnings.overview.completed_deliveries': 'Completed Deliveries',
+'driverEarnings.overview.next_payout': 'Next Payout',
+'driverEarnings.overview.recent_deliveries': 'Recent Deliveries',
+'driverEarnings.overview.no_deliveries_yet': 'No completed deliveries yet',
+
+// Driver Earnings - Pending Payments
+'driverEarnings.pending_payments.title': 'Pending Payments',
+'driverEarnings.pending_payments.message': '${amount} will be added to your next payout',
+'driverEarnings.pending_payments.payout': 'Payout',
+
+// Driver Earnings - Payout Schedule
+'driverEarnings.payout_schedule.instant': 'Instant',
+'driverEarnings.payout_schedule.daily': 'Daily',
+'driverEarnings.payout_schedule.weekly': 'Weekly',
+
+// Driver Earnings - Savings Goal
+'driverEarnings.savings_goal.title': 'Savings Goal Progress',
+'driverEarnings.savings_goal.saved': 'saved',
+'driverEarnings.savings_goal.goal': 'Goal',
+'driverEarnings.savings_goal.more_to_go': '${amount} more to reach your goal!',
+'driverEarnings.savings_goal.congratulations': '🎉 Congratulations! You\'ve reached your savings goal!',
+
+// Driver Earnings - Transaction Types
+'driverEarnings.transaction_types.earning': 'Earning',
+'driverEarnings.transaction_types.payout': 'Payout',
+'driverEarnings.transaction_types.fee': 'Fee',
+'driverEarnings.transaction_types.bonus': 'Bonus',
+'driverEarnings.transaction_types.spending': 'Spending',
+
+// Driver Earnings - Status
+'driverEarnings.status.completed': 'Completed',
+'driverEarnings.status.pending': 'Pending',
+'driverEarnings.status.processing': 'Processing',
+'driverEarnings.status.failed': 'Failed',
+
+// Driver Earnings - Categories
+'driverEarnings.categories.fuel': 'Fuel',
+'driverEarnings.categories.food': 'Food',
+'driverEarnings.categories.maintenance': 'Maintenance',
+'driverEarnings.categories.supplies': 'Supplies',
+'driverEarnings.categories.other': 'Other',
+
+// Driver Earnings - Transactions
+'driverEarnings.transactions.title': 'Transaction History',
+'driverEarnings.transactions.ref': 'Ref',
+'driverEarnings.transactions.no_transactions': 'No transactions found',
+'driverEarnings.transactions.delivery_payment': 'Delivery payment - Order ${orderNumber}',
+'driverEarnings.transactions.withdrawal_description': 'Withdrawal to ${method}',
+
+// Driver Earnings - Transaction Filters
+'driverEarnings.transactions.filters.all_types': 'All Types',
+'driverEarnings.transactions.filters.last_7_days': 'Last 7 days',
+'driverEarnings.transactions.filters.last_30_days': 'Last 30 days',
+'driverEarnings.transactions.filters.last_3_months': 'Last 3 months',
+'driverEarnings.transactions.filters.last_year': 'Last year',
+
+// Driver Earnings - Payment Methods
+'driverEarnings.payment_methods.title': 'Payment Methods',
+'driverEarnings.payment_methods.add': 'Add Payment Method',
+'driverEarnings.payment_methods.default': 'Default',
+'driverEarnings.payment_methods.inactive': 'Inactive',
+'driverEarnings.payment_methods.account_holder': 'Account holder',
+'driverEarnings.payment_methods.cash_instruction': 'Report cash payments after each delivery',
+'driverEarnings.payment_methods.bank_transfer': 'Bank Transfer',
+'driverEarnings.payment_methods.credit_card': 'Credit Card',
+'driverEarnings.payment_methods.cash': 'Cash',
+'driverEarnings.payment_methods.bank_account': 'Bank Account',
+
+// Driver Earnings - Withdraw
+'driverEarnings.withdraw.title': 'Withdraw Earnings',
+'driverEarnings.withdraw.available_balance': 'Available balance',
+'driverEarnings.withdraw.payment_method': 'Payment Method',
+'driverEarnings.withdraw.select_method': 'Select payment method',
+'driverEarnings.withdraw.amount': 'Amount ($)',
+'driverEarnings.withdraw.min_amount': 'Min: $${min}',
+'driverEarnings.withdraw.minimum_info': 'Minimum withdrawal: $${min}',
+'driverEarnings.withdraw.processing_time': 'Processing time: 1-3 business days',
+'driverEarnings.withdraw.no_fees': 'No withdrawal fees for bank transfers',
+
+// Driver Earnings - Add Spending
+'driverEarnings.add_spending.title': 'Add Spending',
+'driverEarnings.add_spending.description': 'Track your business expenses for better financial management',
+'driverEarnings.add_spending.category': 'Category',
+'driverEarnings.add_spending.select_category': 'Select category',
+'driverEarnings.add_spending.amount': 'Amount ($)',
+'driverEarnings.add_spending.amount_placeholder': 'Enter amount',
+'driverEarnings.add_spending.description': 'Description',
+'driverEarnings.add_spending.description_placeholder': 'e.g., Gas refill, Lunch break, Oil change',
+
+// Driver Earnings - Add Payment
+'driverEarnings.add_payment.title': 'Add Payment Method',
+'driverEarnings.add_payment.description': 'Add a new way to receive your earnings',
+'driverEarnings.add_payment.payment_type': 'Payment Type',
+'driverEarnings.add_payment.select_type': 'Select payment type',
+'driverEarnings.add_payment.bank_account': 'Bank Account',
+'driverEarnings.add_payment.digital_wallet': 'Digital Wallet (PayPal, etc.)',
+'driverEarnings.add_payment.account_name': 'Account Name',
+'driverEarnings.add_payment.account_name_placeholder': 'Enter account name',
+'driverEarnings.add_payment.account_details': 'Account Details',
+'driverEarnings.add_payment.account_details_placeholder': 'Account number or email',
+
+// Driver Earnings - Cash Instructions
+'driverEarnings.cash_instructions.title': 'Cash Payment Instructions',
+'driverEarnings.cash_instructions.collect': 'Collect cash payment directly from customers',
+'driverEarnings.cash_instructions.receipt': 'Always provide a receipt if requested',
+'driverEarnings.cash_instructions.report': 'Report cash earnings in the app immediately after delivery',
+'driverEarnings.cash_instructions.safe': 'Keep cash safe and deposit regularly',
+
+// Driver Earnings - Spending Tips
+'driverEarnings.spending.by_category': 'Spending by Category',
+'driverEarnings.spending.total_spending': 'Total Spending',
+'driverEarnings.spending.recent': 'Recent Spending',
+'driverEarnings.spending.no_spending': 'No spending recorded yet. Click "Add Spending" to track expenses.',
+'driverEarnings.spending.tips.title': 'Spending Tips & Insights',
+'driverEarnings.spending.tips.fuel_efficiency.title': 'Fuel Efficiency Tip',
+'driverEarnings.spending.tips.fuel_efficiency.message': 'Consider using a fuel rewards card to save up to 10% on gas purchases.',
+'driverEarnings.spending.tips.maintenance.title': 'Maintenance Savings',
+'driverEarnings.spending.tips.maintenance.message': 'Regular maintenance can save you up to 30% on major repairs.',
+'driverEarnings.spending.tips.tax_deductions.title': 'Tax Deductions',
+'driverEarnings.spending.tips.tax_deductions.message': 'Track all business expenses - they may be tax deductible!',
+'driverEarnings.spending.tips.profit_margin.title': 'Profit Margin',
+'driverEarnings.spending.tips.profit_margin.message': 'Your net profit after expenses:',
+'driverEarnings.spending.tips.profit_margin.margin': 'margin',
+
+// Driver Earnings - Spending Examples
+'driverEarnings.spending.gas_refill': 'Gas refill',
+'driverEarnings.spending.lunch_break': 'Lunch break',
+
+// Driver Earnings - Actions
+'driverEarnings.actions.add_spending': 'Add Spending',
+'driverEarnings.actions.withdraw_funds': 'Withdraw Funds',
+'driverEarnings.actions.process_withdrawal': 'Process Withdrawal',
+'driverEarnings.actions.cancel': 'Cancel',
+'driverEarnings.actions.add_payment_method': 'Add Payment Method',
+
+// Driver Earnings - Messages
+'driverEarnings.messages.loading': 'Loading earnings data...',
+'driverEarnings.messages.withdrawal_initiated': 'Withdrawal of ${amount} initiated to ${method}',
+'driverEarnings.messages.spending_recorded': 'Spending of ${amount} recorded',
+'driverEarnings.messages.transaction_deleted': 'Transaction deleted',
+'driverEarnings.messages.payment_method_added': 'Payment method added',
+
+// Driver Earnings - Errors
+'driverEarnings.errors.load_failed': 'Failed to load earnings data',
+'driverEarnings.errors.select_method_and_amount': 'Please select payment method and enter amount',
+'driverEarnings.errors.valid_amount': 'Please enter a valid amount',
+'driverEarnings.errors.minimum_withdrawal': 'Minimum withdrawal amount is $${min}',
+'driverEarnings.errors.insufficient_balance': 'Insufficient balance',
+'driverEarnings.errors.fill_all_fields': 'Please fill in all fields',
+'driverEarnings.errors.valid_amount_positive': 'Please enter a valid amount greater than 0',
+// Driver Dashboard
+'driverDashboard.default_location': 'Downtown Area',
+'driverDashboard.auto_reject_reason': 'Auto-rejected: No response within 2 minutes',
+'driverDashboard.default_reject_reason': 'Driver unavailable',
+
+// Driver Dashboard - Status Card
+'driverDashboard.status.title': 'Driver Status',
+'driverDashboard.status.refresh_title': 'Refresh location',
+'driverDashboard.status.refresh': 'Refresh',
+'driverDashboard.status.go_online': 'Go online',
+'driverDashboard.status.go_offline': 'Go offline',
+'driverDashboard.status.online': 'Online',
+'driverDashboard.status.offline': 'Offline',
+'driverDashboard.status.available_for_orders': 'Available for orders',
+'driverDashboard.status.unavailable_for_orders': 'Unavailable for orders',
+'driverDashboard.status.rating': 'Rating',
+'driverDashboard.status.deliveries': 'Deliveries',
+
+// Driver Dashboard - Location
+'driverDashboard.location.coordinates': 'Coordinates',
+'driverDashboard.location.accuracy': 'Accuracy',
+'driverDashboard.location.meters': 'meters',
+'driverDashboard.location.open_in_maps': 'Open in Maps',
+'driverDashboard.location.update_status': 'Update Status',
+
+// Driver Dashboard - Vehicle Section
+'driverDashboard.vehicle.title': 'Active Vehicle',
+'driverDashboard.vehicle.select': 'Select Vehicle',
+'driverDashboard.vehicle.choose': 'Choose vehicle',
+'driverDashboard.vehicle.open_image': 'Open image in new tab',
+'driverDashboard.vehicle.refresh_image': 'Refresh image',
+'driverDashboard.vehicle.image_failed': 'Image failed to load',
+'driverDashboard.vehicle.retry': 'Retry',
+'driverDashboard.vehicle.no_image': 'No vehicle image',
+'driverDashboard.vehicle.uploading': 'Uploading...',
+'driverDashboard.vehicle.update_photo': 'Update Vehicle Photo',
+'driverDashboard.vehicle.upload_photo': 'Upload Vehicle Photo',
+'driverDashboard.vehicle.color': 'Color',
+'driverDashboard.vehicle.max_weight': 'Max Weight',
+'driverDashboard.vehicle.max_volume': 'Max Volume',
+'driverDashboard.vehicle.type_label': 'Vehicle Type',
+'driverDashboard.vehicle.capabilities': 'Capabilities',
+'driverDashboard.vehicle.active': 'Vehicle Active',
+'driverDashboard.vehicle.inactive': 'Vehicle Inactive',
+'driverDashboard.vehicle.no_vehicles_title': 'No Vehicles',
+'driverDashboard.vehicle.no_vehicles_desc': 'Add a vehicle in your profile to get started',
+'driverDashboard.vehicle.go_to_setup': 'Go to Vehicle Setup',
+
+// Driver Dashboard - Orders Section
+'driverDashboard.orders.title': 'My Orders',
+'driverDashboard.orders.subtitle': 'Orders assigned to you for delivery',
+'driverDashboard.orders.refresh': 'Refresh',
+'driverDashboard.orders.no_orders_title': 'No orders assigned',
+'driverDashboard.orders.no_orders_online': 'You are online. Orders will appear here when assigned.',
+'driverDashboard.orders.no_orders_offline': 'Go online to receive delivery requests.',
+'driverDashboard.orders.go_online': 'Go Online',
+'driverDashboard.orders.customer': 'Customer',
+'driverDashboard.orders.complete': 'complete',
+'driverDashboard.orders.pickup': 'Pickup',
+'driverDashboard.orders.delivery': 'Delivery',
+'driverDashboard.orders.general': 'General',
+'driverDashboard.orders.accept_order': 'Accept Order',
+'driverDashboard.orders.reject': 'Reject',
+'driverDashboard.orders.auto_reject': 'Auto-reject in',
+'driverDashboard.orders.auto_reject_in': 'Auto-reject in',
+'driverDashboard.orders.minutes': 'minutes',
+'driverDashboard.orders.start_to_pickup': 'Start to Pickup',
+'driverDashboard.orders.start_delivery': 'Start Delivery',
+'driverDashboard.orders.mark_delivered': 'Mark Delivered',
+'driverDashboard.orders.view_details': 'View Details',
+'driverDashboard.orders.order': 'Order',
+
+// Driver Dashboard - Order Status
+'driverDashboard.order_status.pending': 'Pending',
+'driverDashboard.order_status.driver_assigned': 'Driver Assigned',
+'driverDashboard.order_status.route_to_pickup': 'Route to Pickup',
+'driverDashboard.order_status.in_transit': 'In Transit',
+'driverDashboard.order_status.delivered': 'Delivered',
+'driverDashboard.order_status.cancelled': 'Cancelled',
+
+// Driver Dashboard - Available Orders
+'driverDashboard.available_orders.title': 'Available Orders Near You',
+
+// Driver Dashboard - Messages
+'driverDashboard.messages.loading': 'Loading dashboard...',
+'driverDashboard.messages.auto_rejected': 'Order ${orderId} was auto-rejected due to no response',
+'driverDashboard.messages.order_accepted': 'Order accepted successfully!',
+'driverDashboard.messages.order_rejected': 'Order rejected',
+'driverDashboard.messages.status_updated': 'Order status updated to {status}',
+'driverDashboard.messages.now_online': 'You are now online and available for orders',
+'driverDashboard.messages.now_offline': 'You are now offline',
+'driverDashboard.messages.now_online_approximate': 'You are now online (using approximate location)',
+'driverDashboard.messages.location_updated': 'Location updated',
+'driverDashboard.messages.location_refreshed': 'Location refreshed',
+'driverDashboard.messages.image_uploaded': 'Vehicle image uploaded successfully',
+
+// Driver Dashboard - Errors
+'driverDashboard.errors.load_orders_failed': 'Failed to load orders',
+'driverDashboard.errors.accept_failed': 'Failed to accept order',
+'driverDashboard.errors.reject_failed': 'Failed to reject order',
+'driverDashboard.errors.update_status_failed': 'Failed to update order status',
+'driverDashboard.errors.load_data_failed': 'Failed to load dashboard data. Using sample data.',
+'driverDashboard.errors.geolocation_not_supported': 'Geolocation not supported',
+'driverDashboard.errors.unable_to_get_location': 'Unable to get location',
+'driverDashboard.errors.permission_denied': 'Location permission denied. Please enable location services in your browser settings.',
+'driverDashboard.errors.timeout': 'Location request timed out.',
+'driverDashboard.errors.position_unavailable': 'Location information is unavailable.',
+'driverDashboard.errors.network_error': 'Network error. Please check your connection.',
+'driverDashboard.errors.location_refresh_failed': 'Failed to refresh location',
+'driverDashboard.errors.no_coordinates': 'No location coordinates available',
+'driverDashboard.errors.upload_failed': 'Failed to upload image',
+'driverDashboard.errors.upload_error': 'Error uploading document',
+
+},
   
   ru: {
     // Common
@@ -1873,7 +2396,526 @@ const translations = {
     'customer.booking.arrives_by_time': 'Прибудет к',
     'customer.booking.match_score_percent': 'Совпадение {score}%',
     'customer.booking.distance_text': '{distance} расстояние',
-  }
+    
+    // Order Tracking
+'orderTracking.my_orders': 'Мои заказы',
+'orderTracking.my_deliveries': 'Мои доставки',
+'orderTracking.order_details': 'Детали заказа',
+'orderTracking.progress': 'Прогресс',
+'orderTracking.estimated_time': 'Примерное время',
+'orderTracking.timeline': 'Временная шкала',
+'orderTracking.driver_info': 'Информация о водителе',
+'orderTracking.customer_info': 'Информация о клиенте',
+'orderTracking.contact_info': 'Контактная информация',
+'orderTracking.pickup': 'Место забора',
+'orderTracking.delivery': 'Место доставки',
+'orderTracking.category': 'Категория',
+'orderTracking.weight': 'Вес',
+'orderTracking.volume': 'Объём',
+'orderTracking.price': 'Цена',
+'orderTracking.general': 'Общее',
+'orderTracking.not_available': 'Н/Д',
+'orderTracking.phone': 'Телефон',
+'orderTracking.email': 'Email',
+'orderTracking.call_driver': 'Позвонить водителю',
+'orderTracking.email_driver': 'Написать водителю',
+'orderTracking.chat_with_driver': 'Чат с водителем',
+'orderTracking.call_customer': 'Позвонить клиенту',
+'orderTracking.email_customer': 'Написать клиенту',
+'orderTracking.chat_with_customer': 'Чат с клиентом',
+'orderTracking.select_order': 'Выберите заказ для просмотра деталей',
+'orderTracking.more_orders': 'ещё заказов',
+'orderTracking.notifications': 'Уведомления',
+'orderTracking.route_optimization_available': 'Доступна оптимизация маршрута',
+'orderTracking.route_optimization_hint': 'Используйте оптимизацию маршрута для планирования самого эффективного пути для нескольких доставок',
+
+// Order Tracking - Status
+'orderTracking.status.pending': 'Ожидание',
+'orderTracking.status.driver_assigned': 'Водитель назначен',
+'orderTracking.status.route_to_pickup': 'Путь к забору',
+'orderTracking.status.in_transit': 'В пути',
+'orderTracking.status.delivered': 'Доставлен',
+'orderTracking.status.cancelled': 'Отменён',
+
+// Order Tracking - Empty State
+'orderTracking.empty.title': 'Пока нет заказов',
+'orderTracking.empty.customer_message': 'Вы ещё не разместили ни одного заказа на доставку. Создайте свой первый заказ, чтобы начать!',
+'orderTracking.empty.driver_message': 'У вас пока нет назначенных доставок. Загляните позже для доступных заказов.',
+'orderTracking.empty.create_order': 'Создать новый заказ',
+
+// Order Tracking - Actions
+'orderTracking.actions.accept_order': 'Принять заказ',
+'orderTracking.actions.start_to_pickup': 'Начать выезд к забору',
+'orderTracking.actions.start_delivery': 'Начать доставку',
+'orderTracking.actions.mark_delivered': 'Отметить как доставленное',
+'orderTracking.actions.rate_driver': 'Оценить водителя',
+'orderTracking.actions.refreshing': 'Обновление заказов...',
+'orderTracking.actions.refresh_title': 'Обновить заказы',
+'orderTracking.actions.view_route_optimization': 'Просмотр оптимизации маршрута',
+'orderTracking.actions.order_accepted': 'Заказ успешно принят!',
+'orderTracking.actions.order_assigned': 'Заказ #{orderNumber} назначен вам',
+'orderTracking.actions.opening_route_optimization': 'Открытие оптимизации маршрута...',
+
+// Order Tracking - Status Messages
+'orderTracking.status_messages.route_to_pickup': 'Выезд к месту забора',
+'orderTracking.status_messages.in_transit': 'Доставка в пути',
+'orderTracking.status_messages.delivered': 'Заказ отмечен как доставленный',
+'orderTracking.status_messages.updated': 'Статус заказа обновлён на {status}',
+
+// Order Tracking - Rating Modal
+'orderTracking.rating.title': 'Оцените водителя',
+'orderTracking.rating.placeholder': 'Поделитесь своим опытом с этим водителем...',
+'orderTracking.rating.submit': 'Отправить оценку',
+'orderTracking.rating.cancel': 'Отмена',
+'orderTracking.rating.thank_you': 'Спасибо за вашу оценку!',
+
+// Order Tracking - Errors
+'orderTracking.errors.load_failed': 'Не удалось загрузить заказы',
+'orderTracking.errors.rating_failed': 'Не удалось отправить оценку',
+'orderTracking.errors.network_error': 'Ошибка сети. Пожалуйста, проверьте подключение.',
+'orderTracking.errors.accept_failed': 'Не удалось принять заказ',
+'orderTracking.errors.update_failed': 'Не удалось обновить статус заказа',
+'orderTracking.errors.phone_unavailable': 'Номер телефона недоступен',
+'orderTracking.errors.email_unavailable': 'Email адрес недоступен',
+ 
+// Route Optimization
+'routeOptimization.summary.pickups': 'заборов',
+'routeOptimization.summary.deliveries': 'доставок',
+'routeOptimization.summary.total_stops': 'всего остановок',
+'routeOptimization.title': 'Оптимальный маршрут доставки',
+'routeOptimization.summary': '{pickups} заборов | {deliveries} доставок | {stops} всего остановок',
+'routeOptimization.your_location': 'Ваше местоположение',
+'routeOptimization.starting_point': 'Начальная точка',
+'routeOptimization.order': 'Заказ',
+'routeOptimization.pickup': 'Забор',
+'routeOptimization.delivery': 'Доставка',
+'routeOptimization.pickup_short': 'З',
+'routeOptimization.delivery_short': 'Д',
+'routeOptimization.sequence': 'Последовательность',
+'routeOptimization.distance': 'Расстояние',
+'routeOptimization.select_stop': 'Выбрать остановку',
+'routeOptimization.start_label': '📍 СТАРТ',
+'routeOptimization.pickup_address': 'Адрес забора',
+'routeOptimization.delivery_address': 'Адрес доставки',
+'routeOptimization.customer': 'Клиент',
+'routeOptimization.package': 'Посылка',
+
+// Route Optimization - Priority
+'routeOptimization.priority.high': 'Высокий',
+'routeOptimization.priority.medium': 'Средний',
+'routeOptimization.priority.low': 'Низкий',
+'routeOptimization.priority.suffix': 'приоритет',
+
+// Route Optimization - Status
+'routeOptimization.status.completed': 'Завершено',
+'routeOptimization.status.in_progress': 'В процессе',
+
+// Route Optimization - Units
+'routeOptimization.units.min': 'мин',
+'routeOptimization.units.h': 'ч',
+'routeOptimization.units.m': 'м',
+
+// Route Optimization - Views
+'routeOptimization.views.map': 'Карта',
+'routeOptimization.views.simulation': 'Симуляция',
+'routeOptimization.views.list': 'Список',
+
+// Route Optimization - Actions
+'routeOptimization.actions.reoptimize': 'Оптимизировать',
+'routeOptimization.actions.start': 'Начать',
+'routeOptimization.actions.complete': 'Завершить',
+'routeOptimization.actions.navigate': 'Маршрут',
+'routeOptimization.actions.simulating': 'Симуляция...',
+
+// Route Optimization - Stats
+'routeOptimization.stats.total_distance': 'Общее расстояние',
+'routeOptimization.stats.estimated_duration': 'Примерная длительность',
+'routeOptimization.stats.total_stops': 'Всего остановок',
+'routeOptimization.stats.net_earnings': 'Чистый заработок',
+
+// Route Optimization - Next Stop
+'routeOptimization.next_stop_label': 'Следующая остановка:',
+
+// Route Optimization - Map View
+'routeOptimization.map.title': 'Интерактивная карта маршрута',
+'routeOptimization.map.center_on_me': 'Центрировать на мне',
+'routeOptimization.map.open_in_google': 'Открыть в Google Картах',
+'routeOptimization.map.description': 'Нажмите на маркер для деталей • Цветные точки показывают последовательность остановок',
+'routeOptimization.map.legend.your_location': 'Ваше местоположение',
+'routeOptimization.map.legend.pickup': 'Забор',
+'routeOptimization.map.legend.delivery': 'Доставка',
+'routeOptimization.map.legend.completed': 'Завершено',
+'routeOptimization.map.legend.selected': 'Выбрано',
+'routeOptimization.map.legend.optimized_route': 'Оптимизированный маршрут',
+
+// Route Optimization - Simulation View
+'routeOptimization.simulation.title': 'Симуляция маршрута',
+'routeOptimization.simulation.reset_view': 'Сбросить вид',
+'routeOptimization.simulation.getting_location': 'Получение местоположения...',
+'routeOptimization.simulation.get_location': '📍 Моё местоположение',
+'routeOptimization.simulation.speed': 'Скорость',
+'routeOptimization.simulation.moving': 'Движение...',
+'routeOptimization.simulation.ready': 'Готов',
+'routeOptimization.simulation.hint': '✨ Нажмите "Начать" на любой остановке',
+'routeOptimization.simulation.hint_car': '🚗 Красная машина будет двигаться по маршруту',
+'routeOptimization.simulation.hint_optimized': '✅ Оптимизированный маршрут: сначала все заборы, потом доставки',
+'routeOptimization.simulation.progress_title': '📊 ПРОГРЕСС',
+'routeOptimization.simulation.completed': 'Завершено',
+'routeOptimization.simulation.pickups': 'заборов',
+'routeOptimization.simulation.deliveries': 'доставок',
+
+// Route Optimization - List View
+'routeOptimization.list.title': 'Последовательность доставки ({stops} остановок в оптимальном порядке)',
+'routeOptimization.list.description': '✨ Оптимизированный маршрут: сначала заборы (ближайший сосед), затем доставки (ближайший сосед)',
+'routeOptimization.list.estimated': 'Примерно',
+'routeOptimization.list.address': 'Адрес',
+'routeOptimization.list.details': 'Детали',
+'routeOptimization.list.distance': 'Расстояние',
+'routeOptimization.list.customer': 'Клиент',
+
+// Route Optimization - Legend
+'routeOptimization.legend.title': 'ЛЕГЕНДА',
+'routeOptimization.legend.start': '📍 СТАРТ',
+'routeOptimization.legend.your_location': 'Ваше местоположение',
+'routeOptimization.legend.pickup': '📦 ЗАБОР',
+'routeOptimization.legend.collect_packages': 'Забрать посылки',
+'routeOptimization.legend.delivery': '🏠 ДОСТАВКА',
+'routeOptimization.legend.drop_off': 'Доставить',
+'routeOptimization.legend.moving': '🚗 ДВИЖЕНИЕ',
+'routeOptimization.legend.vehicle': 'Транспорт',
+'routeOptimization.legend.in_progress': '🔵 В ПРОЦЕССЕ',
+'routeOptimization.legend.completed': '✓ ЗАВЕРШЕНО',
+'routeOptimization.controls_hint': '🔍 + / - Масштаб | 🖱️ Перетащить',
+
+// Route Optimization - Features
+'routeOptimization.features.title': 'Функции оптимизации маршрута',
+'routeOptimization.features.region_clustering': 'КЛАСТЕРИЗАЦИЯ ПО РЕГИОНАМ',
+'routeOptimization.features.region_clustering_desc': 'Остановки группируются по географической близости в радиусе 3 км',
+'routeOptimization.features.intelligent_interleaving': 'ИНТЕЛЛЕКТУАЛЬНОЕ ПЕРЕМЕЖИВАНИЕ',
+'routeOptimization.features.intelligent_interleaving_desc': 'В пределах региона водитель может и забирать, и доставлять перед переходом в следующий регион',
+'routeOptimization.features.constraint_enforcement': 'СОБЛЮДЕНИЕ ОГРАНИЧЕНИЙ',
+'routeOptimization.features.constraint_enforcement_desc': 'Доставка не может быть выполнена до забора, но заборы и доставки могут смешиваться между разными заказами',
+'routeOptimization.features.optimal_path': 'РАСЧЁТ ОПТИМАЛЬНОГО ПУТИ',
+'routeOptimization.features.optimal_path_desc': 'Использует алгоритм коммивояжёра с ограничениями для поиска кратчайшего маршрута',
+'routeOptimization.features.separate_stops': '• Каждый заказ имеет отдельные остановки забора и доставки',
+'routeOptimization.features.follow_sequence': '• Следуйте нумерованной последовательности для оптимальной эффективности маршрута',
+'routeOptimization.features.auto_reoptimize': '• Маршрут автоматически переоптимизируется после каждого завершения',
+
+// Route Optimization - Messages
+'routeOptimization.messages.using_approximate_location': 'Используется приблизительное местоположение (центр Санкт-Петербурга)',
+'routeOptimization.messages.location_detected': 'Местоположение определено',
+'routeOptimization.messages.permission_denied': 'Доступ к местоположению запрещён. Используется приблизительное местоположение.',
+'routeOptimization.messages.timeout': 'Превышено время запроса местоположения. Используется приблизительное местоположение.',
+'routeOptimization.messages.unavailable': 'Местоположение недоступно. Используется приблизительное местоположение.',
+'routeOptimization.messages.route_optimized': '✅ Маршрут оптимизирован: {stops} остановок | {distance} км',
+'routeOptimization.messages.calculating_route': 'Расчёт оптимального маршрута...',
+'routeOptimization.messages.getting_location_first': 'Сначала получаем ваше местоположение...',
+'routeOptimization.messages.map_centered': 'Карта центрирована на вашем местоположении',
+'routeOptimization.messages.map_centered_first_stop': 'Карта центрирована на первой остановке',
+'routeOptimization.messages.started': 'Начат {type} для заказа {orderNumber}',
+'routeOptimization.messages.completed': '{type} завершён для заказа {orderNumber}',
+'routeOptimization.messages.completed_next': '✅ Завершено! Следующий: {type} заказа {orderNumber}',
+
+// Route Optimization - Empty State
+'routeOptimization.empty.title': 'Нет активных доставок',
+'routeOptimization.empty.message': 'У вас пока нет активных доставок.',
+'routeOptimization.empty.check_orders': 'Проверить заказы',
+
+// Route Optimization - Errors
+'routeOptimization.errors.calculation_failed': 'Не удалось рассчитать оптимальный маршрут',
+'routeOptimization.errors.location_unavailable': 'Не удалось определить ваше местоположение. Пожалуйста, включите службы геолокации.',
+'routeOptimization.errors.stop_not_found': 'Остановка не найдена',
+'routeOptimization.errors.mark_complete_failed': 'Не удалось отметить как завершённое',
+
+// Driver Earnings
+'driverEarnings.title': 'Заработок и платежи',
+'driverEarnings.subtitle': 'Отслеживайте доходы, расходы и управляйте выплатами',
+
+// Driver Earnings - Tabs
+'driverEarnings.tabs.overview': 'Обзор',
+'driverEarnings.tabs.transactions': 'Транзакции',
+'driverEarnings.tabs.spending_analysis': 'Анализ расходов',
+'driverEarnings.tabs.payment_methods': 'Способы оплаты',
+
+// Driver Earnings - Stats
+'driverEarnings.stats.available_balance': 'Доступный баланс',
+'driverEarnings.stats.total_earned': 'Всего заработано',
+'driverEarnings.stats.total_spent': 'Всего потрачено',
+'driverEarnings.stats.total_withdrawn': 'Всего выведено',
+'driverEarnings.stats.from_deliveries': 'Из {count} завершённых доставок',
+'driverEarnings.stats.from_all_deliveries': 'Со всех доставок',
+'driverEarnings.stats.on_expenses': 'На бизнес-расходы',
+'driverEarnings.stats.to_bank': 'На банковский счёт',
+
+// Driver Earnings - Overview
+'driverEarnings.overview.earnings_summary': 'Сводка заработка',
+'driverEarnings.overview.this_week': 'На этой неделе',
+'driverEarnings.overview.this_month': 'В этом месяце',
+'driverEarnings.overview.this_year': 'В этом году',
+'driverEarnings.overview.deliveries': 'доставок',
+'driverEarnings.overview.total_deliveries': 'всего доставок',
+'driverEarnings.overview.completed_deliveries': 'Завершённые доставки',
+'driverEarnings.overview.next_payout': 'Следующая выплата',
+'driverEarnings.overview.recent_deliveries': 'Недавние доставки',
+'driverEarnings.overview.no_deliveries_yet': 'Пока нет завершённых доставок',
+
+// Driver Earnings - Pending Payments
+'driverEarnings.pending_payments.title': 'Ожидающие платежи',
+'driverEarnings.pending_payments.message': '${amount} будут добавлены к следующей выплате',
+'driverEarnings.pending_payments.payout': 'Выплата',
+
+// Driver Earnings - Payout Schedule
+'driverEarnings.payout_schedule.instant': 'Мгновенно',
+'driverEarnings.payout_schedule.daily': 'Ежедневно',
+'driverEarnings.payout_schedule.weekly': 'Еженедельно',
+
+// Driver Earnings - Savings Goal
+'driverEarnings.savings_goal.title': 'Прогресс цели накоплений',
+'driverEarnings.savings_goal.saved': 'накоплено',
+'driverEarnings.savings_goal.goal': 'Цель',
+'driverEarnings.savings_goal.more_to_go': 'Осталось ${amount} до достижения цели!',
+'driverEarnings.savings_goal.congratulations': '🎉 Поздравляем! Вы достигли цели накоплений!',
+
+// Driver Earnings - Transaction Types
+'driverEarnings.transaction_types.earning': 'Доход',
+'driverEarnings.transaction_types.payout': 'Выплата',
+'driverEarnings.transaction_types.fee': 'Комиссия',
+'driverEarnings.transaction_types.bonus': 'Бонус',
+'driverEarnings.transaction_types.spending': 'Расход',
+
+// Driver Earnings - Status
+'driverEarnings.status.completed': 'Завершено',
+'driverEarnings.status.pending': 'Ожидание',
+'driverEarnings.status.processing': 'Обработка',
+'driverEarnings.status.failed': 'Ошибка',
+
+// Driver Earnings - Categories
+'driverEarnings.categories.fuel': 'Топливо',
+'driverEarnings.categories.food': 'Еда',
+'driverEarnings.categories.maintenance': 'Обслуживание',
+'driverEarnings.categories.supplies': 'Принадлежности',
+'driverEarnings.categories.other': 'Другое',
+
+// Driver Earnings - Transactions
+'driverEarnings.transactions.title': 'История транзакций',
+'driverEarnings.transactions.ref': 'Ссылка',
+'driverEarnings.transactions.no_transactions': 'Транзакции не найдены',
+'driverEarnings.transactions.delivery_payment': 'Оплата доставки - Заказ ${orderNumber}',
+'driverEarnings.transactions.withdrawal_description': 'Вывод на ${method}',
+
+// Driver Earnings - Transaction Filters
+'driverEarnings.transactions.filters.all_types': 'Все типы',
+'driverEarnings.transactions.filters.last_7_days': 'Последние 7 дней',
+'driverEarnings.transactions.filters.last_30_days': 'Последние 30 дней',
+'driverEarnings.transactions.filters.last_3_months': 'Последние 3 месяца',
+'driverEarnings.transactions.filters.last_year': 'Последний год',
+
+// Driver Earnings - Payment Methods
+'driverEarnings.payment_methods.title': 'Способы оплаты',
+'driverEarnings.payment_methods.add': 'Добавить способ оплаты',
+'driverEarnings.payment_methods.default': 'По умолчанию',
+'driverEarnings.payment_methods.inactive': 'Неактивен',
+'driverEarnings.payment_methods.account_holder': 'Владелец счёта',
+'driverEarnings.payment_methods.cash_instruction': 'Сообщайте о наличных платежах после каждой доставки',
+'driverEarnings.payment_methods.bank_transfer': 'Банковский перевод',
+'driverEarnings.payment_methods.credit_card': 'Кредитная карта',
+'driverEarnings.payment_methods.cash': 'Наличные',
+'driverEarnings.payment_methods.bank_account': 'Банковский счёт',
+
+// Driver Earnings - Withdraw
+'driverEarnings.withdraw.title': 'Вывод средств',
+'driverEarnings.withdraw.available_balance': 'Доступный баланс',
+'driverEarnings.withdraw.payment_method': 'Способ оплаты',
+'driverEarnings.withdraw.select_method': 'Выберите способ оплаты',
+'driverEarnings.withdraw.amount': 'Сумма ($)',
+'driverEarnings.withdraw.min_amount': 'Мин: $${min}',
+'driverEarnings.withdraw.minimum_info': 'Минимальная сумма вывода: $${min}',
+'driverEarnings.withdraw.processing_time': 'Время обработки: 1-3 рабочих дня',
+'driverEarnings.withdraw.no_fees': 'Нет комиссии за банковские переводы',
+
+// Driver Earnings - Add Spending
+'driverEarnings.add_spending.title': 'Добавить расход',
+'driverEarnings.add_spending.description': 'Отслеживайте бизнес-расходы для лучшего финансового управления',
+'driverEarnings.add_spending.category': 'Категория',
+'driverEarnings.add_spending.select_category': 'Выберите категорию',
+'driverEarnings.add_spending.amount': 'Сумма ($)',
+'driverEarnings.add_spending.amount_placeholder': 'Введите сумму',
+'driverEarnings.add_spending.description_placeholder': 'например, Заправка, Обед, Замена масла',
+
+// Driver Earnings - Add Payment
+'driverEarnings.add_payment.title': 'Добавить способ оплаты',
+'driverEarnings.add_payment.description': 'Добавьте новый способ получения выплат',
+'driverEarnings.add_payment.payment_type': 'Тип платежа',
+'driverEarnings.add_payment.select_type': 'Выберите тип платежа',
+'driverEarnings.add_payment.bank_account': 'Банковский счёт',
+'driverEarnings.add_payment.digital_wallet': 'Цифровой кошелёк (PayPal и др.)',
+'driverEarnings.add_payment.account_name': 'Название счёта',
+'driverEarnings.add_payment.account_name_placeholder': 'Введите название счёта',
+'driverEarnings.add_payment.account_details': 'Реквизиты счёта',
+'driverEarnings.add_payment.account_details_placeholder': 'Номер счёта или email',
+
+// Driver Earnings - Cash Instructions
+'driverEarnings.cash_instructions.title': 'Инструкции по наличным платежам',
+'driverEarnings.cash_instructions.collect': 'Получайте наличные напрямую от клиентов',
+'driverEarnings.cash_instructions.receipt': 'Всегда предоставляйте чек по запросу',
+'driverEarnings.cash_instructions.report': 'Сообщайте о наличных доходах в приложении сразу после доставки',
+'driverEarnings.cash_instructions.safe': 'Храните наличные в безопасности и регулярно сдавайте в банк',
+
+// Driver Earnings - Spending Tips
+'driverEarnings.spending.by_category': 'Расходы по категориям',
+'driverEarnings.spending.total_spending': 'Общие расходы',
+'driverEarnings.spending.recent': 'Недавние расходы',
+'driverEarnings.spending.no_spending': 'Расходы ещё не записаны. Нажмите "Добавить расход", чтобы отслеживать траты.',
+'driverEarnings.spending.tips.title': 'Советы и аналитика по расходам',
+'driverEarnings.spending.tips.fuel_efficiency.title': 'Совет по экономии топлива',
+'driverEarnings.spending.tips.fuel_efficiency.message': 'Рассмотрите возможность использования топливной карты для экономии до 10% на бензине.',
+'driverEarnings.spending.tips.maintenance.title': 'Экономия на обслуживании',
+'driverEarnings.spending.tips.maintenance.message': 'Регулярное обслуживание может сэкономить до 30% на крупном ремонте.',
+'driverEarnings.spending.tips.tax_deductions.title': 'Налоговые вычеты',
+'driverEarnings.spending.tips.tax_deductions.message': 'Отслеживайте все бизнес-расходы — они могут быть налоговым вычетом!',
+'driverEarnings.spending.tips.profit_margin.title': 'Рентабельность',
+'driverEarnings.spending.tips.profit_margin.message': 'Ваша чистая прибыль после расходов:',
+'driverEarnings.spending.tips.profit_margin.margin': 'маржи',
+
+// Driver Earnings - Spending Examples
+'driverEarnings.spending.gas_refill': 'Заправка',
+'driverEarnings.spending.lunch_break': 'Обед',
+
+// Driver Earnings - Actions
+'driverEarnings.actions.add_spending': 'Добавить расход',
+'driverEarnings.actions.withdraw_funds': 'Вывести средства',
+'driverEarnings.actions.process_withdrawal': 'Обработать вывод',
+'driverEarnings.actions.cancel': 'Отмена',
+'driverEarnings.actions.add_payment_method': 'Добавить способ оплаты',
+
+// Driver Earnings - Messages
+'driverEarnings.messages.loading': 'Загрузка данных о заработке...',
+'driverEarnings.messages.withdrawal_initiated': 'Вывод ${amount} на ${method} инициирован',
+'driverEarnings.messages.spending_recorded': 'Расход ${amount} записан',
+'driverEarnings.messages.transaction_deleted': 'Транзакция удалена',
+'driverEarnings.messages.payment_method_added': 'Способ оплаты добавлен',
+
+// Driver Earnings - Errors
+'driverEarnings.errors.load_failed': 'Не удалось загрузить данные о заработке',
+'driverEarnings.errors.select_method_and_amount': 'Пожалуйста, выберите способ оплаты и введите сумму',
+'driverEarnings.errors.valid_amount': 'Введите корректную сумму',
+'driverEarnings.errors.minimum_withdrawal': 'Минимальная сумма вывода составляет $${min}',
+'driverEarnings.errors.insufficient_balance': 'Недостаточно средств на балансе',
+'driverEarnings.errors.fill_all_fields': 'Пожалуйста, заполните все поля',
+'driverEarnings.errors.valid_amount_positive': 'Введите сумму больше 0',
+// Driver Dashboard
+'driverDashboard.default_location': 'Центральный район',
+'driverDashboard.auto_reject_reason': 'Автоотклонение: нет ответа в течение 2 минут',
+'driverDashboard.default_reject_reason': 'Водитель недоступен',
+
+// Driver Dashboard - Status Card
+'driverDashboard.status.title': 'Статус водителя',
+'driverDashboard.status.refresh_title': 'Обновить местоположение',
+'driverDashboard.status.refresh': 'Обновить',
+'driverDashboard.status.go_online': 'Выйти в сеть',
+'driverDashboard.status.go_offline': 'Уйти в офлайн',
+'driverDashboard.status.online': 'Онлайн',
+'driverDashboard.status.offline': 'Офлайн',
+'driverDashboard.status.available_for_orders': 'Доступен для заказов',
+'driverDashboard.status.unavailable_for_orders': 'Недоступен для заказов',
+'driverDashboard.status.rating': 'Рейтинг',
+'driverDashboard.status.deliveries': 'Доставок',
+
+// Driver Dashboard - Location
+'driverDashboard.location.coordinates': 'Координаты',
+'driverDashboard.location.accuracy': 'Точность',
+'driverDashboard.location.meters': 'метров',
+'driverDashboard.location.open_in_maps': 'Открыть в картах',
+'driverDashboard.location.update_status': 'Обновить статус',
+
+// Driver Dashboard - Vehicle Section
+'driverDashboard.vehicle.title': 'Активный транспорт',
+'driverDashboard.vehicle.select': 'Выбрать транспорт',
+'driverDashboard.vehicle.choose': 'Выберите транспорт',
+'driverDashboard.vehicle.open_image': 'Открыть изображение в новой вкладке',
+'driverDashboard.vehicle.refresh_image': 'Обновить изображение',
+'driverDashboard.vehicle.image_failed': 'Ошибка загрузки изображения',
+'driverDashboard.vehicle.retry': 'Повторить',
+'driverDashboard.vehicle.no_image': 'Нет изображения транспорта',
+'driverDashboard.vehicle.uploading': 'Загрузка...',
+'driverDashboard.vehicle.update_photo': 'Обновить фото транспорта',
+'driverDashboard.vehicle.upload_photo': 'Загрузить фото транспорта',
+'driverDashboard.vehicle.color': 'Цвет',
+'driverDashboard.vehicle.max_weight': 'Макс. вес',
+'driverDashboard.vehicle.max_volume': 'Макс. объём',
+'driverDashboard.vehicle.type_label': 'Тип транспорта',
+'driverDashboard.vehicle.capabilities': 'Возможности',
+'driverDashboard.vehicle.active': 'Транспорт активен',
+'driverDashboard.vehicle.inactive': 'Транспорт неактивен',
+'driverDashboard.vehicle.no_vehicles_title': 'Нет транспорта',
+'driverDashboard.vehicle.no_vehicles_desc': 'Добавьте транспорт в профиле, чтобы начать работу',
+'driverDashboard.vehicle.go_to_setup': 'Перейти к настройке транспорта',
+
+// Driver Dashboard - Orders Section
+'driverDashboard.orders.title': 'Мои заказы',
+'driverDashboard.orders.subtitle': 'Заказы, назначенные вам для доставки',
+'driverDashboard.orders.refresh': 'Обновить',
+'driverDashboard.orders.no_orders_title': 'Нет назначенных заказов',
+'driverDashboard.orders.no_orders_online': 'Вы онлайн. Заказы появятся здесь после назначения.',
+'driverDashboard.orders.no_orders_offline': 'Выйдите в сеть, чтобы получать запросы на доставку.',
+'driverDashboard.orders.go_online': 'Выйти в сеть',
+'driverDashboard.orders.customer': 'Клиент',
+'driverDashboard.orders.complete': 'завершено',
+'driverDashboard.orders.pickup': 'Забор',
+'driverDashboard.orders.delivery': 'Доставка',
+'driverDashboard.orders.general': 'Общее',
+'driverDashboard.orders.accept_order': 'Принять заказ',
+'driverDashboard.orders.reject': 'Отклонить',
+'driverDashboard.orders.auto_reject': 'Автоотклонение через',
+'driverDashboard.orders.auto_reject_in': 'Автоотклонение через',
+'driverDashboard.orders.minutes': 'минут',
+'driverDashboard.orders.start_to_pickup': 'Начать выезд к забору',
+'driverDashboard.orders.start_delivery': 'Начать доставку',
+'driverDashboard.orders.mark_delivered': 'Отметить как доставленное',
+'driverDashboard.orders.view_details': 'Подробнее',
+'driverDashboard.orders.order': 'Заказ',
+
+// Driver Dashboard - Order Status
+'driverDashboard.order_status.pending': 'Ожидание',
+'driverDashboard.order_status.driver_assigned': 'Водитель назначен',
+'driverDashboard.order_status.route_to_pickup': 'Путь к забору',
+'driverDashboard.order_status.in_transit': 'В пути',
+'driverDashboard.order_status.delivered': 'Доставлен',
+'driverDashboard.order_status.cancelled': 'Отменён',
+
+// Driver Dashboard - Available Orders
+'driverDashboard.available_orders.title': 'Доступные заказы рядом с вами',
+
+// Driver Dashboard - Messages
+'driverDashboard.messages.loading': 'Загрузка панели управления...',
+'driverDashboard.messages.auto_rejected': 'Заказ ${orderId} автоматически отклонён из-за отсутствия ответа',
+'driverDashboard.messages.order_accepted': 'Заказ успешно принят!',
+'driverDashboard.messages.order_rejected': 'Заказ отклонён',
+'driverDashboard.messages.status_updated': 'Статус заказа обновлён на {status}',
+'driverDashboard.messages.now_online': 'Вы теперь онлайн и доступны для заказов',
+'driverDashboard.messages.now_offline': 'Вы теперь офлайн',
+'driverDashboard.messages.now_online_approximate': 'Вы теперь онлайн (используется приблизительное местоположение)',
+'driverDashboard.messages.location_updated': 'Местоположение обновлено',
+'driverDashboard.messages.location_refreshed': 'Местоположение обновлено',
+'driverDashboard.messages.image_uploaded': 'Изображение транспорта успешно загружено',
+
+// Driver Dashboard - Errors
+'driverDashboard.errors.load_orders_failed': 'Не удалось загрузить заказы',
+'driverDashboard.errors.accept_failed': 'Не удалось принять заказ',
+'driverDashboard.errors.reject_failed': 'Не удалось отклонить заказ',
+'driverDashboard.errors.update_status_failed': 'Не удалось обновить статус заказа',
+'driverDashboard.errors.load_data_failed': 'Не удалось загрузить данные панели управления. Используются примерные данные.',
+'driverDashboard.errors.geolocation_not_supported': 'Геолокация не поддерживается',
+'driverDashboard.errors.unable_to_get_location': 'Не удалось получить местоположение',
+'driverDashboard.errors.permission_denied': 'Доступ к местоположению запрещён. Пожалуйста, включите службы геолокации в настройках браузера.',
+'driverDashboard.errors.timeout': 'Запрос местоположения превысил время ожидания.',
+'driverDashboard.errors.position_unavailable': 'Информация о местоположении недоступна.',
+'driverDashboard.errors.network_error': 'Ошибка сети. Пожалуйста, проверьте подключение.',
+'driverDashboard.errors.location_refresh_failed': 'Не удалось обновить местоположение',
+'driverDashboard.errors.no_coordinates': 'Координаты местоположения недоступны',
+'driverDashboard.errors.upload_failed': 'Не удалось загрузить изображение',
+'driverDashboard.errors.upload_error': 'Ошибка загрузки документа',
+}
 };
 
 export function LanguageProvider({ children }: { children: ReactNode }) {

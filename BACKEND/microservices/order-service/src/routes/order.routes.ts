@@ -234,4 +234,46 @@ router.get('/notifications',
   (req, res, next) => getOrderController().getNotifications(req, res).catch(next)
 );
 
+/**
+ * @swagger
+ * /notifications/{notificationId}/read:
+ *   patch:
+ *     summary: Mark a single notification as read
+ *     tags: [Notifications]
+ *     security:
+ *       - BearerAuth: []
+ */
+router.patch('/notifications/:notificationId/read',
+  authenticate,
+  (req, res, next) => getOrderController().markNotificationRead(req, res).catch(next)
+);
+
+/**
+ * @swagger
+ * /notifications/read-all:
+ *   patch:
+ *     summary: Mark all notifications as read
+ *     tags: [Notifications]
+ *     security:
+ *       - BearerAuth: []
+ */
+router.patch('/notifications/read-all',
+  authenticate,
+  (req, res, next) => getOrderController().markAllNotificationsRead(req, res).catch(next)
+);
+
+/**
+ * @swagger
+ * /notifications/{notificationId}:
+ *   delete:
+ *     summary: Delete a notification
+ *     tags: [Notifications]
+ *     security:
+ *       - BearerAuth: []
+ */
+router.delete('/notifications/:notificationId',
+  authenticate,
+  (req, res, next) => getOrderController().deleteNotification(req, res).catch(next)
+);
+
 export default router;

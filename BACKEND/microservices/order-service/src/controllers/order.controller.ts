@@ -4,14 +4,17 @@ import { OrderService } from '../services/order.service';
 import { ResponseUtil } from '../utils/response.util';
 import { Logger } from '../utils/logger';
 import { OrderReceiveRequest } from '../types/index';
+import { NotificationService } from '../services/NotificationService';
 
 export class OrderController {
   private orderService: OrderService;
+  private notificationService: NotificationService;
   private logger: Logger;
   
   constructor(orderService: OrderService) {
     this.logger = new Logger('OrderController');
     this.orderService = orderService;
+    this.notificationService = new NotificationService();
   }
   
   // Receive order from UI
@@ -103,7 +106,22 @@ export class OrderController {
         return ResponseUtil.error(res, 'Status is required', 400);
       }
       
+      // Get the order before update to know the old status
+      const oldOrder = await this.orderService.getOrder(orderId);
+      
+      // Check if order exists
+      if (!oldOrder) {
+        return ResponseUtil.error(res, 'Order not found', 404);
+      }
+      
+      const oldStatus = oldOrder.status;
+      
       const result = await this.orderService.updateOrderStatus(orderId, driverId, status, location);
+      
+      // Auto-create notifications when status changes
+      if (oldStatus !== status && result.order) {
+        await this.createStatusChangeNotification(result.order, oldStatus, status);
+      }
       
       return ResponseUtil.success(res, result.order, result.message);
       
@@ -113,6 +131,152 @@ export class OrderController {
       return ResponseUtil.error(res, errorMessage, 400);
     }
   }
+
+  // Helper method to create notifications
+  // Helper method to create notifications
+private async createStatusChangeNotification(order: any, oldStatus: string, newStatus: string) {
+  try {
+    // Define the notification type union
+    type NotificationType = 'order' | 'payment' | 'system' | 'message' | 'document';
+    type Priority = 'low' | 'medium' | 'high';
+    
+    // Notify customer about order status changes
+    if (order.customer_id) {
+      let customerNotification: {
+        type: NotificationType;
+        title: string;
+        message: string;
+        priority: Priority;
+        actionable: boolean;
+        actionText: string;
+        actionLink: string;
+        orderId: string;
+        orderNumber: string;
+      } | null = null;
+      
+      switch (newStatus) {
+        case 'driver_assigned':
+          customerNotification = {
+            type: 'order',
+            title: 'Driver Assigned',
+            message: `A driver has been assigned to your order ${order.order_number?.slice(-8)}. They will arrive shortly.`,
+            priority: 'medium',
+            actionable: true,
+            actionText: 'Track Order',
+            actionLink: '/order-tracking',
+            orderId: order.id,
+            orderNumber: order.order_number
+          };
+          break;
+          
+        case 'route_to_pickup':
+          customerNotification = {
+            type: 'order',
+            title: 'Driver En Route to Pickup',
+            message: `Your driver is on the way to pickup your order ${order.order_number?.slice(-8)}.`,
+            priority: 'medium',
+            actionable: true,
+            actionText: 'Track Order',
+            actionLink: '/order-tracking',
+            orderId: order.id,
+            orderNumber: order.order_number
+          };
+          break;
+          
+        case 'in_transit':
+          customerNotification = {
+            type: 'order',
+            title: 'Order Out for Delivery',
+            message: `Your order ${order.order_number?.slice(-8)} is out for delivery. Expected arrival soon.`,
+            priority: 'medium',
+            actionable: true,
+            actionText: 'Track Order',
+            actionLink: '/order-tracking',
+            orderId: order.id,
+            orderNumber: order.order_number
+          };
+          break;
+          
+        case 'delivered':
+          customerNotification = {
+            type: 'order',
+            title: 'Order Delivered',
+            message: `Your order ${order.order_number?.slice(-8)} has been delivered successfully. Please rate your experience.`,
+            priority: 'low',
+            actionable: true,
+            actionText: 'Rate Driver',
+            actionLink: '/order-tracking',
+            orderId: order.id,
+            orderNumber: order.order_number
+          };
+          break;
+          
+        case 'cancelled':
+          customerNotification = {
+            type: 'order',
+            title: 'Order Cancelled',
+            message: `Your order ${order.order_number?.slice(-8)} has been cancelled.`,
+            priority: 'high',
+            actionable: true,
+            actionText: 'View Details',
+            actionLink: '/order-tracking',
+            orderId: order.id,
+            orderNumber: order.order_number
+          };
+          break;
+      }
+      
+      if (customerNotification) {
+        await this.notificationService.createNotification(order.customer_id, {
+          userId: order.customer_id,
+          userType: 'customer',
+          type: customerNotification.type,
+          title: customerNotification.title,
+          message: customerNotification.message,
+          priority: customerNotification.priority,
+          actionable: customerNotification.actionable,
+          actionText: customerNotification.actionText,
+          actionLink: customerNotification.actionLink,
+          orderId: customerNotification.orderId,
+          orderNumber: customerNotification.orderNumber
+        });
+      }
+    }
+    
+    // Notify driver about order assignment
+    if (order.driver_id && newStatus === 'driver_assigned' && oldStatus !== 'driver_assigned') {
+      const driverNotification = {
+        type: 'order' as const,
+        title: 'New Order Assigned',
+        message: `You have been assigned to order ${order.order_number?.slice(-8)}. Estimated earnings: $${order.pricing?.estimated_usd || '0'}`,
+        priority: 'medium' as const,
+        actionable: true,
+        actionText: 'View Order',
+        actionLink: '/order-tracking',
+        orderId: order.id,
+        orderNumber: order.order_number
+      };
+      
+      await this.notificationService.createNotification(order.driver_id, {
+        userId: order.driver_id,
+        userType: 'driver',
+        type: driverNotification.type,
+        title: driverNotification.title,
+        message: driverNotification.message,
+        priority: driverNotification.priority,
+        actionable: driverNotification.actionable,
+        actionText: driverNotification.actionText,
+        actionLink: driverNotification.actionLink,
+        orderId: driverNotification.orderId,
+        orderNumber: driverNotification.orderNumber
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error creating status change notification:', error);
+    // Don't throw - notification failure shouldn't break the order update
+  }
+}
 
   // Get driver's optimized route
   async getOptimizedRoute(req: Request, res: Response) {
@@ -336,24 +500,84 @@ export class OrderController {
   }
 
   // Get user notifications (polling endpoint)
-  async getNotifications(req: Request, res: Response) {
+  // In your OrderController
+
+async getNotifications(req: Request, res: Response) {
     try {
       const userId = req.user!.userId;
-      const { markAsRead } = req.query;
+      const markAsRead = req.query.markAsRead === 'true';
       
-      const notifications = await this.orderService.getUserNotifications(
-        userId, 
-        markAsRead === 'true'
-      );
+      const notifications = await this.notificationService.getUserNotifications(userId);
       
-      const unreadCount = await this.orderService.getUnreadNotificationCount(userId);
+      if (markAsRead) {
+        await this.notificationService.markAllAsRead(userId);
+      }
       
-      return ResponseUtil.success(res, { notifications, unreadCount }, 'Notifications retrieved');
+      res.json({
+        success: true,
+        data: { 
+          notifications, 
+          unreadCount: notifications.filter(n => !n.read).length 
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error getting notifications:', error);
+      res.status(500).json({ success: false, error: 'Failed to get notifications' });
+    }
+  }
+  
+  async markNotificationRead(req: Request, res: Response) {
+    try {
+      const userId = req.user!.userId;
+      const { notificationId } = req.params;
       
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Get notifications error:', errorMessage);
-      return ResponseUtil.error(res, errorMessage, 500);
+      await this.notificationService.markAsRead(userId, notificationId);
+      
+      res.json({
+        success: true,
+        message: 'Notification marked as read',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+      res.status(500).json({ success: false, error: 'Failed to mark notification as read' });
+    }
+  }
+  
+  async markAllNotificationsRead(req: Request, res: Response) {
+    try {
+      const userId = req.user!.userId;
+      
+      await this.notificationService.markAllAsRead(userId);
+      
+      res.json({
+        success: true,
+        message: 'All notifications marked as read',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+      res.status(500).json({ success: false, error: 'Failed to mark notifications as read' });
+    }
+  }
+  
+  async deleteNotification(req: Request, res: Response) {
+    try {
+      const userId = req.user!.userId;
+      const { notificationId } = req.params;
+      
+      await this.notificationService.deleteNotification(userId, notificationId);
+      
+      res.json({
+        success: true,
+        message: 'Notification deleted',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+      res.status(500).json({ success: false, error: 'Failed to delete notification' });
     }
   }
 }
+

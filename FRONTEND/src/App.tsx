@@ -189,11 +189,11 @@ function AppContent() {
           </Tabs>
         ) : (
           <Tabs value={activeView} onValueChange={setActiveView} className="w-full">
-            <TabsList className="grid w-full grid-cols-6">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="booking">{t('nav.booking')}</TabsTrigger>
-              <TabsTrigger value="bulk">{t('nav.bulk')}</TabsTrigger>
+              {/*<TabsTrigger value="bulk">{t('nav.bulk')}</TabsTrigger>*/}
               <TabsTrigger value="tracking">{t('nav.tracking')}</TabsTrigger>
-              <TabsTrigger value="matching">{t('nav.matching')}</TabsTrigger>
+              {/*<TabsTrigger value="matching">{t('nav.matching')}</TabsTrigger>*/}
               <TabsTrigger value="notifications">{t('nav.notifications')}</TabsTrigger>
               <TabsTrigger value="profile">{t('nav.profile')}</TabsTrigger>
             </TabsList>

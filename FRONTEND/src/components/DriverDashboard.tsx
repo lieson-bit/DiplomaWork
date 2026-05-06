@@ -13,6 +13,8 @@ import { driverApi } from '../src/lib/api';
 import { useDriverProfile } from '../src/hooks/useDriverProfile';
 import { orderApi } from '../src/lib/api';
 import { toast } from 'sonner';
+import { ScrollArea } from "./ui/scroll-area";
+import { useLanguage } from './LanguageContext';
 
 interface Vehicle {
   id: string;
@@ -84,6 +86,7 @@ interface DriverOrder {
 }
 
 export function DriverDashboard() {
+  const { t } = useLanguage();
   const [isOnline, setIsOnline] = useState(false);
   const [selectedVehicle, setSelectedVehicle] = useState('');
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -99,7 +102,7 @@ export function DriverDashboard() {
   const [timeRemaining, setTimeRemaining] = useState<Record<string, number>>({});
 
   // Location state
-  const [currentLocation, setCurrentLocation] = useState<string>('Downtown Area');
+  const [currentLocation, setCurrentLocation] = useState<string>(t('driverDashboard.default_location'));
   const [locationCoords, setLocationCoords] = useState<LocationCoords | null>(null);
   const [gettingLocation, setGettingLocation] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
@@ -156,58 +159,58 @@ export function DriverDashboard() {
   }, [driverOrders]);
 
   const loadDriverOrders = async () => {
-  setLoadingOrders(true);
-  try {
-    const response = await orderApi.getDriverOrders();
-    console.log('📦 Full driver orders response:', response);
-    
-    if (response.success && response.data) {
-      // Check different possible data structures
-      let ordersList = [];
+    setLoadingOrders(true);
+    try {
+      const response = await orderApi.getDriverOrders();
+      console.log('📦 Full driver orders response:', response);
       
-      if (Array.isArray(response.data)) {
-        // If data is directly an array
-        ordersList = response.data;
-      } else if (response.data.orders && Array.isArray(response.data.orders)) {
-        // If data has an orders property
-        ordersList = response.data.orders;
-      } else if (response.data.data && Array.isArray(response.data.data)) {
-        // If data has a nested data property
-        ordersList = response.data.data;
-      } else if (response.data.items && Array.isArray(response.data.items)) {
-        ordersList = response.data.items;
-      } else {
-        // Try to see what's in the response
-        console.log('⚠️ Unknown orders data structure:', Object.keys(response.data));
-        ordersList = [];
-      }
-      
-      console.log(`📦 Found ${ordersList.length} orders for driver`);
-      
-      // Log each order to see what's coming through
-      ordersList.forEach((order: any, index: number) => {
-        console.log(`  Order ${index + 1}:`, {
-          id: order.id,
-          order_number: order.order_number,
-          status: order.status,
-          driver_id: order.driver_id,
-          customer_name: order.customer_info?.name
+      if (response.success && response.data) {
+        // Check different possible data structures
+        let ordersList = [];
+        
+        if (Array.isArray(response.data)) {
+          // If data is directly an array
+          ordersList = response.data;
+        } else if (response.data.orders && Array.isArray(response.data.orders)) {
+          // If data has an orders property
+          ordersList = response.data.orders;
+        } else if (response.data.data && Array.isArray(response.data.data)) {
+          // If data has a nested data property
+          ordersList = response.data.data;
+        } else if (response.data.items && Array.isArray(response.data.items)) {
+          ordersList = response.data.items;
+        } else {
+          // Try to see what's in the response
+          console.log('⚠️ Unknown orders data structure:', Object.keys(response.data));
+          ordersList = [];
+        }
+        
+        console.log(`📦 Found ${ordersList.length} orders for driver`);
+        
+        // Log each order to see what's coming through
+        ordersList.forEach((order: any, index: number) => {
+          console.log(`  Order ${index + 1}:`, {
+            id: order.id,
+            order_number: order.order_number,
+            status: order.status,
+            driver_id: order.driver_id,
+            customer_name: order.customer_info?.name
+          });
         });
-      });
-      
-      setDriverOrders(ordersList);
-    } else {
-      console.log('No orders in response:', response);
+        
+        setDriverOrders(ordersList);
+      } else {
+        console.log('No orders in response:', response);
+        setDriverOrders([]);
+      }
+    } catch (error) {
+      console.error('Error loading driver orders:', error);
+      toast.error(t('driverDashboard.errors.load_orders_failed'));
       setDriverOrders([]);
+    } finally {
+      setLoadingOrders(false);
     }
-  } catch (error) {
-    console.error('Error loading driver orders:', error);
-    toast.error('Failed to load orders');
-    setDriverOrders([]);
-  } finally {
-    setLoadingOrders(false);
-  }
-};
+  };
 
   // Add function to start auto-reject timer
   const startAutoRejectTimer = (orderId: string) => {
@@ -219,9 +222,9 @@ export function DriverDashboard() {
     // Set timer to auto-reject after 2 minutes (120 seconds)
     const timer = setTimeout(async () => {
       try {
-        const response = await orderApi.rejectOrder(orderId, 'Auto-rejected: No response within 2 minutes');
+        const response = await orderApi.rejectOrder(orderId, t('driverDashboard.auto_reject_reason'));
         if (response.success) {
-          toast.info(`Order ${orderId.slice(-8)} was auto-rejected due to no response`);
+          toast.info(t('driverDashboard.messages.auto_rejected', { orderId: orderId.slice(-8) }));
           loadDriverOrders(); // Refresh orders list
           loadOptimizedRoute();
         }
@@ -265,14 +268,14 @@ export function DriverDashboard() {
     try {
       const response = await orderApi.acceptOrder(orderId);
       if (response.success) {
-        toast.success('Order accepted successfully!');
+        toast.success(t('driverDashboard.messages.order_accepted'));
         loadDriverOrders();
         loadOptimizedRoute();
       } else {
-        toast.error(response.error || 'Failed to accept order');
+        toast.error(response.error || t('driverDashboard.errors.accept_failed'));
       }
     } catch (error: any) {
-      toast.error(error.message || 'Network error');
+      toast.error(error.message || t('driverDashboard.errors.network_error'));
     }
   };
 
@@ -294,16 +297,16 @@ export function DriverDashboard() {
     }
     
     try {
-      const response = await orderApi.rejectOrder(orderId, reason || 'Driver rejected');
+      const response = await orderApi.rejectOrder(orderId, reason || t('driverDashboard.default_reject_reason'));
       if (response.success) {
-        toast.info('Order rejected');
+        toast.info(t('driverDashboard.messages.order_rejected'));
         loadDriverOrders();
         loadOptimizedRoute();
       } else {
-        toast.error(response.error || 'Failed to reject order');
+        toast.error(response.error || t('driverDashboard.errors.reject_failed'));
       }
     } catch (error: any) {
-      toast.error(error.message || 'Network error');
+      toast.error(error.message || t('driverDashboard.errors.network_error'));
     }
   };
 
@@ -325,14 +328,15 @@ export function DriverDashboard() {
 
       const response = await orderApi.updateOrderStatus(orderId, status, location);
       if (response.success) {
-        toast.success(`Order status updated to ${status.replace('_', ' ')}`);
+        const statusMessage = t(`driverDashboard.order_status.${status.replace(/_/g, '_')}`, status.replace('_', ' '));
+        toast.success(t('driverDashboard.messages.status_updated', { status: statusMessage }));
         loadDriverOrders(); // Refresh orders list
         loadOptimizedRoute(); // Refresh optimized route
       } else {
-        toast.error(response.error || 'Failed to update status');
+        toast.error(response.error || t('driverDashboard.errors.update_status_failed'));
       }
     } catch (error: any) {
-      toast.error(error.message || 'Network error');
+      toast.error(error.message || t('driverDashboard.errors.network_error'));
     }
   };
 
@@ -406,7 +410,7 @@ export function DriverDashboard() {
 
     } catch (error: any) {
       console.error('❌ Error loading dashboard data:', error);
-      toast.error('Failed to load dashboard data. Using sample data.');
+      toast.error(t('driverDashboard.errors.load_data_failed'));
 
       // Fallback to sample data
       const sampleVehicle: Vehicle = {
@@ -445,7 +449,7 @@ export function DriverDashboard() {
       // Try to get precise location from browser
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         if (!navigator.geolocation) {
-          reject(new Error('Geolocation not supported'));
+          reject(new Error(t('driverDashboard.errors.geolocation_not_supported')));
           return;
         }
       
@@ -487,19 +491,19 @@ export function DriverDashboard() {
     } catch (error: any) {
       console.warn('Could not get precise location:', error);
       
-      let errorMessage = 'Unable to get location';
+      let errorMessage = t('driverDashboard.errors.unable_to_get_location');
       if (error.code === error.PERMISSION_DENIED) {
-        errorMessage = 'Location permission denied. Please enable location services in your browser settings.';
+        errorMessage = t('driverDashboard.errors.permission_denied');
       } else if (error.code === error.TIMEOUT) {
-        errorMessage = 'Location request timed out.';
+        errorMessage = t('driverDashboard.errors.timeout');
       } else if (error.code === error.POSITION_UNAVAILABLE) {
-        errorMessage = 'Location information is unavailable.';
+        errorMessage = t('driverDashboard.errors.position_unavailable');
       }
       
       setLocationError(errorMessage);
       return {
-        display: "Downtown Area",
-        full: "Downtown Area"
+        display: t('driverDashboard.default_location'),
+        full: t('driverDashboard.default_location')
       };
     } finally {
       setGettingLocation(false);
@@ -633,7 +637,7 @@ export function DriverDashboard() {
     
       if (response.success) {
         setIsOnline(value);
-        toast.success(`You are now ${value ? 'online and available for orders' : 'offline'}`);
+        toast.success(value ? t('driverDashboard.messages.now_online') : t('driverDashboard.messages.now_offline'));
         
         // Update driver data if needed
         if (driverData) {
@@ -641,7 +645,7 @@ export function DriverDashboard() {
           driverData.currentLocation = locationData.display;
         }
       } else {
-        toast.error(response.error || 'Failed to update status');
+        toast.error(response.error || t('driverDashboard.errors.update_status_failed'));
       }
     } catch (error: any) {
       console.error('Error updating status:', error);
@@ -650,18 +654,18 @@ export function DriverDashboard() {
       try {
         const fallbackResponse = await driverApi.updateStatus({ 
           isOnline: value, 
-          location: "Downtown Area" 
+          location: t('driverDashboard.default_location') 
         });
         
         if (fallbackResponse.success) {
           setIsOnline(value);
-          toast.warning(`You are now ${value ? 'online' : 'offline'} (using approximate location)`);
-          setCurrentLocation("Downtown Area");
+          toast.warning(value ? t('driverDashboard.messages.now_online_approximate') : t('driverDashboard.messages.now_offline'));
+          setCurrentLocation(t('driverDashboard.default_location'));
         } else {
-          toast.error('Failed to update status');
+          toast.error(t('driverDashboard.errors.update_status_failed'));
         }
       } catch (fallbackError) {
-        toast.error('Network error. Please check your connection.');
+        toast.error(t('driverDashboard.errors.network_error'));
       }
     } finally {
       setGettingLocation(false);
@@ -684,14 +688,14 @@ export function DriverDashboard() {
         });
         
         if (response.success) {
-          toast.success('Location updated');
+          toast.success(t('driverDashboard.messages.location_updated'));
         }
       } else {
-        toast.success('Location refreshed');
+        toast.success(t('driverDashboard.messages.location_refreshed'));
       }
     } catch (error) {
       console.error('Error refreshing location:', error);
-      toast.error('Failed to refresh location');
+      toast.error(t('driverDashboard.errors.location_refresh_failed'));
     } finally {
       setGettingLocation(false);
     }
@@ -699,7 +703,7 @@ export function DriverDashboard() {
 
   const openInMaps = () => {
     if (!locationCoords) {
-      toast.error('No location coordinates available');
+      toast.error(t('driverDashboard.errors.no_coordinates'));
       return;
     }
     
@@ -724,7 +728,7 @@ export function DriverDashboard() {
       const response = await driverApi.uploadVehicleImage(vehicleId, formData);
       
       if (response.success) {
-        toast.success('Vehicle image uploaded successfully');
+        toast.success(t('driverDashboard.messages.image_uploaded'));
         console.log('✅ Vehicle image upload response:', response.data);
         
         // Clear image error for this vehicle
@@ -735,11 +739,11 @@ export function DriverDashboard() {
           await loadDashboardData();
         }, 1000);
       } else {
-        toast.error(`Failed to upload image: ${response.error}`);
+        toast.error(`${t('driverDashboard.errors.upload_failed')}: ${response.error}`);
       }
     } catch (error: any) {
       console.error('Error uploading vehicle image:', error);
-      toast.error(`Error: ${error.message}`);
+      toast.error(`${t('driverDashboard.errors.upload_error')}: ${error.message}`);
     } finally {
       setUploadingVehiclePic(null);
     }
@@ -784,7 +788,7 @@ export function DriverDashboard() {
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
+          <p className="text-gray-600">{t('driverDashboard.messages.loading')}</p>
         </div>
       </div>
     );
@@ -796,7 +800,7 @@ export function DriverDashboard() {
       <Card>
         <CardHeader>
           <div className="flex justify-between items-center">
-            <CardTitle>Driver Status</CardTitle>
+            <CardTitle>{t('driverDashboard.status.title')}</CardTitle>
             
             <div className="flex items-center space-x-4">
               {/* Location refresh button */}
@@ -806,14 +810,14 @@ export function DriverDashboard() {
                 onClick={refreshLocation}
                 disabled={gettingLocation}
                 className="flex items-center space-x-1"
-                title="Refresh location"
+                title={t('driverDashboard.status.refresh_title')}
               >
                 {gettingLocation ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
                 ) : (
                   <Navigation className="h-4 w-4" />
                 )}
-                <span className="hidden sm:inline">Refresh</span>
+                <span className="hidden sm:inline">{t('driverDashboard.status.refresh')}</span>
               </Button>
               
               {/* Online/Offline button */}
@@ -827,18 +831,18 @@ export function DriverDashboard() {
                     ? 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 shadow-lg' 
                     : ''
                 }`}
-                aria-label={isOnline ? "Go offline" : "Go online"}
+                aria-label={isOnline ? t('driverDashboard.status.go_offline') : t('driverDashboard.status.go_online')}
               >
                 {isOnline ? (
                   <>
                     <Wifi className="h-4 w-4" />
-                    <span>Online</span>
+                    <span>{t('driverDashboard.status.online')}</span>
                     <div className="ml-1 w-2 h-2 rounded-full bg-white animate-pulse"></div>
                   </>
                 ) : (
                   <>
                     <WifiOff className="h-4 w-4" />
-                    <span>Offline</span>
+                    <span>{t('driverDashboard.status.offline')}</span>
                   </>
                 )}
               </Button>
@@ -853,7 +857,7 @@ export function DriverDashboard() {
               <div className="flex items-center space-x-3">
                 <div className={`w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></div>
                 <span className="text-sm font-medium">
-                  {isOnline ? 'Available for orders' : 'Unavailable for orders'}
+                  {isOnline ? t('driverDashboard.status.available_for_orders') : t('driverDashboard.status.unavailable_for_orders')}
                 </span>
               </div>
               
@@ -871,12 +875,12 @@ export function DriverDashboard() {
               
               <div className="flex items-center space-x-2">
                 <Star className="h-4 w-4 text-yellow-500 flex-shrink-0" />
-                <span className="text-sm">{stats?.rating?.toFixed(1) || 0} Rating</span>
+                <span className="text-sm">{stats?.rating?.toFixed(1) || 0} {t('driverDashboard.status.rating')}</span>
               </div>
               
               <div className="flex items-center space-x-2">
                 <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                <span className="text-sm">{stats?.totalDeliveries || 0} Deliveries</span>
+                <span className="text-sm">{stats?.totalDeliveries || 0} {t('driverDashboard.status.deliveries')}</span>
               </div>
             </div>
             
@@ -885,9 +889,9 @@ export function DriverDashboard() {
               <div className="mt-4 pt-4 border-t border-gray-200">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="text-sm text-gray-600">
-                    <p>Coordinates: {locationCoords.latitude.toFixed(6)}, {locationCoords.longitude.toFixed(6)}</p>
+                    <p>{t('driverDashboard.location.coordinates')}: {locationCoords.latitude.toFixed(6)}, {locationCoords.longitude.toFixed(6)}</p>
                     {locationCoords.accuracy && (
-                      <p className="text-xs">Accuracy: ±{Math.round(locationCoords.accuracy)} meters</p>
+                      <p className="text-xs">{t('driverDashboard.location.accuracy')}: ±{Math.round(locationCoords.accuracy)} {t('driverDashboard.location.meters')}</p>
                     )}
                   </div>
                   
@@ -899,7 +903,7 @@ export function DriverDashboard() {
                       className="flex items-center space-x-1"
                     >
                       <Compass className="h-3 w-3" />
-                      <span>Open in Maps</span>
+                      <span>{t('driverDashboard.location.open_in_maps')}</span>
                     </Button>
                     
                     {isOnline && (
@@ -915,7 +919,7 @@ export function DriverDashboard() {
                         ) : (
                           <RefreshCw className="h-3 w-3" />
                         )}
-                        <span>Update Status</span>
+                        <span>{t('driverDashboard.location.update_status')}</span>
                       </Button>
                     )}
                   </div>
@@ -926,420 +930,398 @@ export function DriverDashboard() {
         </CardContent>
       </Card>
 
-      {/* Vehicle Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Active Vehicle</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center space-x-4">
-            <Label htmlFor="vehicle-select" className="font-medium">Select Vehicle:</Label>
-            <Select value={selectedVehicle} onValueChange={setSelectedVehicle}>
-              <SelectTrigger className="w-[250px]">
-                <SelectValue placeholder="Choose vehicle" />
-              </SelectTrigger>
-              <SelectContent>
-                {vehicles.map((vehicle: Vehicle) => (
-                  <SelectItem key={vehicle.id} value={vehicle.id}>
-                    {vehicle.type} - {vehicle.licensePlate} {vehicle.make && `(${vehicle.make} ${vehicle.model})`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           
-          {currentVehicle ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <div className="relative w-full h-48 bg-gray-100 rounded-lg overflow-hidden border">
-                  {currentVehicleImageUrl && !hasVehiclePicError ? (
-                    <>
-                      <img
-                        key={`vehicle-img-${currentVehicle.id}`}
-                        src={currentVehicleImageUrl}
-                        alt={`${currentVehicle.make} ${currentVehicle.model}`}
-                        className="w-full h-full object-cover"
-                        onError={() => {
-                          console.error('❌ Vehicle image failed to load:', {
-                            url: currentVehicleImageUrl,
-                            vehicleId: currentVehicle.id,
-                          });
-                          handleImageError(currentVehicle.id);
-                        }}
-                        onLoad={() => {
-                          console.log('✅ Vehicle image loaded successfully:', currentVehicleImageUrl);
-                          // Clear any previous errors
-                          handleRetryImage(currentVehicle.id);
-                        }}
-                        crossOrigin="anonymous"
-                      />
-                      
-                      <button
-                        onClick={() => window.open(currentVehicleImageUrl, '_blank')}
-                        className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
-                        title="Open image in new tab"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                      
-                      {currentVehicleImageUrl && (
+      {/* Two Column Layout: Active Vehicle (Left) + My Orders (Right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Vehicle Selection - Left Column */}
+        <Card className="h-full">
+          <CardHeader>
+            <CardTitle>{t('driverDashboard.vehicle.title')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center space-x-4">
+              <Label htmlFor="vehicle-select" className="font-medium">{t('driverDashboard.vehicle.select')}:</Label>
+              <Select value={selectedVehicle} onValueChange={setSelectedVehicle}>
+                <SelectTrigger className="w-[250px]">
+                  <SelectValue placeholder={t('driverDashboard.vehicle.choose')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {vehicles.map((vehicle: Vehicle) => (
+                    <SelectItem key={vehicle.id} value={vehicle.id}>
+                      {vehicle.type} - {vehicle.licensePlate} {vehicle.make && `(${vehicle.make} ${vehicle.model})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {currentVehicle ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <div className="relative w-full h-48 bg-gray-100 rounded-lg overflow-hidden border">
+                    {currentVehicleImageUrl && !hasVehiclePicError ? (
+                      <>
+                        <img
+                          key={`vehicle-img-${currentVehicle.id}`}
+                          src={currentVehicleImageUrl}
+                          alt={`${currentVehicle.make} ${currentVehicle.model}`}
+                          className="w-full h-full object-cover"
+                          onError={() => {
+                            console.error('❌ Vehicle image failed to load:', {
+                              url: currentVehicleImageUrl,
+                              vehicleId: currentVehicle.id,
+                            });
+                            handleImageError(currentVehicle.id);
+                          }}
+                          onLoad={() => {
+                            console.log('✅ Vehicle image loaded successfully:', currentVehicleImageUrl);
+                            handleRetryImage(currentVehicle.id);
+                          }}
+                          crossOrigin="anonymous"
+                        />
+                        
                         <button
-                          onClick={() => handleRetryImage(currentVehicle.id)}
-                          className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
-                          title="Refresh image"
+                          onClick={() => window.open(currentVehicleImageUrl, '_blank')}
+                          className="absolute top-2 left-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
+                          title={t('driverDashboard.vehicle.open_image')}
                         >
-                          <RefreshCw className="h-4 w-4" />
+                          <Eye className="h-4 w-4" />
                         </button>
-                      )}
-                    </>
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-                      {hasVehiclePicError ? (
-                        <>
-                          <AlertTriangle className="h-12 w-12 mb-2 text-red-400" />
-                          <span>Image failed to load</span>
+                        
+                        {currentVehicleImageUrl && (
                           <button
                             onClick={() => handleRetryImage(currentVehicle.id)}
-                            className="mt-2 text-sm text-blue-600 hover:text-blue-800"
+                            className="absolute top-2 right-2 bg-black/70 text-white p-1.5 rounded hover:bg-black/90 transition"
+                            title={t('driverDashboard.vehicle.refresh_image')}
                           >
-                            Retry
+                            <RefreshCw className="h-4 w-4" />
                           </button>
+                        )}
+                      </>
+                    ) : (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
+                        {hasVehiclePicError ? (
+                          <>
+                            <AlertTriangle className="h-12 w-12 mb-2 text-red-400" />
+                            <span>{t('driverDashboard.vehicle.image_failed')}</span>
+                            <button
+                              onClick={() => handleRetryImage(currentVehicle.id)}
+                              className="mt-2 text-sm text-blue-600 hover:text-blue-800"
+                            >
+                              {t('driverDashboard.vehicle.retry')}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <Truck className="h-12 w-12 mb-2" />
+                            <span>{t('driverDashboard.vehicle.no_image')}</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    id="vehicle-image-upload"
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                      const file = e.target.files?.[0];
+                      if (file && currentVehicle) {
+                        handleVehicleImageUpload(currentVehicle.id, file);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                  <label htmlFor="vehicle-image-upload">
+                    <Button 
+                      variant="outline" 
+                      className="w-full cursor-pointer"
+                      disabled={uploadingVehiclePic === currentVehicle.id}
+                    >
+                      {uploadingVehiclePic === currentVehicle.id ? (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                          {t('driverDashboard.vehicle.uploading')}
                         </>
                       ) : (
                         <>
-                          <Truck className="h-12 w-12 mb-2" />
-                          <span>No vehicle image</span>
+                          <Upload className="mr-2 h-4 w-4" />
+                          {currentVehicleImageUrl ? t('driverDashboard.vehicle.update_photo') : t('driverDashboard.vehicle.upload_photo')}
                         </>
                       )}
-                    </div>
-                  )}
+                    </Button>
+                  </label>
                 </div>
                 
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  id="vehicle-image-upload"
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                    const file = e.target.files?.[0];
-                    if (file && currentVehicle) {
-                      handleVehicleImageUpload(currentVehicle.id, file);
-                      e.target.value = ''; // Reset input
-                    }
-                  }}
-                />
-                <label htmlFor="vehicle-image-upload">
-                  <Button 
-                    variant="outline" 
-                    className="w-full cursor-pointer"
-                    disabled={uploadingVehiclePic === currentVehicle.id}
-                  >
-                    {uploadingVehiclePic === currentVehicle.id ? (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Uploading...
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="mr-2 h-4 w-4" />
-                        {currentVehicleImageUrl ? 'Update Vehicle Photo' : 'Upload Vehicle Photo'}
-                      </>
-                    )}
-                  </Button>
-                </label>
-              </div>
-              
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-xl font-semibold">
-                    {currentVehicle.make} {currentVehicle.model}
-                    {currentVehicle.year && ` (${currentVehicle.year})`}
-                  </h3>
-                  <p className="text-gray-600">{currentVehicle.licensePlate}</p>
-                  {currentVehicle.color && (
-                    <p className="text-sm text-gray-500">
-                      Color: {currentVehicle.color}
-                    </p>
-                  )}
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <Weight className="h-4 w-4 text-gray-500" />
-                      <span className="font-medium">Max Weight</span>
-                    </div>
-                    <p className="text-lg">{currentVehicle.maxWeight} kg</p>
-                  </div>
-                  
-                  <div className="space-y-1">
-                    <div className="flex items-center space-x-2">
-                      <Package className="h-4 w-4 text-gray-500" />
-                      <span className="font-medium">Max Volume</span>
-                    </div>
-                    <p className="text-lg">{currentVehicle.maxVolume} m³</p>
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="font-medium mb-2">Vehicle Type</h4>
-                  <Badge variant="secondary" className="text-sm px-3 py-1">
-                    {currentVehicle.type}
-                  </Badge>
-                </div>
-                
-                {currentVehicle.categories && currentVehicle.categories.length > 0 && (
+                <div className="space-y-4">
                   <div>
-                    <h4 className="font-medium mb-2">Capabilities</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {currentVehicle.categories.map((category: string) => (
-                        <Badge key={category} variant="outline">
-                          {category}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                
-                <div className="flex items-center">
-                  <div className={`w-3 h-3 rounded-full mr-2 ${currentVehicle.isActive ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-                  <span className="text-sm">
-                    {currentVehicle.isActive ? 'Vehicle Active' : 'Vehicle Inactive'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="text-center py-8">
-              <Truck className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900">No Vehicles</h3>
-              <p className="text-gray-600 mt-1">Add a vehicle in your profile to get started</p>
-              <Button 
-                className="mt-4"
-                onClick={() => window.location.href = '/driver-profile?tab=vehicle'}
-              >
-                Go to Vehicle Setup
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Stats Overview */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Driver Statistics</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-            <div className="text-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
-              <p className="text-3xl font-bold text-blue-600">{stats?.totalDeliveries || 0}</p>
-              <p className="text-gray-600">Total Deliveries</p>
-            </div>
-            <div className="text-center p-4 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition">
-              <p className="text-3xl font-bold text-yellow-600">{stats?.rating?.toFixed(1) || 0}</p>
-              <p className="text-gray-600">Average Rating</p>
-            </div>
-            <div className="text-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition">
-              <p className="text-3xl font-bold text-green-600">${(stats?.totalEarnings || 0).toLocaleString()}</p>
-              <p className="text-gray-600">Total Earnings</p>
-            </div>
-            <div className="text-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
-              <p className="text-3xl font-bold text-purple-600">{stats?.completionRate || 0}%</p>
-              <p className="text-gray-600">Completion Rate</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      
-      {/* My Orders Section */}
-      <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              My Orders
-            </CardTitle>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={loadDriverOrders}
-              disabled={loadingOrders}
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${loadingOrders ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
-          <p className="text-gray-600">Orders assigned to you for delivery</p>
-        </CardHeader>
-        <CardContent>
-          {loadingOrders ? (
-            <div className="flex justify-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            </div>
-          ) : driverOrders.length === 0 ? (
-            <div className="text-center py-8">
-              <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg text-gray-900 mb-2">No orders assigned</h3>
-              <p className="text-gray-600">
-                {isOnline 
-                  ? 'You are online. Orders will appear here when assigned.'
-                  : 'Go online to receive delivery requests.'}
-              </p>
-              {!isOnline && (
-                <Button 
-                  onClick={() => handleToggleOnline(true)} 
-                  className="mt-4 bg-green-600 hover:bg-green-700"
-                >
-                  <Wifi className="h-4 w-4 mr-2" />
-                  Go Online
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {driverOrders.map((order) => (
-                <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50 transition">
-                  <div className="flex justify-between items-start mb-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-medium">#{order.order_number?.slice(-8) || order.id?.slice(-8)}</h4>
-                        <Badge className={order.status === 'delivered' ? 'bg-green-100 text-green-800' : 
-                                        order.status === 'in_transit' ? 'bg-blue-100 text-blue-800' :
-                                        order.status === 'route_to_pickup' ? 'bg-purple-100 text-purple-800' :
-                                        order.status === 'driver_assigned' ? 'bg-yellow-100 text-yellow-800' :
-                                        'bg-gray-100 text-gray-800'}>
-                          {order.status?.replace('_', ' ')}
-                        </Badge>
-                      </div>
-                      <p className="text-sm text-gray-600 mt-1">
-                        Customer: {order.customer_info?.name || 'N/A'}
+                    <h3 className="text-xl font-semibold">
+                      {currentVehicle.make} {currentVehicle.model}
+                      {currentVehicle.year && ` (${currentVehicle.year})`}
+                    </h3>
+                    <p className="text-gray-600">{currentVehicle.licensePlate}</p>
+                    {currentVehicle.color && (
+                      <p className="text-sm text-gray-500">
+                        {t('driverDashboard.vehicle.color')}: {currentVehicle.color}
                       </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-lg font-semibold text-green-600">
-                        ${order.pricing?.estimated_usd || '0'}
-                      </p>
-                      {order.progress && (
-                        <p className="text-xs text-gray-500">
-                          {order.progress.progressPercentage}% complete
-                        </p>
-                      )}
-                    </div>
+                    )}
                   </div>
                   
-                  <div className="space-y-2 mb-3">
-                    <div className="flex items-start space-x-2">
-                      <MapPin className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-medium">Pickup:</p>
-                        <p className="text-sm text-gray-600">{order.pickup_location?.address || 'N/A'}</p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <Weight className="h-4 w-4 text-gray-500" />
+                        <span className="font-medium">{t('driverDashboard.vehicle.max_weight')}</span>
                       </div>
-                    </div>
-                    <div className="flex items-start space-x-2">
-                      <MapPin className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-medium">Delivery:</p>
-                        <p className="text-sm text-gray-600">{order.delivery_location?.address || 'N/A'}</p>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 text-sm text-gray-600">
-                      <span>📦 {order.package_details?.category || 'General'}</span>
-                      <span>⚖️ {order.package_details?.weight_kg || 0} kg</span>
-                      <span>📐 {order.package_details?.volume_m3 || 0} m³</span>
+                      <p className="text-lg">{currentVehicle.maxWeight} {t('units.kg')}</p>
                     </div>
                     
-                    <div className="flex gap-2">
-                      {order.status === 'pending' && (
-                        <>
-                          <Button 
-                            onClick={() => handleAcceptOrder(order.id)}
-                            size="sm"
-                            className="bg-green-600 hover:bg-green-700"
-                          >
-                            Accept Order
-                          </Button>
-                          <Button 
-                            onClick={() => handleRejectOrder(order.id, 'Driver unavailable')}
-                            size="sm"
-                            variant="destructive"
-                          >
-                            Reject
-                          </Button>
-                          {timeRemaining[order.id] > 0 && (
-                            <div className="text-xs text-orange-600 mt-1">
-                              Auto-reject in: {Math.floor(timeRemaining[order.id] / 60)}:{String(timeRemaining[order.id] % 60).padStart(2, '0')}
-                            </div>
-                          )}
-                        </>
-                      )}
-                      
-                      {order.status === 'driver_assigned' && (
-                        <Button 
-                          onClick={() => handleUpdateOrderStatus(order.id, 'route_to_pickup')}
-                          size="sm"
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          <Navigation className="h-4 w-4 mr-1" />
-                          Start to Pickup
-                        </Button>
-                      )}
-                      
-                      {order.status === 'route_to_pickup' && (
-                        <Button 
-                          onClick={() => handleUpdateOrderStatus(order.id, 'in_transit')}
-                          size="sm"
-                          className="bg-blue-600 hover:bg-blue-700"
-                        >
-                          <Truck className="h-4 w-4 mr-1" />
-                          Start Delivery
-                        </Button>
-                      )}
-                      
-                      {order.status === 'in_transit' && (
-                        <Button 
-                          onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
-                          size="sm"
-                          className="bg-green-600 hover:bg-green-700"
-                        >
-                          <CheckCircle className="h-4 w-4 mr-1" />
-                          Mark Delivered
-                        </Button>
-                      )}
-                      
-                      <Button 
-                        variant="outline" 
-                        size="sm"
-                        onClick={() => window.location.href = `/order-tracking?orderId=${order.id}`}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <Package className="h-4 w-4 text-gray-500" />
+                        <span className="font-medium">{t('driverDashboard.vehicle.max_volume')}</span>
+                      </div>
+                      <p className="text-lg">{currentVehicle.maxVolume} {t('units.m3')}</p>
                     </div>
                   </div>
                   
-                  {/* Timer display for pending orders */}
-                  {order.status === 'pending' && timeRemaining[order.id] > 0 && (
-                    <div className="mt-3 pt-2 border-t">
-                      <div className="text-xs text-orange-600">
-                        Auto-reject in: {Math.floor(timeRemaining[order.id] / 60)}:{String(timeRemaining[order.id] % 60).padStart(2, '0')} minutes
+                  <div>
+                    <h4 className="font-medium mb-2">{t('driverDashboard.vehicle.type_label')}</h4>
+                    <Badge variant="secondary" className="text-sm px-3 py-1">
+                      {currentVehicle.type}
+                    </Badge>
+                  </div>
+                  
+                  {currentVehicle.categories && currentVehicle.categories.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">{t('driverDashboard.vehicle.capabilities')}</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {currentVehicle.categories.map((category: string) => (
+                          <Badge key={category} variant="outline">
+                            {category}
+                          </Badge>
+                        ))}
                       </div>
                     </div>
                   )}
+                  
+                  <div className="flex items-center">
+                    <div className={`w-3 h-3 rounded-full mr-2 ${currentVehicle.isActive ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                    <span className="text-sm">
+                      {currentVehicle.isActive ? t('driverDashboard.vehicle.active') : t('driverDashboard.vehicle.inactive')}
+                    </span>
+                  </div>
                 </div>
-              ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Truck className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900">{t('driverDashboard.vehicle.no_vehicles_title')}</h3>
+                <p className="text-gray-600 mt-1">{t('driverDashboard.vehicle.no_vehicles_desc')}</p>
+                <Button 
+                  className="mt-4"
+                  onClick={() => window.location.href = '/driver-profile?tab=vehicle'}
+                >
+                  {t('driverDashboard.vehicle.go_to_setup')}
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* My Orders Section - Right Column */}
+        <Card className="h-full flex flex-col">
+          <CardHeader className="flex-shrink-0">
+            <div className="flex justify-between items-center">
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                {t('driverDashboard.orders.title')}
+              </CardTitle>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={loadDriverOrders}
+                disabled={loadingOrders}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${loadingOrders ? 'animate-spin' : ''}`} />
+                {t('driverDashboard.orders.refresh')}
+              </Button>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <p className="text-gray-600">{t('driverDashboard.orders.subtitle')}</p>
+          </CardHeader>
+          <CardContent className="flex-1 min-h-0">
+            {loadingOrders ? (
+              <div className="flex justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : driverOrders.length === 0 ? (
+              <div className="text-center py-8">
+                <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg text-gray-900 mb-2">{t('driverDashboard.orders.no_orders_title')}</h3>
+                <p className="text-gray-600">
+                  {isOnline 
+                    ? t('driverDashboard.orders.no_orders_online')
+                    : t('driverDashboard.orders.no_orders_offline')}
+                </p>
+                {!isOnline && (
+                  <Button 
+                    onClick={() => handleToggleOnline(true)} 
+                    className="mt-4 bg-green-600 hover:bg-green-700"
+                  >
+                    <Wifi className="h-4 w-4 mr-2" />
+                    {t('driverDashboard.orders.go_online')}
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <ScrollArea className="h-[500px] pr-4">
+                <div className="space-y-4">
+                  {driverOrders.map((order) => (
+                    <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50 transition">
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-medium">#{order.order_number?.slice(-8) || order.id?.slice(-8)}</h4>
+                            <Badge className={order.status === 'delivered' ? 'bg-green-100 text-green-800' : 
+                                            order.status === 'in_transit' ? 'bg-blue-100 text-blue-800' :
+                                            order.status === 'route_to_pickup' ? 'bg-purple-100 text-purple-800' :
+                                            order.status === 'driver_assigned' ? 'bg-yellow-100 text-yellow-800' :
+                                            'bg-gray-100 text-gray-800'}>
+                              {t(`driverDashboard.order_status.${order.status}`, order.status?.replace('_', ' '))}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">
+                            {t('driverDashboard.orders.customer')}: {order.customer_info?.name || 'N/A'}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-lg font-semibold text-green-600">
+                            ${order.pricing?.estimated_usd || '0'}
+                          </p>
+                          {order.progress && (
+                            <p className="text-xs text-gray-500">
+                              {order.progress.progressPercentage}% {t('driverDashboard.orders.complete')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2 mb-3">
+                        <div className="flex items-start space-x-2">
+                          <MapPin className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="text-sm font-medium">{t('driverDashboard.orders.pickup')}:</p>
+                            <p className="text-sm text-gray-600">{order.pickup_location?.address || 'N/A'}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start space-x-2">
+                          <MapPin className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="text-sm font-medium">{t('driverDashboard.orders.delivery')}:</p>
+                            <p className="text-sm text-gray-600">{order.delivery_location?.address || 'N/A'}</p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 text-sm text-gray-600">
+                          <span>📦 {order.package_details?.category || t('driverDashboard.orders.general')}</span>
+                          <span>⚖️ {order.package_details?.weight_kg || 0} {t('units.kg')}</span>
+                          <span>📐 {order.package_details?.volume_m3 || 0} {t('units.m3')}</span>
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          {order.status === 'pending' && (
+                            <>
+                              <Button 
+                                onClick={() => handleAcceptOrder(order.id)}
+                                size="sm"
+                                className="bg-green-600 hover:bg-green-700"
+                              >
+                                {t('driverDashboard.orders.accept_order')}
+                              </Button>
+                              <Button 
+                                onClick={() => handleRejectOrder(order.id, t('driverDashboard.default_reject_reason'))}
+                                size="sm"
+                                variant="destructive"
+                              >
+                                {t('driverDashboard.orders.reject')}
+                              </Button>
+                              {timeRemaining[order.id] > 0 && (
+                                <div className="text-xs text-orange-600 mt-1">
+                                  {t('driverDashboard.orders.auto_reject')}: {Math.floor(timeRemaining[order.id] / 60)}:{String(timeRemaining[order.id] % 60).padStart(2, '0')}
+                                </div>
+                              )}
+                            </>
+                          )}
+                          
+                          {order.status === 'driver_assigned' && (
+                            <Button 
+                              onClick={() => handleUpdateOrderStatus(order.id, 'route_to_pickup')}
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-700"
+                            >
+                              <Navigation className="h-4 w-4 mr-1" />
+                              {t('driverDashboard.orders.start_to_pickup')}
+                            </Button>
+                          )}
+                          
+                          {order.status === 'route_to_pickup' && (
+                            <Button 
+                              onClick={() => handleUpdateOrderStatus(order.id, 'in_transit')}
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-700"
+                            >
+                              <Truck className="h-4 w-4 mr-1" />
+                              {t('driverDashboard.orders.start_delivery')}
+                            </Button>
+                          )}
+                          
+                          {order.status === 'in_transit' && (
+                            <Button 
+                              onClick={() => handleUpdateOrderStatus(order.id, 'delivered')}
+                              size="sm"
+                              className="bg-green-600 hover:bg-green-700"
+                            >
+                              <CheckCircle className="h-4 w-4 mr-1" />
+                              {t('driverDashboard.orders.mark_delivered')}
+                            </Button>
+                          )}
+                          
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => window.location.href = `/order-tracking?orderId=${order.id}`}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Timer display for pending orders */}
+                      {order.status === 'pending' && timeRemaining[order.id] > 0 && (
+                        <div className="mt-3 pt-2 border-t">
+                          <div className="text-xs text-orange-600">
+                            {t('driverDashboard.orders.auto_reject_in')}: {Math.floor(timeRemaining[order.id] / 60)}:{String(timeRemaining[order.id] % 60).padStart(2, '0')} {t('driverDashboard.orders.minutes')}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Pending Orders - Available Orders Near You */}
       {pendingOrders.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Available Orders Near You</CardTitle>
+            <CardTitle>{t('driverDashboard.available_orders.title')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -1347,8 +1329,8 @@ export function DriverDashboard() {
                 <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50 transition">
                   <div className="flex justify-between items-start mb-3">
                     <div>
-                      <h4 className="font-medium">Order #{order.id}</h4>
-                      <p className="text-sm text-gray-600">Customer: {order.customer}</p>
+                      <h4 className="font-medium">{t('driverDashboard.orders.order')} #{order.id}</h4>
+                      <p className="text-sm text-gray-600">{t('driverDashboard.orders.customer')}: {order.customer}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-lg font-semibold text-green-600">{order.payment}</p>
@@ -1360,14 +1342,14 @@ export function DriverDashboard() {
                     <div className="flex items-start space-x-2">
                       <MapPin className="h-4 w-4 text-green-500 mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium">Pickup:</p>
+                        <p className="text-sm font-medium">{t('driverDashboard.orders.pickup')}:</p>
                         <p className="text-sm text-gray-600">{order.pickup}</p>
                       </div>
                     </div>
                     <div className="flex items-start space-x-2">
                       <MapPin className="h-4 w-4 text-red-500 mt-0.5" />
                       <div>
-                        <p className="text-sm font-medium">Delivery:</p>
+                        <p className="text-sm font-medium">{t('driverDashboard.orders.delivery')}:</p>
                         <p className="text-sm text-gray-600">{order.delivery}</p>
                       </div>
                     </div>
@@ -1382,9 +1364,9 @@ export function DriverDashboard() {
                       </Badge>
                     </div>
                     <div className="space-x-2">
-                      <Button variant="outline" size="sm">View Details</Button>
+                      <Button variant="outline" size="sm">{t('driverDashboard.orders.view_details')}</Button>
                       <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-                        Accept Order
+                        {t('driverDashboard.orders.accept_order')}
                       </Button>
                     </div>
                   </div>

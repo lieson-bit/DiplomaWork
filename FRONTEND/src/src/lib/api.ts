@@ -571,7 +571,21 @@ const orderApi = {
   updateOrderStatus: async (orderId: string, status: string, location?: { lat: number; lng: number }) => 
     makeOrderRequest(`/api/orders/${orderId}/status`, 'PATCH', { status, location }),
   getOptimizedRoute: async () => makeOrderRequest('/api/driver/route/optimized', 'GET'),
-  getNotifications: async (markAsRead: boolean = false) => makeOrderRequest(`/api/notifications?markAsRead=${markAsRead}`, 'GET'),
+  getNotifications: async (markAsRead: boolean = false) => {
+    return makeOrderRequest(`/api/notifications?markAsRead=${markAsRead}`, 'GET');
+  },
+  
+  markNotificationRead: async (notificationId: string) => {
+    return makeOrderRequest(`/api/notifications/${notificationId}/read`, 'PATCH', {});
+  },
+  
+  markAllNotificationsRead: async () => {
+    return makeOrderRequest('/api/notifications/read-all', 'PATCH', {});
+  },
+  
+  deleteNotification: async (notificationId: string) => {
+    return makeOrderRequest(`/api/notifications/${notificationId}`, 'DELETE');
+  },
 };
 
 // ==========================================

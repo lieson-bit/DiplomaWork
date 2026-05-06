@@ -6,9 +6,9 @@ import { BulkBooking } from '../../keep/BulkBooking';
  * 
  * Allows business customers to upload and process multiple
  * delivery orders via Excel/CSV upload.
- */
+ 
 export function BulkBookingPage() {
   return <BulkBooking />;
 }
 
-export default BulkBookingPage;
+export default BulkBookingPage;*/

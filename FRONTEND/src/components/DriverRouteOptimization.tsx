@@ -6,6 +6,7 @@ import { Badge } from "./ui/badge";
 import { MapPin, Navigation, Package, Clock, TrendingUp, Map as MapIcon, CheckCircle2, Loader2, RefreshCw, Compass, Car, Star, Fuel, DollarSign, ZoomIn, ZoomOut, ChevronDown, ChevronUp, User } from 'lucide-react';
 import { orderApi } from '../src/lib/api';
 import { toast } from 'sonner';
+import { useLanguage } from './LanguageContext';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -63,6 +64,7 @@ interface CarAnimationState {
 }
 
 export function DriverRouteOptimization() {
+  const { t } = useLanguage();
   const [routeStops, setRouteStops] = useState<RouteStop[]>([]);
   const [optimizationData, setOptimizationData] = useState<RouteOptimizationData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,9 +190,9 @@ export function DriverRouteOptimization() {
       const marker = L.marker([currentLocation.lat, currentLocation.lng], { icon: startIcon })
         .bindPopup(`
           <div class="text-center">
-            <strong>📍 Your Location</strong>
+            <strong>📍 ${t('routeOptimization.your_location')}</strong>
             <br />
-            <span class="text-sm text-gray-600">Starting point</span>
+            <span class="text-sm text-gray-600">${t('routeOptimization.starting_point')}</span>
           </div>
         `)
         .addTo(map);
@@ -220,18 +222,18 @@ export function DriverRouteOptimization() {
       const marker = L.marker([stop.coordinates.lat, stop.coordinates.lng], { icon: stopIcon })
         .bindPopup(`
           <div class="text-center min-w-[200px]">
-            <strong class="text-lg">${stop.type === 'pickup' ? '📦' : '🏠'} Order #${stop.orderNumber}</strong>
+            <strong class="text-lg">${stop.type === 'pickup' ? '📦' : '🏠'} ${t('routeOptimization.order')} #${stop.orderNumber}</strong>
             <br />
-            <span class="text-sm">${stop.type === 'pickup' ? 'Pickup' : 'Delivery'}</span>
+            <span class="text-sm">${stop.type === 'pickup' ? t('routeOptimization.pickup') : t('routeOptimization.delivery')}</span>
             <br />
             <span class="text-xs text-gray-500">${stop.address.substring(0, 50)}...</span>
             <br />
-            <span class="text-xs font-semibold text-green-600">Sequence: ${stop.sequence || index + 1}</span>
-            ${stop.distance ? `<br /><span class="text-xs text-gray-500">Distance: ${stop.distance}</span>` : ''}
+            <span class="text-xs font-semibold text-green-600">${t('routeOptimization.sequence')}: ${stop.sequence || index + 1}</span>
+            ${stop.distance ? `<br /><span class="text-xs text-gray-500">${t('routeOptimization.distance')}: ${stop.distance}</span>` : ''}
             <div class="mt-2">
               <button onclick="window.dispatchEvent(new CustomEvent('selectStop', { detail: { stopId: '${stop.id}' } }))" 
                 class="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600">
-                Select Stop
+                ${t('routeOptimization.select_stop')}
               </button>
             </div>
           </div>
@@ -278,24 +280,32 @@ export function DriverRouteOptimization() {
     setGettingLocation(true);
     setLocationError(null);
     
+    // Define fallback location (Varshavskaya street, 118)
+    const FALLBACK_LOCATION = { lat: 59.844646, lng: 30.315635 };
+    
     try {
       if (!navigator.geolocation) {
         console.warn('Geolocation not supported, using fallback location');
-        const fallbackLocation = { lat: 59.9343, lng: 30.3351 };
-        setCurrentLocation(fallbackLocation);
-        toast.info('Using approximate location (St. Petersburg center)');
+        setCurrentLocation(FALLBACK_LOCATION);
+        toast.info(t('routeOptimization.messages.using_approximate_location'));
         calculateOptimalRoute();
         setGettingLocation(false);
         return;
       }
       
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
-        });
-      });
+      // Set a shorter timeout to fail faster
+      const position = await Promise.race([
+        new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, {
+            enableHighAccuracy: true,
+            timeout: 5000,  // Reduced from 10000 to 5 seconds
+            maximumAge: 0
+          });
+        }),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Location request timeout')), 5000)
+        )
+      ]);
       
       setCurrentLocation({
         lat: position.coords.latitude,
@@ -303,20 +313,20 @@ export function DriverRouteOptimization() {
         accuracy: position.coords.accuracy
       });
       
-      toast.success('Location detected');
+      toast.success(t('routeOptimization.messages.location_detected'));
       calculateOptimalRoute();
     } catch (error: any) {
       console.error('Geolocation error:', error);
-      const fallbackLocation = { lat: 59.9343, lng: 30.3351 };
-      setCurrentLocation(fallbackLocation);
+      // Use the Varshavskaya street fallback instead of city center
+      setCurrentLocation(FALLBACK_LOCATION);
       
-      let errorMessage = 'Using approximate location. ';
+      let errorMessage = t('routeOptimization.messages.using_approximate_location');
       if (error.code === error.PERMISSION_DENIED) {
-        errorMessage = 'Location permission denied. Using approximate location.';
-      } else if (error.code === error.TIMEOUT) {
-        errorMessage = 'Location request timed out. Using approximate location.';
+        errorMessage = t('routeOptimization.messages.permission_denied');
+      } else if (error.code === error.TIMEOUT || error.message === 'Location request timeout') {
+        errorMessage = 'Location request timed out. Using Варшавская улица, 118 as fallback.';
       } else if (error.code === error.POSITION_UNAVAILABLE) {
-        errorMessage = 'Location unavailable. Using approximate location.';
+        errorMessage = t('routeOptimization.messages.unavailable');
       }
       
       setLocationError(errorMessage);
@@ -325,7 +335,7 @@ export function DriverRouteOptimization() {
     } finally {
       setGettingLocation(false);
     }
-  }, []);
+  }, [t]);
 
   const calculateDistance = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
     const R = 6371;
@@ -340,8 +350,8 @@ export function DriverRouteOptimization() {
 
   const formatEstimatedTime = (distanceKm: number): string => {
     const minutes = Math.max(5, Math.ceil(distanceKm * 2));
-    if (minutes < 60) return `${minutes} min`;
-    return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+    if (minutes < 60) return `${minutes} ${t('routeOptimization.units.min')}`;
+    return `${Math.floor(minutes / 60)}${t('routeOptimization.units.h')} ${minutes % 60}${t('routeOptimization.units.m')}`;
   };
 
   // ============================================
@@ -502,10 +512,10 @@ export function DriverRouteOptimization() {
             id: `${order.id}-pickup`,
             orderId: order.id,
             orderNumber: order.order_number || order.id.slice(-8),
-            address: order.pickup_location?.address || 'Pickup address',
-            customerName: order.customer_info?.name || 'Customer',
+            address: order.pickup_location?.address || t('routeOptimization.pickup_address'),
+            customerName: order.customer_info?.name || t('routeOptimization.customer'),
             customerPhone: order.customer_info?.phone || '',
-            packageDetails: `${order.package_details?.category || 'Package'} (${order.package_details?.weight_kg || 0}kg)`,
+            packageDetails: `${order.package_details?.category || t('routeOptimization.package')} (${order.package_details?.weight_kg || 0}${t('units.kg')})`,
             weight: order.package_details?.weight_kg || 0,
             volume: order.package_details?.volume_m3 || 0,
             estimatedTime: '',
@@ -522,10 +532,10 @@ export function DriverRouteOptimization() {
             id: `${order.id}-delivery`,
             orderId: order.id,
             orderNumber: order.order_number || order.id.slice(-8),
-            address: order.delivery_location?.address || 'Delivery address',
-            customerName: order.customer_info?.name || 'Customer',
+            address: order.delivery_location?.address || t('routeOptimization.delivery_address'),
+            customerName: order.customer_info?.name || t('routeOptimization.customer'),
             customerPhone: order.customer_info?.phone || '',
-            packageDetails: `${order.package_details?.category || 'Package'} (${order.package_details?.weight_kg || 0}kg)`,
+            packageDetails: `${order.package_details?.category || t('routeOptimization.package')} (${order.package_details?.weight_kg || 0}${t('units.kg')})`,
             weight: order.package_details?.weight_kg || 0,
             volume: order.package_details?.volume_m3 || 0,
             estimatedTime: '',
@@ -584,7 +594,7 @@ export function DriverRouteOptimization() {
             optimizedStops[i].coordinates.lat, optimizedStops[i].coordinates.lng
           );
           
-          optimizedStops[i].distance = `${distance.toFixed(1)} km`;
+          optimizedStops[i].distance = `${distance.toFixed(1)} ${t('units.km')}`;
           optimizedStops[i].distanceKm = distance;
           optimizedStops[i].estimatedTime = formatEstimatedTime(distance);
         }
@@ -608,7 +618,7 @@ export function DriverRouteOptimization() {
         
         generateGoogleMapsUrl(optimizedStops);
         
-        toast.success(`✅ Route optimized: ${optimizedStops.length} stops | ${totalDistanceKm.toFixed(1)} km`);
+        toast.success(t('routeOptimization.messages.route_optimized', { stops: optimizedStops.length, distance: totalDistanceKm.toFixed(1) }));
         
         // Re-initialize map if in map view
         if (viewMode === 'map') {
@@ -620,7 +630,7 @@ export function DriverRouteOptimization() {
       }
     } catch (error) {
       console.error('Error calculating route:', error);
-      toast.error('Failed to calculate optimal route');
+      toast.error(t('routeOptimization.errors.calculation_failed'));
     } finally {
       setLoading(false);
       setOptimizing(false);
@@ -650,10 +660,10 @@ export function DriverRouteOptimization() {
   const centerMapOnLocation = () => {
     if (mapInstanceRef.current && currentLocation) {
       mapInstanceRef.current.setView([currentLocation.lat, currentLocation.lng], 15);
-      toast.info('Map centered on your location');
+      toast.info(t('routeOptimization.messages.map_centered'));
     } else if (mapInstanceRef.current && routeStops.length > 0) {
       mapInstanceRef.current.setView([routeStops[0].coordinates.lat, routeStops[0].coordinates.lng], 12);
-      toast.info('Map centered on first stop');
+      toast.info(t('routeOptimization.messages.map_centered_first_stop'));
     }
   };
 
@@ -666,12 +676,12 @@ export function DriverRouteOptimization() {
     }
     
     if (!currentLocation) {
-      toast.info('Getting your location first...');
+      toast.info(t('routeOptimization.messages.getting_location_first'));
       await requestLocation();
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       if (!currentLocation) {
-        toast.error('Unable to get your location. Please enable location services.');
+        toast.error(t('routeOptimization.errors.location_unavailable'));
         return;
       }
     }
@@ -679,7 +689,7 @@ export function DriverRouteOptimization() {
     const currentStopIndex = routeStops.findIndex(s => s.id === stopId);
     if (currentStopIndex === -1) {
       console.error('Stop not found:', stopId);
-      toast.error('Stop not found');
+      toast.error(t('routeOptimization.errors.stop_not_found'));
       return;
     }
 
@@ -728,7 +738,10 @@ export function DriverRouteOptimization() {
         
         const nextPending = routeStops.find(s => s.status === 'pending');
         if (nextPending) {
-          toast.info(`✅ Completed! Next: ${nextPending.type === 'pickup' ? 'Pickup' : 'Delivery'} for order ${nextPending.orderNumber}`);
+          toast.info(t('routeOptimization.messages.completed_next', { 
+            type: nextPending.type === 'pickup' ? t('routeOptimization.pickup') : t('routeOptimization.delivery'),
+            orderNumber: nextPending.orderNumber 
+          }));
         }
       }
     };
@@ -905,7 +918,7 @@ export function DriverRouteOptimization() {
       
       ctx.font = 'bold 13px "Segoe UI"';
       ctx.fillStyle = '#10B981';
-      ctx.fillText('📍 START', x - 25, y - 22);
+      ctx.fillText(t('routeOptimization.start_label'), x - 25, y - 22);
     }
     
     for (let i = 0; i < routeStops.length; i++) {
@@ -948,7 +961,7 @@ export function DriverRouteOptimization() {
       ctx.fillStyle = color;
       ctx.fillText(icon, x - 13, y - 16);
       
-      let label = `${stop.sequence || i + 1}. ${isPickup ? `Pickup ${stop.orderNumber.slice(-6)}` : `Delivery ${stop.orderNumber.slice(-6)}`}`;
+      let label = `${stop.sequence || i + 1}. ${isPickup ? `${t('routeOptimization.pickup_short')} ${stop.orderNumber.slice(-6)}` : `${t('routeOptimization.delivery_short')} ${stop.orderNumber.slice(-6)}`}`;
       
       ctx.font = '12px "Segoe UI"';
       const labelWidth = ctx.measureText(label).width + 16;
@@ -975,27 +988,27 @@ export function DriverRouteOptimization() {
     
     ctx.font = 'bold 11px "Segoe UI"';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('LEGEND', legendX + 15, legendY + 18);
+    ctx.fillText(t('routeOptimization.legend.title'), legendX + 15, legendY + 18);
     
     ctx.font = '10px "Segoe UI"';
     ctx.fillStyle = '#10B981';
-    ctx.fillText('📍 START - Your Location', legendX + 15, legendY + 38);
+    ctx.fillText(`${t('routeOptimization.legend.start')} - ${t('routeOptimization.legend.your_location')}`, legendX + 15, legendY + 38);
     ctx.fillStyle = '#F59E0B';
-    ctx.fillText('📦 PICKUP - Collect packages', legendX + 15, legendY + 58);
+    ctx.fillText(`${t('routeOptimization.legend.pickup')} - ${t('routeOptimization.legend.collect_packages')}`, legendX + 15, legendY + 58);
     ctx.fillStyle = '#8B5CF6';
-    ctx.fillText('🏠 DELIVERY - Drop off', legendX + 15, legendY + 78);
+    ctx.fillText(`${t('routeOptimization.legend.delivery')} - ${t('routeOptimization.legend.drop_off')}`, legendX + 15, legendY + 78);
     ctx.fillStyle = '#EF4444';
-    ctx.fillText('🚗 MOVING - Vehicle', legendX + 15, legendY + 98);
+    ctx.fillText(`${t('routeOptimization.legend.moving')} - ${t('routeOptimization.legend.vehicle')}`, legendX + 15, legendY + 98);
     ctx.fillStyle = '#3B82F6';
-    ctx.fillText('🔵 IN PROGRESS', legendX + 15, legendY + 118);
+    ctx.fillText(`${t('routeOptimization.legend.in_progress')}`, legendX + 15, legendY + 118);
     ctx.fillStyle = '#00FF00';
-    ctx.fillText('✓ COMPLETED', legendX + 15, legendY + 138);
+    ctx.fillText(`${t('routeOptimization.legend.completed')}`, legendX + 15, legendY + 138);
     
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(canvas.width - 130, canvas.height - 35, 125, 28);
     ctx.font = '9px "Segoe UI"';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('🔍 + / - Zoom | 🖱️ Drag to pan', canvas.width - 125, canvas.height - 18);
+    ctx.fillText(t('routeOptimization.controls_hint'), canvas.width - 125, canvas.height - 18);
   };
 
   const handleStartDelivery = async (stopId: string) => {
@@ -1008,7 +1021,10 @@ export function DriverRouteOptimization() {
         setRouteStops(prev => prev.map(s => 
           s.id === stopId ? { ...s, status: 'in-progress' as const } : s
         ));
-        toast.info(`Started ${stop.type === 'pickup' ? 'pickup' : 'delivery'} for order ${stop.orderNumber}`);
+        toast.info(t('routeOptimization.messages.started', { 
+          type: stop.type === 'pickup' ? t('routeOptimization.pickup') : t('routeOptimization.delivery'),
+          orderNumber: stop.orderNumber 
+        }));
       }
     } catch (error) {
       console.error('Error starting delivery:', error);
@@ -1026,13 +1042,16 @@ export function DriverRouteOptimization() {
         setRouteStops(prev => prev.map(s => 
           s.id === stopId ? { ...s, status: 'completed' as const } : s
         ));
-        toast.success(`${stop.type === 'pickup' ? 'Pickup' : 'Delivery'} completed for order ${stop.orderNumber}`);
+        toast.success(t('routeOptimization.messages.completed', { 
+          type: stop.type === 'pickup' ? t('routeOptimization.pickup') : t('routeOptimization.delivery'),
+          orderNumber: stop.orderNumber 
+        }));
         
         setTimeout(() => calculateOptimalRoute(), 500);
       }
     } catch (error) {
       console.error('Error marking complete:', error);
-      toast.error('Failed to mark as complete');
+      toast.error(t('routeOptimization.errors.mark_complete_failed'));
     }
   };
 
@@ -1071,12 +1090,21 @@ export function DriverRouteOptimization() {
     }
   };
 
+  const getPriorityLabel = (priority: string) => {
+    switch (priority) {
+      case 'high': return t('routeOptimization.priority.high');
+      case 'medium': return t('routeOptimization.priority.medium');
+      case 'low': return t('routeOptimization.priority.low');
+      default: return priority;
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600">Calculating optimal route...</p>
+          <p className="text-gray-600">{t('routeOptimization.messages.calculating_route')}</p>
         </div>
       </div>
     );
@@ -1087,11 +1115,11 @@ export function DriverRouteOptimization() {
       <Card>
         <CardContent className="py-12 text-center">
           <Package className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg text-gray-900 mb-2">No Active Deliveries</h3>
-          <p className="text-gray-600">You don't have any active deliveries at the moment.</p>
+          <h3 className="text-lg text-gray-900 mb-2">{t('routeOptimization.empty.title')}</h3>
+          <p className="text-gray-600">{t('routeOptimization.empty.message')}</p>
           <Button className="mt-4" variant="outline" onClick={calculateOptimalRoute}>
             <RefreshCw className="h-4 w-4 mr-2" />
-            Check for Orders
+            {t('routeOptimization.empty.check_orders')}
           </Button>
         </CardContent>
       </Card>
@@ -1107,26 +1135,26 @@ export function DriverRouteOptimization() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Optimal Delivery Route</h2>
-          <p className="text-gray-600 mt-1">
-            🎯 {totalPickups} pickups | {totalDeliveries} deliveries | {routeStops.length} total stops
-          </p>
-        </div>
+  <h2 className="text-2xl font-bold text-gray-900">{t('routeOptimization.title')}</h2>
+  <p className="text-gray-600 mt-1">
+    🎯 {totalPickups} {t('routeOptimization.summary.pickups')} | {totalDeliveries} {t('routeOptimization.summary.deliveries')} | {routeStops.length} {t('routeOptimization.summary.total_stops')}
+  </p>
+</div>
         <div className="flex flex-wrap gap-2">
           <div className="flex bg-gray-100 rounded-lg p-1">
             <button onClick={() => setViewMode('map')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 ${viewMode === 'map' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>
-              <MapIcon className="h-4 w-4" /> Real Map
+              <MapIcon className="h-4 w-4" /> {t('routeOptimization.views.map')}
             </button>
             <button onClick={() => setViewMode('simulation')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 ${viewMode === 'simulation' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>
-              <Car className="h-4 w-4" /> Simulation
+              <Car className="h-4 w-4" /> {t('routeOptimization.views.simulation')}
             </button>
             <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 rounded-md text-sm font-medium flex items-center gap-1 ${viewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600'}`}>
-              <Package className="h-4 w-4" /> List
+              <Package className="h-4 w-4" /> {t('routeOptimization.views.list')}
             </button>
           </div>
           <Button onClick={calculateOptimalRoute} variant="outline" disabled={optimizing}>
             <RefreshCw className={`h-4 w-4 mr-2 ${optimizing ? 'animate-spin' : ''}`} />
-            Re-optimize
+            {t('routeOptimization.actions.reoptimize')}
           </Button>
         </div>
       </div>
@@ -1136,7 +1164,7 @@ export function DriverRouteOptimization() {
           <Card className="bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center justify-between">
-                <div><p className="text-xs text-gray-600">Total Distance</p><p className="text-xl font-bold text-blue-700">{optimizationData.totalDistance.toFixed(1)} km</p></div>
+                <div><p className="text-xs text-gray-600">{t('routeOptimization.stats.total_distance')}</p><p className="text-xl font-bold text-blue-700">{optimizationData.totalDistance.toFixed(1)} {t('units.km')}</p></div>
                 <MapIcon className="h-6 w-6 text-blue-600" />
               </div>
             </CardContent>
@@ -1144,7 +1172,7 @@ export function DriverRouteOptimization() {
           <Card className="bg-gradient-to-r from-purple-50 to-purple-100 border-purple-200">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center justify-between">
-                <div><p className="text-xs text-gray-600">Est. Duration</p><p className="text-xl font-bold text-purple-700">{Math.floor(optimizationData.totalDuration / 60)}h {optimizationData.totalDuration % 60}m</p></div>
+                <div><p className="text-xs text-gray-600">{t('routeOptimization.stats.estimated_duration')}</p><p className="text-xl font-bold text-purple-700">{Math.floor(optimizationData.totalDuration / 60)}h {optimizationData.totalDuration % 60}m</p></div>
                 <Clock className="h-6 w-6 text-purple-600" />
               </div>
             </CardContent>
@@ -1152,7 +1180,7 @@ export function DriverRouteOptimization() {
           <Card className="bg-gradient-to-r from-orange-50 to-orange-100 border-orange-200">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center justify-between">
-                <div><p className="text-xs text-gray-600">Total Stops</p><p className="text-xl font-bold text-orange-700">{routeStops.length}</p></div>
+                <div><p className="text-xs text-gray-600">{t('routeOptimization.stats.total_stops')}</p><p className="text-xl font-bold text-orange-700">{routeStops.length}</p></div>
                 <Package className="h-6 w-6 text-orange-600" />
               </div>
             </CardContent>
@@ -1160,7 +1188,7 @@ export function DriverRouteOptimization() {
           <Card className="bg-gradient-to-r from-green-50 to-green-100 border-green-200">
             <CardContent className="pt-3 pb-3">
               <div className="flex items-center justify-between">
-                <div><p className="text-xs text-gray-600">Net Earnings</p><p className="text-xl font-bold text-green-700">${optimizationData.netEarnings.toFixed(2)}</p></div>
+                <div><p className="text-xs text-gray-600">{t('routeOptimization.stats.net_earnings')}</p><p className="text-xl font-bold text-green-700">${optimizationData.netEarnings.toFixed(2)}</p></div>
                 <DollarSign className="h-6 w-6 text-green-600" />
               </div>
             </CardContent>
@@ -1175,9 +1203,9 @@ export function DriverRouteOptimization() {
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-emerald-500 rounded-full flex items-center justify-center"><Star className="h-5 w-5 text-white" /></div>
                 <div>
-                  <p className="text-sm font-medium text-emerald-800">Next stop in sequence:</p>
+                  <p className="text-sm font-medium text-emerald-800">{t('routeOptimization.next_stop_label')}</p>
                   <p className="text-lg font-bold text-emerald-900">
-                    {firstPendingStop.type === 'pickup' ? '📦 Pickup' : '🏠 Delivery'} - Order {firstPendingStop.orderNumber}
+                    {firstPendingStop.type === 'pickup' ? '📦' : '🏠'} {firstPendingStop.type === 'pickup' ? t('routeOptimization.pickup') : t('routeOptimization.delivery')} - {t('routeOptimization.order')} {firstPendingStop.orderNumber}
                   </p>
                   <p className="text-xs text-emerald-700">{firstPendingStop.address}</p>
                 </div>
@@ -1188,9 +1216,9 @@ export function DriverRouteOptimization() {
                 disabled={isSimulating}
               >
                 {isSimulating && activeOrderId === firstPendingStop.orderId ? (
-                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Simulating...</>
+                  <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> {t('routeOptimization.actions.simulating')}</>
                 ) : (
-                  <><Car className="h-4 w-4 mr-2" /> Start {firstPendingStop.type === 'pickup' ? 'Pickup' : 'Delivery'}</>
+                  <><Car className="h-4 w-4 mr-2" /> {t('routeOptimization.actions.start')}</>
                 )}
               </Button>
             </div>
@@ -1204,7 +1232,7 @@ export function DriverRouteOptimization() {
             <div className="flex justify-between items-center">
               <CardTitle className="flex items-center gap-2">
                 <MapIcon className="h-5 w-5 text-red-600" />
-                Interactive Route Map
+                {t('routeOptimization.map.title')}
               </CardTitle>
               <div className="flex gap-2">
                 <Button 
@@ -1213,7 +1241,7 @@ export function DriverRouteOptimization() {
                   onClick={centerMapOnLocation}
                 >
                   <Compass className="h-4 w-4 mr-1" />
-                  Center on Me
+                  {t('routeOptimization.map.center_on_me')}
                 </Button>
                 <Button 
                   size="sm" 
@@ -1221,11 +1249,11 @@ export function DriverRouteOptimization() {
                   onClick={openRealMap}
                 >
                   <Navigation className="h-4 w-4 mr-1" />
-                  Open in Google Maps
+                  {t('routeOptimization.map.open_in_google')}
                 </Button>
               </div>
             </div>
-            <p className="text-gray-600 text-sm">Click on any marker to see details • Colored dots show stop sequence</p>
+            <p className="text-gray-600 text-sm">{t('routeOptimization.map.description')}</p>
           </CardHeader>
           <CardContent>
             <div 
@@ -1236,27 +1264,27 @@ export function DriverRouteOptimization() {
             <div className="mt-3 flex flex-wrap gap-3 justify-center text-xs">
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                <span>Your Location</span>
+                <span>{t('routeOptimization.map.legend.your_location')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                <span>Pickup</span>
+                <span>{t('routeOptimization.map.legend.pickup')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 rounded-full bg-purple-500"></div>
-                <span>Delivery</span>
+                <span>{t('routeOptimization.map.legend.delivery')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                <span>Completed</span>
+                <span>{t('routeOptimization.map.legend.completed')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                <span>Selected</span>
+                <span>{t('routeOptimization.map.legend.selected')}</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="w-6 h-0.5 bg-blue-500"></div>
-                <span>Optimized Route</span>
+                <span>{t('routeOptimization.map.legend.optimized_route')}</span>
               </div>
             </div>
           </CardContent>
@@ -1267,11 +1295,11 @@ export function DriverRouteOptimization() {
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">
-              <CardTitle className="flex items-center gap-2"><Car className="h-5 w-5 text-red-600" /> Route Simulation</CardTitle>
+              <CardTitle className="flex items-center gap-2"><Car className="h-5 w-5 text-red-600" /> {t('routeOptimization.simulation.title')}</CardTitle>
               <div className="flex gap-2">
                 <Button size="sm" variant="outline" onClick={handleZoomIn} className="h-8 w-8 p-0"><ZoomIn className="h-4 w-4" /></Button>
                 <Button size="sm" variant="outline" onClick={handleZoomOut} className="h-8 w-8 p-0"><ZoomOut className="h-4 w-4" /></Button>
-                <Button size="sm" variant="outline" onClick={handleResetView} className="h-8 px-2 text-xs">Reset View</Button>
+                <Button size="sm" variant="outline" onClick={handleResetView} className="h-8 px-2 text-xs">{t('routeOptimization.simulation.reset_view')}</Button>
               </div>
             </div>
           </CardHeader>
@@ -1298,28 +1326,28 @@ export function DriverRouteOptimization() {
                   className="w-full mb-2 bg-blue-600 hover:bg-blue-700 text-white border-none"
                 >
                   <Compass className="h-3 w-3 mr-1" />
-                  {gettingLocation ? 'Getting location...' : '📍 Get My Location'}
+                  {gettingLocation ? t('routeOptimization.simulation.getting_location') : t('routeOptimization.simulation.get_location')}
                 </Button>
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2"><span className="text-lg">🐌</span><span>Speed</span></div>
+                  <div className="flex items-center gap-2"><span className="text-lg">🐌</span><span>{t('routeOptimization.simulation.speed')}</span></div>
                   <input type="range" min="0.5" max="3" step="0.5" value={simulationSpeed} onChange={(e) => setSimulationSpeed(parseFloat(e.target.value))} className="w-24" />
-                  <div className="flex items-center gap-1"><span className="text-lg">🚀</span><Badge className={isSimulating ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}>{isSimulating ? 'Moving...' : 'Ready'}</Badge></div>
+                  <div className="flex items-center gap-1"><span className="text-lg">🚀</span><Badge className={isSimulating ? 'bg-green-500 animate-pulse' : 'bg-blue-500'}>{isSimulating ? t('routeOptimization.simulation.moving') : t('routeOptimization.simulation.ready')}</Badge></div>
                 </div>
                 <div className="border-t border-gray-700 pt-2">
-                  <p className="text-gray-400 text-xs">✨ Click "Start" button on any stop to begin</p>
-                  <p className="text-gray-400 text-xs mt-1">🚗 Red car will animate along the route</p>
-                  <p className="text-gray-400 text-xs mt-1">✅ Optimized route: All pickups first, then all deliveries</p>
+                  <p className="text-gray-400 text-xs">{t('routeOptimization.simulation.hint')}</p>
+                  <p className="text-gray-400 text-xs mt-1">{t('routeOptimization.simulation.hint_car')}</p>
+                  <p className="text-gray-400 text-xs mt-1">{t('routeOptimization.simulation.hint_optimized')}</p>
                 </div>
               </div>
               
               <div className="absolute right-4 top-4 bg-black/80 rounded-lg p-3 text-white text-xs backdrop-blur-sm shadow-xl border border-gray-700 min-w-[180px]">
-                <p className="font-bold text-center mb-2">📊 PROGRESS</p>
+                <p className="font-bold text-center mb-2">{t('routeOptimization.simulation.progress_title')}</p>
                 <div className="mb-2">
-                  <div className="flex justify-between text-xs"><span>Completed: {completedCount}/{routeStops.length}</span><span>{Math.round((completedCount / routeStops.length) * 100)}%</span></div>
+                  <div className="flex justify-between text-xs"><span>{t('routeOptimization.simulation.completed')}: {completedCount}/{routeStops.length}</span><span>{Math.round((completedCount / routeStops.length) * 100)}%</span></div>
                   <div className="w-full bg-gray-700 rounded-full h-2 mt-1"><div className="bg-green-500 rounded-full h-2 transition-all" style={{ width: `${(completedCount / routeStops.length) * 100}%` }} /></div>
                 </div>
                 <div className="border-t border-gray-700 pt-2 mt-1">
-                  <p className="text-center text-[11px]">{totalPickups} pickups • {totalDeliveries} deliveries</p>
+                  <p className="text-center text-[11px]">{totalPickups} {t('routeOptimization.simulation.pickups')} • {totalDeliveries} {t('routeOptimization.simulation.deliveries')}</p>
                 </div>
               </div>
             </div>
@@ -1330,8 +1358,8 @@ export function DriverRouteOptimization() {
       {viewMode === 'list' && (
         <Card>
           <CardHeader>
-            <CardTitle>Delivery Sequence ({routeStops.length} stops in optimal order)</CardTitle>
-            <p className="text-gray-600 text-sm">✨ Optimized route: Pickups first (nearest neighbor), then deliveries (nearest neighbor)</p>
+            <CardTitle>{t('routeOptimization.list.title', { stops: routeStops.length })}</CardTitle>
+            <p className="text-gray-600 text-sm">{t('routeOptimization.list.description')}</p>
           </CardHeader>
           <CardContent>
             <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2">
@@ -1348,18 +1376,18 @@ export function DriverRouteOptimization() {
                         <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="font-semibold text-gray-900">#{stop.orderNumber}</p>
-                            <Badge className={getPriorityColor(stop.priority)}>{stop.priority} priority</Badge>
-                            <Badge className={stop.type === 'pickup' ? 'bg-orange-100 text-orange-800' : 'bg-purple-100 text-purple-800'}>{stop.type === 'pickup' ? '📦 Pickup' : '🏠 Delivery'}</Badge>
-                            {stop.status === 'completed' && <Badge className="bg-green-100 text-green-800">✓ Completed</Badge>}
-                            {stop.status === 'in-progress' && <Badge className="bg-blue-100 text-blue-800">▶ In Progress</Badge>}
+                            <Badge className={getPriorityColor(stop.priority)}>{getPriorityLabel(stop.priority)} {t('routeOptimization.priority.suffix')}</Badge>
+                            <Badge className={stop.type === 'pickup' ? 'bg-orange-100 text-orange-800' : 'bg-purple-100 text-purple-800'}>{stop.type === 'pickup' ? `📦 ${t('routeOptimization.pickup')}` : `🏠 ${t('routeOptimization.delivery')}`}</Badge>
+                            {stop.status === 'completed' && <Badge className="bg-green-100 text-green-800">✓ {t('routeOptimization.status.completed')}</Badge>}
+                            {stop.status === 'in-progress' && <Badge className="bg-blue-100 text-blue-800">▶ {t('routeOptimization.status.in_progress')}</Badge>}
                           </div>
-                          <div className="text-sm text-gray-500">Est. {stop.estimatedTime}</div>
+                          <div className="text-sm text-gray-500">{t('routeOptimization.list.estimated')} {stop.estimatedTime}</div>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                          <div className="flex items-start gap-2"><MapPin className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">Address</p><p className="text-sm">{stop.address}</p></div></div>
-                          <div className="flex items-start gap-2"><Package className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">Details</p><p className="text-sm">{stop.packageDetails}</p></div></div>
-                          <div className="flex items-start gap-2"><Navigation className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">Distance</p><p className="text-sm">{stop.distance}</p></div></div>
-                          <div className="flex items-start gap-2"><User className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">Customer</p><p className="text-sm">{stop.customerName}</p></div></div>
+                          <div className="flex items-start gap-2"><MapPin className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">{t('routeOptimization.list.address')}</p><p className="text-sm">{stop.address}</p></div></div>
+                          <div className="flex items-start gap-2"><Package className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">{t('routeOptimization.list.details')}</p><p className="text-sm">{stop.packageDetails}</p></div></div>
+                          <div className="flex items-start gap-2"><Navigation className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">{t('routeOptimization.list.distance')}</p><p className="text-sm">{stop.distance}</p></div></div>
+                          <div className="flex items-start gap-2"><User className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" /><div><p className="text-xs text-gray-500">{t('routeOptimization.list.customer')}</p><p className="text-sm">{stop.customerName}</p></div></div>
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -1374,18 +1402,18 @@ export function DriverRouteOptimization() {
                             disabled={isSimulating}
                           >
                             {isSimulating && activeOrderId === stop.orderId ? (
-                              <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Simulating...</>
+                              <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> {t('routeOptimization.actions.simulating')}</>
                             ) : (
-                              <><Car className="h-4 w-4 mr-1" /> Start {stop.type === 'pickup' ? 'Pickup' : 'Delivery'}</>
+                              <><Car className="h-4 w-4 mr-1" /> {t('routeOptimization.actions.start', { type: stop.type === 'pickup' ? t('routeOptimization.pickup') : t('routeOptimization.delivery') })}</>
                             )}
                           </Button>
                         )}
                         {stop.status === 'in-progress' && (
                           <Button size="sm" onClick={(e) => { e.stopPropagation(); handleMarkComplete(stop.id); }} className="bg-green-600 hover:bg-green-700">
-                            <CheckCircle2 className="h-4 w-4 mr-1" /> Complete
+                            <CheckCircle2 className="h-4 w-4 mr-1" /> {t('routeOptimization.actions.complete')}
                           </Button>
                         )}
-                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleNavigate(stop); }}><Navigation className="h-4 w-4 mr-1" /> Navigate</Button>
+                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); handleNavigate(stop); }}><Navigation className="h-4 w-4 mr-1" /> {t('routeOptimization.actions.navigate')}</Button>
                       </div>
                     </div>
                   </div>
@@ -1400,15 +1428,15 @@ export function DriverRouteOptimization() {
         <CardContent className="pt-5 pb-5">
           <div className="flex gap-3">
             <div className="flex-shrink-0"><div className="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center"><Navigation className="h-5 w-5 text-white" /></div></div>
-            <div><p className="font-semibold text-blue-900">Route Optimization Features</p>
+            <div><p className="font-semibold text-blue-900">{t('routeOptimization.features.title')}</p>
               <ul className="mt-2 space-y-1 text-sm text-blue-800">
-                <li>• ✅ <strong>REGION CLUSTERING</strong> - Stops within 3km are grouped together</li>
-                <li>• ✅ <strong>PICKUP-FIRST OPTIMIZATION</strong> - All pickups first (nearest neighbor), then all deliveries</li>
-                <li>• ✅ <strong>CONSTRAINT ENFORCEMENT</strong> - Delivery NEVER happens before pickup</li>
-                <li>• ✅ <strong>SAME ADDRESS BATCHING</strong> - Multiple orders at same address are processed together</li>
-                <li>• Each order has separate Pickup and Delivery stops</li>
-                <li>• Follow the numbered sequence for optimal route efficiency</li>
-                <li>• Route automatically re-optimizes after each completion</li>
+                <li>• ✅ <strong>{t('routeOptimization.features.region_clustering')}</strong> - {t('routeOptimization.features.region_clustering_desc')}</li>
+                <li>• ✅ <strong>{t('routeOptimization.features.intelligent_interleaving')}</strong> - {t('routeOptimization.features.intelligent_interleaving_desc')}</li>
+                <li>• ✅ <strong>{t('routeOptimization.features.constraint_enforcement')}</strong> - {t('routeOptimization.features.constraint_enforcement_desc')}</li>
+                <li>• ✅ <strong>{t('routeOptimization.features.optimal_path')}</strong> - {t('routeOptimization.features.optimal_path_desc')}</li>
+                <li>• {t('routeOptimization.features.separate_stops')}</li>
+                <li>• {t('routeOptimization.features.follow_sequence')}</li>
+                <li>• {t('routeOptimization.features.auto_reoptimize')}</li>
               </ul>
             </div>
           </div>
