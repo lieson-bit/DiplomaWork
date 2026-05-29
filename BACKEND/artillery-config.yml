@@ -1,0 +1,82 @@
+config:
+  target: "http://localhost:3004"
+  phases:
+    - duration: 30
+      arrivalRate: 100
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      x-service-secret: "shared_service_secret_key_1234567890"
+  processor: "./order-processor.js"
+
+scenarios:
+  - name: "Create order"
+    flow:
+      - function: "generateOrderData"
+      - post:
+          url: "/api/orders/receive"
+          json:
+            orderId: "{{ orderId }}"
+            status: "pending"
+            createdAt: "{{ createdAt }}"
+            lastUpdated: "{{ lastUpdated }}"
+            customerInfo:
+              id: "d62e19d0-91dd-45c3-aa3f-b80d19a29b53"
+              name: "Jane Customer"
+              email: "customer@test.com"
+              phone: "+260967915487"
+              userType: "customer"
+            locations:
+              pickup:
+                address: "Khersonskiy proyezd 4А"
+                coordinates: { lat: 59.85, lng: 30.3167 }
+                geocoded: true
+              delivery:
+                address: "Варшавская улица, Санкт-Петербург, 196128"
+                coordinates: { lat: 59.8779401, lng: 30.3132918 }
+                geocoded: true
+              distance: { km: 10.409, miles: 6.467 }
+            packageDetails:
+              category: "construction"
+              weight: { value: 6.4, unit: "kg" }
+              volume: { value: 2, unit: "m³" }
+              urgency: "normal"
+            specialRequirements: { fragile: true, refrigerated: false, oversized: false, hazardous: false }
+            driverInfo:
+              id: "4a405088-c108-43c3-b832-27dbeb73c714"
+              driverId: "4496fb2a-14e6-4359-9c51-2b71f2f2f57f"
+              userId: "4a405088-c108-43c3-b832-27dbeb73c714"
+              name: "Prince Driver"
+              phone: "+260967915487"
+              email: "prince@driver.com"
+              rating: 4.5
+              matchScore: 70
+              suitability: "good"
+              estimatedArrival: "19 mins"
+            vehicleInfo:
+              type: "medium_truck"
+              make: "Truck"
+              model: "Transit"
+              licensePlate: "FGH-432"
+              capacity: { maxWeight: 500, maxVolume: 80, unit: { weight: "kg", volume: "m³" } }
+              imageError: false
+            pricing:
+              estimatedPrice: { usd: 7.95, rub: 715.47, formatted: { usd: "$7.95", rub: "₽715.47" } }
+              currency: "USD"
+              baseCurrency: "RUB"
+            timing:
+              estimatedDuration: { minutes: 23.1, text: "23 mins", formatted: "23 mins" }
+              pickupTime: { estimated: "{{ pickupTime }}", driverArrival: "19 mins" }
+              deliveryTime: { estimated: "{{ deliveryTime }}" }
+              urgencyLevel: "normal"
+              serviceHours: "24/7"
+            systemInfo:
+              geocodingStatus: { pickup: "success", delivery: "success" }
+              calculationTimestamp: "{{ calculationTimestamp }}"
+              apiVersion: "1.0"
+              source: "load-test"
+            metadata:
+              geocodingAttempts: 1
+              driverSelectionTime: "{{ driverSelectionTime }}"
+              userAgent: "Artillery-Load-Test"
+              platform: "automated"
